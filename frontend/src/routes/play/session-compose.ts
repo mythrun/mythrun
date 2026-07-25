@@ -1,5 +1,5 @@
 import type { ConnectionStatus } from '@mythrun/client-core'
-import type { TranscriptItem } from '@mythrun/client-core/contract'
+import type { RollRevealView, TranscriptItem } from '@mythrun/client-core/contract'
 
 // Pure route-wire helpers for the live-play shell (MYT-92 T16). The three
 // load-bearing transforms the shell performs — composing the explicit-text @DM
@@ -52,14 +52,51 @@ export function resolveTypingNames(
     .filter((name): name is string => name !== undefined)
 }
 
-/** True while a DM turn is in flight (myth-dd63v). `thinking` covers the
- *  dm_thinking → first-delta window; a streaming `dm` item covers first-delta →
- *  turn_end. Together they span the whole turn — the window during which SENDING
- *  is not the expected next action, so the composer gates Send (never silently
- *  swallows it). ZFC: a boolean over transport-delivered state, no cognition. */
-export function isDmWriting(items: readonly TranscriptItem[], thinking: boolean): boolean {
+/** True while a DM turn is VISIBLY in flight (myth-dd63v / myth-0q8jm).
+ *  `thinking` covers the dm_thinking → first-delta window; a streaming `dm` item
+ *  covers first-delta → turn_end — but a GATED turn's stream is buffered
+ *  (invisible), so it must not read as "the DM is writing" while the game is
+ *  actually waiting on the player's roll. ZFC: a boolean over transport-delivered
+ *  state, no cognition. */
+export function isDmWriting(
+  items: readonly TranscriptItem[],
+  thinking: boolean,
+  gatedTurnIds: ReadonlySet<string>,
+): boolean {
   if (thinking) return true
-  return items.some((it) => it.kind === 'dm' && it.streaming)
+  return items.some((it) => it.kind === 'dm' && it.streaming && !gatedTurnIds.has(it.turnId))
+}
+
+/** The composer gate states, by BLOCKING PARTY (myth-0q8jm). The status line, the
+ *  Send disable, and the roll card must agree at every point of the turn state
+ *  machine — this is the single derivation they all read. */
+export type ComposerGateState = 'idle' | 'ending' | 'awaitRoll' | 'awaitContinue' | 'dmWriting'
+
+/** Derive the composer gate. Precedence: an end in flight gates everything; then
+ *  the PLAYER-blocking states (an unrolled check, a revealed check awaiting
+ *  Continue) outrank the DM-blocking one — with a check pending, the post-check
+ *  prose streams invisibly behind the gate, and "The DM is writing…" would tell
+ *  the player to wait when the game is waiting on THEM. Only skill checks gate;
+ *  a dice_roll is the flavor variant (spec §5). */
+export function composerGate(
+  items: readonly TranscriptItem[],
+  thinking: boolean,
+  reveal: RollRevealView,
+  ending: boolean,
+): ComposerGateState {
+  if (ending) return 'ending'
+  let awaitRoll = false
+  let awaitContinue = false
+  for (const it of items) {
+    if (it.kind !== 'skill_check') continue
+    const phase = reveal.phaseByKey[it.key]
+    if (phase === 'idle') awaitRoll = true
+    else if (phase === 'revealed') awaitContinue = true
+  }
+  if (awaitRoll) return 'awaitRoll'
+  if (awaitContinue) return 'awaitContinue'
+  if (isDmWriting(items, thinking, reveal.gatedTurnIds)) return 'dmWriting'
+  return 'idle'
 }
 
 /** The turnId of the most-recent LIVE long rest in the transcript, or null. The

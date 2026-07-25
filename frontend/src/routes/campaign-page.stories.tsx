@@ -59,15 +59,47 @@ const CHARACTER_DEPS: CharacterSurfaceDeps = {
     Promise.resolve({ campaignId: CAMPAIGN_ID, totalMembers: 1, concepts: [], missing: [] }),
 }
 
-function SettledCampaignPage(): React.JSX.Element {
+// The PLAYED hub (ux-run2 myth-8x3uh): a campaign with an ended session behind
+// it surfaces the last session's open threads (the recap's numbered index) + a
+// quiet link to the recap — re-entry reads "continue where you left off". The
+// recap source is injected (the same secret-free shape the endpoint serves).
+const PLAYED_CAMPAIGN: CampaignSummary = {
+  ...SETTLED_CAMPAIGN,
+  sessionCount: 1,
+  lastPlayedAt: '2026-07-24T02:00:00.000Z',
+  cardPhase: 'played',
+}
+
+const PLAYED_RECAP = {
+  recap: {
+    sessionNumber: 1,
+    endedAt: '2026-07-24T02:00:00.000Z',
+    status: 'ready' as const,
+    summary: 'You crossed the causeway at low tide and found the middle gate unbarred.',
+    emergingThreads: [
+      'The count still expects an answer he will not get.',
+      'The dockmaster’s second knows where you are headed.',
+      'The dagger’s mark went unread; it is still in your pack.',
+    ],
+  },
+}
+
+function SettledCampaignPage({
+  campaign = SETTLED_CAMPAIGN,
+  recap,
+}: {
+  campaign?: CampaignSummary
+  recap?: typeof PLAYED_RECAP
+}): React.JSX.Element {
   return (
     <MemoryRouter initialEntries={[`/campaigns/${CAMPAIGN_ID}`]}>
       <ApiClientProvider value={STORYBOOK_CTX}>
         <I18nextProvider i18n={i18n}>
           <CampaignPage
             campaignId={CAMPAIGN_ID}
-            fetchCampaigns={() => Promise.resolve([SETTLED_CAMPAIGN])}
+            fetchCampaigns={() => Promise.resolve([campaign])}
             characterDeps={CHARACTER_DEPS}
+            {...(recap !== undefined && { fetchRecap: () => Promise.resolve(recap) })}
           />
         </I18nextProvider>
       </ApiClientProvider>
@@ -87,4 +119,10 @@ type Story = StoryObj<typeof SettledCampaignPage>
 export const Default: Story = {
   render: () => <SettledCampaignPage />,
   play: expectScreen('route-campaign-detail'),
+}
+
+// Played — the re-entry hub with the last session's thread index + recap link.
+export const Played: Story = {
+  render: () => <SettledCampaignPage campaign={PLAYED_CAMPAIGN} recap={PLAYED_RECAP} />,
+  play: expectScreen('campaign-last-session'),
 }

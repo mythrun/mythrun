@@ -294,3 +294,22 @@ describe('TextArea — autoSize', () => {
     expect(await axe(container)).toHaveNoViolations()
   })
 })
+
+describe('TextArea — subdued (the gated-composer visual mute)', () => {
+  it('quiets the chrome while staying fully interactive (no disabled semantics)', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    const { getByRole } = render(<TextArea subdued value="" onChange={onChange} />)
+    const el = getByRole('textbox')
+    expect(el.className).toContain('border-border')
+    expect(el.className).toContain('text-ink-secondary')
+    expect(el).not.toBeDisabled()
+    await user.type(el, 'x')
+    expect(onChange).toHaveBeenCalledWith('x')
+  })
+
+  it('keeps the default full-voice chrome without the prop', () => {
+    const { getByRole } = render(<TextArea />)
+    expect(getByRole('textbox').className).not.toContain('text-ink-secondary')
+  })
+})

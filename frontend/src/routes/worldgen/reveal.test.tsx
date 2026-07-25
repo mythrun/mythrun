@@ -653,3 +653,28 @@ describe('WorldReveal — silent updates while the tail runs (MYT-89 reveal timi
     expect(fetchSnapshot).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('WorldReveal — the page header carries the WORLD NAME (ux-run2 myth-8ozsw)', () => {
+  it('the page H1 becomes the world name once the snapshot delivers it (no generic label)', async () => {
+    const withIntro: WorldGenSnapshot = {
+      ...SNAPSHOT,
+      introduction: {
+        title: 'The Ashfen Reaches',
+        prose: 'A tidewater world of salt and tallow.',
+        references: [],
+      },
+    }
+    renderReveal({ fetchSnapshot: vi.fn().mockResolvedValue(withIntro) })
+    await screen.findByTestId('reveal-wiki')
+    // The prime top-left slot is the world's NAME, not chrome saying "Your world".
+    expect(screen.getByRole('heading', { level: 1, name: 'The Ashfen Reaches' })).toBeDefined()
+    expect(screen.queryByRole('heading', { level: 1, name: i18n.t('worldReveal.title') })).toBeNull()
+  })
+
+  it('falls back to the generic title while the name is unknown (pre-intro snapshot)', async () => {
+    renderReveal()
+    await screen.findByTestId('reveal-wiki')
+    // The SNAPSHOT fixture has no introduction — the outline keeps a real H1.
+    expect(screen.getByRole('heading', { level: 1, name: i18n.t('worldReveal.title') })).toBeDefined()
+  })
+})

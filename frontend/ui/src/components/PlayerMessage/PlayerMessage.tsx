@@ -48,13 +48,26 @@ export const PlayerMessage = forwardRef<HTMLDivElement, PlayerMessageProps>(
         {...(pending ? { 'aria-busy': true } : {})}
         className="flex flex-col gap-[var(--space-1)] bg-surface-hover px-[var(--space-3)] py-[var(--space-2)] font-ui"
       >
+        {/* myth-ydu35: attribution as the product's label·value convention —
+            "Kessa Vurm · Miklos", character primary (the persona the table reads),
+            account muted. The interpunct is aria-hidden typographic notation, so
+            "Sable Marcus" can never read as one apparent full name. */}
         <div className="flex flex-wrap items-baseline gap-x-[var(--space-2)]">
           {characterName !== '' ? (
-            <span className={cn(TYPE_ROLE_CLASS['ui-caption'], quiet)}>{characterName}</span>
+            <>
+              <span className={cn(TYPE_ROLE_CLASS['ui-caption'], quiet)}>{characterName}</span>
+              {/* The interpunct is label·value separator notation, not translatable copy. */}
+              <span aria-hidden="true" data-testid="player-attribution-sep" className={cn(TYPE_ROLE_CLASS.meta, quiet)}>
+                ·
+              </span>
+            </>
           ) : null}
           <span className={cn(TYPE_ROLE_CLASS.meta, quiet)}>{displayName}</span>
         </div>
-        <p className={cn(TYPE_ROLE_CLASS.data, 'break-words', quiet)}>{text}</p>
+        {/* myth-ydu35: the mono measure caps at ~75ch with opened leading — the
+            typewriter voice stays readable typewriting instead of running ~95
+            characters at tight leading across the full band. */}
+        <p className={cn(TYPE_ROLE_CLASS.data, 'max-w-[75ch] leading-[1.7] break-words', quiet)}>{text}</p>
       </div>
     )
   },

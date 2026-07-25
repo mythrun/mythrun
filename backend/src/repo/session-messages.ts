@@ -115,6 +115,18 @@ export function sessionMessagesNs(c: ClientLike) {
       return result.rows.map(toSessionMessage)
     },
 
+    /** myth-aiiao — ONE turn's persisted rows, in turn_ordinal order (== seq
+     *  order; ordinal mirrors the controller's allocation order). The worker's
+     *  corrected-turn whole-turn-replace push reads these to rebuild the turn's
+     *  replay frames (rowToReplayFrame) for the live `session_reconnect` frame. */
+    listByTurn: async (turnId: string): Promise<SessionMessage[]> => {
+      const result = await c.query<SessionMessageDbRow>(
+        `SELECT * FROM session_messages WHERE turn_id = $1 ORDER BY turn_ordinal ASC`,
+        [turnId],
+      )
+      return result.rows.map(toSessionMessage)
+    },
+
     // §3.7 idempotency probe: have any rows for this turn already committed?
     // A BullMQ re-run reads this before re-emitting so a fully-persisted turn
     // is not re-rendered.

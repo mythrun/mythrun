@@ -112,17 +112,42 @@ describe('guidedRail', () => {
     expect(rail[2]?.state).toBe('todo')
   })
 
-  it('includes a subclass rung for a subclass-granting class', () => {
+  // ux-run2 myth-udhp3 + myth-mttu7: the rail never grows a SUBCLASS station
+  // mid-flow — the subclass is a sub-question of the CLASS station. The rail
+  // presented itself as the plan; the plan must not change while it is walked.
+  it('never shows a subclass rung — the station list is stable for a subclass-granting class', () => {
     let s = initialGuidedState(1)
     s = guidedReducer(s, { type: 'choose', value: 'cleric' })
+    expect(s.step).toBe('subclass')
     expect(guidedRail(s).map((r) => r.step)).toEqual([
       'class',
-      'subclass',
       'species',
       'background',
       'notes',
       'grounding',
     ])
+  })
+
+  it('keeps the CLASS rung current (with its chosen class) while the cursor is on the subclass sub-question', () => {
+    let s = initialGuidedState(1)
+    s = guidedReducer(s, { type: 'choose', value: 'cleric' }) // → subclass sub-question
+    const rail = guidedRail(s)
+    expect(rail[0]).toEqual({ step: 'class', label: 'Class', chosen: 'Cleric', state: 'now' })
+    expect(rail[1]?.state).toBe('todo')
+  })
+
+  it('folds a chosen subclass into the class rung value ("Cleric · Life Domain")', () => {
+    let s = initialGuidedState(1)
+    s = guidedReducer(s, { type: 'choose', value: 'cleric' })
+    s = guidedReducer(s, { type: 'choose', value: 'Life Domain' }) // → species
+    const rail = guidedRail(s)
+    expect(rail[0]).toEqual({
+      step: 'class',
+      label: 'Class',
+      chosen: 'Cleric · Life Domain',
+      state: 'done',
+    })
+    expect(rail[1]?.state).toBe('now')
   })
 
   // The grounding rung (MYT-102): the screen AFTER the builder is a first-class
@@ -131,7 +156,7 @@ describe('guidedRail', () => {
   // (back/advance never land on it); only the rail models it.
   it('carries a final grounding rung — todo during the builder, with no chosen value', () => {
     const rail = guidedRail(initialGuidedState(1))
-    expect(rail.at(-1)).toEqual({ step: 'grounding', label: 'Grounding', state: 'todo' })
+    expect(rail.at(-1)).toEqual({ step: 'grounding', label: 'Arrival', state: 'todo' })
   })
 
   it('marks every builder rung done and the grounding rung NOW when the flow is complete', () => {
@@ -142,7 +167,7 @@ describe('guidedRail', () => {
     s = guidedReducer(s, { type: 'choose', value: 'stoic' })
     const rail = guidedRail(s)
     expect(rail.slice(0, -1).every((r) => r.state === 'done')).toBe(true)
-    expect(rail.at(-1)).toEqual({ step: 'grounding', label: 'Grounding', state: 'now' })
+    expect(rail.at(-1)).toEqual({ step: 'grounding', label: 'Arrival', state: 'now' })
   })
 
   it('returns the grounding rung to todo when the player steps back out of completion', () => {
@@ -152,7 +177,7 @@ describe('guidedRail', () => {
     s = guidedReducer(s, { type: 'choose', value: 'Soldier' })
     s = guidedReducer(s, { type: 'choose', value: 'stoic' })
     s = guidedReducer(s, { type: 'back' }) // complete → notes
-    expect(guidedRail(s).at(-1)).toEqual({ step: 'grounding', label: 'Grounding', state: 'todo' })
+    expect(guidedRail(s).at(-1)).toEqual({ step: 'grounding', label: 'Arrival', state: 'todo' })
   })
 })
 

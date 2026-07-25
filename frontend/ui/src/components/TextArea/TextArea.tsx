@@ -54,6 +54,13 @@ const textArea = cva(
         prose: 'font-body caret-accent-fg',
       },
       size: SIZE_CLASS,
+      // Subdued (the gated-composer visual mute): hairline muted edge on the page
+      // ground + secondary ink — quieter chrome, zero behavior change (still
+      // focusable/typable; nothing like disabled's blocking or aria state).
+      subdued: {
+        true: 'border-border bg-bg text-ink-secondary',
+        false: '',
+      },
       // Invalid: a 2px danger border (heavier than the 1px normal `--border-strong`
       // edge) + a danger focus ring, NO background wash. The danger red was
       // re-saturated so the border alone reads as error — the tinted fill is gone.
@@ -72,7 +79,7 @@ const textArea = cva(
         false: 'resize-vertical',
       },
     },
-    defaultVariants: { face: 'ui', size: 'md', invalid: false, autoSize: false },
+    defaultVariants: { face: 'ui', size: 'md', subdued: false, invalid: false, autoSize: false },
   },
 )
 
@@ -108,6 +115,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
     id,
     describedBy,
     face = 'ui',
+    subdued = false,
     size = 'md',
     rows,
     autoSize = false,
@@ -178,7 +186,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
       readOnly={readOnly}
       required={required}
       aria-invalid={invalid || undefined}
-      className={cn(textArea({ face, size, invalid, autoSize }))}
+      className={cn(textArea({ face, size, subdued, invalid, autoSize }))}
       style={boundStyle}
       {...rest}
     />

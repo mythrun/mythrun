@@ -37,9 +37,15 @@ const FILLED =
 function Live({
   initial = '',
   stepIndicator,
+  whisperVoice,
+  compact = false,
+  withBack = false,
 }: {
   initial?: string
   stepIndicator?: string
+  whisperVoice?: 'hint' | 'dm'
+  compact?: boolean
+  withBack?: boolean
 }): React.JSX.Element {
   const [value, setValue] = useState(initial)
   return (
@@ -52,6 +58,9 @@ function Live({
       submitLabel="Continue"
       placeholder={PLACEHOLDER}
       {...(stepIndicator !== undefined && { stepIndicator })}
+      {...(whisperVoice !== undefined && { whisperVoice })}
+      {...(compact && { compact })}
+      {...(withBack && { onBack: () => undefined, backLabel: 'Back' })}
     />
   )
 }
@@ -84,6 +93,29 @@ export const WithStepIndicator: Story = {
   render: () => (
     <div className="max-w-[720px] bg-bg p-[var(--space-6)]">
       <Live stepIndicator="1 of 2" />
+    </div>
+  ),
+}
+
+// The DM-voice whisper (ux-run2 myth-4gnrp) — the AI's bespoke, personalized
+// prompt promoted to roman body size with a quiet left rule (the guided path's
+// grounding step), with the quiet action-row Back (ux-run2 myth-80an1).
+export const DmVoiceWhisper: Story = {
+  name: 'DM-voice whisper + action-row Back',
+  render: () => (
+    <div className="max-w-[720px] bg-bg p-[var(--space-6)]">
+      <Live whisperVoice="dm" withBack />
+    </div>
+  ),
+}
+
+// The compact detail field (ux-run2 myth-z45sb) — the notes coda's ~3-line
+// floor: the field matches the ask ("a detail"), not an essay.
+export const CompactDetail: Story = {
+  name: 'Compact (the notes detail floor)',
+  render: () => (
+    <div className="max-w-[720px] bg-bg p-[var(--space-6)]">
+      <Live compact withBack />
     </div>
   ),
 }

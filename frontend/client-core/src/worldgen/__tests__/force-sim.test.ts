@@ -305,6 +305,21 @@ describe('ForceSim pin / unpin', () => {
   })
 })
 
+describe('ForceSim alpha readout (ux-run2 myth-uis1p — pin-on-settle)', () => {
+  it('reports the sync reheat, then decays toward zero over ticks', () => {
+    const sim = create(VIEWPORT)
+    sim.sync([node('a'), node('b')], [])
+    // A sync injects reheat energy — the field is HOT right after.
+    const hot = sim.alpha()
+    expect(hot).toBeGreaterThan(0.05)
+    // The energy cools tick by tick (d3's alphaDecay) — this is the signal the
+    // ui's pin-on-settle waits for before freezing labeled nodes in place.
+    for (let i = 0; i < 400; i++) sim.tick()
+    expect(sim.alpha()).toBeLessThan(0.05)
+    expect(sim.alpha()).toBeLessThan(hot)
+  })
+})
+
 describe('ForceSim viewport containment (BUG 2.2)', () => {
   it('keeps every node inside the centred draw space under strong repulsion', () => {
     // BUG 2.2: nodes escape the viewport ("should be impossible"). A dense cloud of

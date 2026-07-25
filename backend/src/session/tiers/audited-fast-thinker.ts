@@ -65,6 +65,11 @@ export interface AuditedFastThinkerDeps {
    *  gate could not correct). A metrics backend can bind a counter here; tests
    *  spy on it. Optional. */
   readonly onFailOpen?: (audit: { class: TurnAuditClass }) => void
+  /** myth-aiiao — called once when a violation was CORRECTED on the silent
+   *  retry (the persisted turn now diverges from what streamed live). The
+   *  worker binds this to arm the post-persist whole-turn-replace push, which
+   *  repairs the live client's transcript. Optional. */
+  readonly onCorrected?: (audit: { class: TurnAuditClass }) => void
   /** Counter seam for the DETERMINISTIC prose guard (ux-run1): called once per
    *  render whose narration tripped a structural check (leaked emphasis marker,
    *  fused sentence seam, internal-term leak). Observability only — the guard
@@ -76,10 +81,12 @@ export interface AuditedFastThinkerDeps {
   readonly retryEmitter?: TurnEmitter
 }
 
-/** A no-op emitter: the retry render must NOT re-stream to the client (that
- *  would double the prose the player already saw). The corrected turn reaches
- *  the client on reconnect (session_reconnect whole-turn-replace) and reaches
- *  the FT's next-turn context via the persisted rows. */
+/** A no-op emitter: on a PLAYER-TRIGGERED turn the retry render must NOT
+ *  re-stream to the client (that would double the prose the player already
+ *  saw). The corrected turn reaches the client via the worker's post-persist
+ *  whole-turn-replace push (myth-aiiao; `onCorrected` arms it), on reconnect
+ *  (session_reconnect), and via the persisted rows in the FT's own next-turn
+ *  context. */
 const SILENT_EMITTER: TurnEmitter = {
   emitText: () => Promise.resolve(),
   emitSkillCheck: () => Promise.resolve(),
@@ -91,12 +98,61 @@ const SILENT_EMITTER: TurnEmitter = {
   emitCorrection: () => Promise.resolve(),
 }
 
+/** myth-aiiao — a recording emitter for PLAYER-LESS (correction / farewell)
+ *  turns: frames buffer in emission order and reach the real emitter only when
+ *  the audit gate releases the winning render (`flushTo`). A puppeteer attempt
+ *  that the retry replaces is then never player-visible — there is no latency
+ *  pressure on a playerless turn, so buffering costs nothing a player can see.
+ *  Exported for tests. */
+export class BufferingTurnEmitter implements TurnEmitter {
+  private readonly ops: ((real: TurnEmitter) => Promise<void>)[] = []
+
+  emitText(text: string): Promise<void> {
+    this.ops.push((real) => real.emitText(text))
+    return Promise.resolve()
+  }
+  emitSkillCheck(p: Parameters<TurnEmitter['emitSkillCheck']>[0]): Promise<void> {
+    this.ops.push((real) => real.emitSkillCheck(p))
+    return Promise.resolve()
+  }
+  emitDiceRoll(p: Parameters<TurnEmitter['emitDiceRoll']>[0]): Promise<void> {
+    this.ops.push((real) => real.emitDiceRoll(p))
+    return Promise.resolve()
+  }
+  emitLedgerUpdate(p: Parameters<TurnEmitter['emitLedgerUpdate']>[0]): Promise<void> {
+    this.ops.push((real) => real.emitLedgerUpdate(p))
+    return Promise.resolve()
+  }
+  emitModeChange(p: Parameters<TurnEmitter['emitModeChange']>[0]): Promise<void> {
+    this.ops.push((real) => real.emitModeChange(p))
+    return Promise.resolve()
+  }
+  emitCombatStarted(p: Parameters<TurnEmitter['emitCombatStarted']>[0]): Promise<void> {
+    this.ops.push((real) => real.emitCombatStarted(p))
+    return Promise.resolve()
+  }
+  emitCombatResolved(p: Parameters<TurnEmitter['emitCombatResolved']>[0]): Promise<void> {
+    this.ops.push((real) => real.emitCombatResolved(p))
+    return Promise.resolve()
+  }
+  emitCorrection(p: Parameters<TurnEmitter['emitCorrection']>[0]): Promise<void> {
+    this.ops.push((real) => real.emitCorrection(p))
+    return Promise.resolve()
+  }
+
+  /** Replay every buffered frame into `real`, in emission order. */
+  async flushTo(real: TurnEmitter): Promise<void> {
+    for (const op of this.ops) await op(real)
+  }
+}
+
 export class AuditedFastThinker implements FastThinker {
   private readonly inner: FastThinker
   private readonly audit: TurnAuditFn
   private readonly enabled: boolean
   private readonly logger: AuditLogger | undefined
   private readonly onFailOpen: ((audit: { class: TurnAuditClass }) => void) | undefined
+  private readonly onCorrected: ((audit: { class: TurnAuditClass }) => void) | undefined
   private readonly onProseGuard: ((violations: readonly FtProseViolation[]) => void) | undefined
   private readonly retryEmitter: TurnEmitter
 
@@ -106,12 +162,20 @@ export class AuditedFastThinker implements FastThinker {
     this.enabled = deps.enabled
     this.logger = deps.logger
     this.onFailOpen = deps.onFailOpen
+    this.onCorrected = deps.onCorrected
     this.onProseGuard = deps.onProseGuard
     this.retryEmitter = deps.retryEmitter ?? SILENT_EMITTER
   }
 
   async render(ctx: FtTurnContext, emit: TurnEmitter): Promise<AssistantMessage> {
-    const first = await this.inner.render(ctx, emit)
+    // myth-aiiao — a PLAYER-LESS turn (correction / farewell) has no first-token
+    // latency pressure, so attempt 1 renders into a BUFFER and frames reach the
+    // live channel only after the audit picks the winning render. A puppeteer
+    // attempt 1 is then never player-visible. Player-triggered turns keep the
+    // stream-live-then-silently-retry flow (latency is the product there).
+    const buffered = this.enabled && ctx.playerlessTurn === true
+    const firstEmitter = buffered ? new BufferingTurnEmitter() : emit
+    const first = await this.inner.render(ctx, firstEmitter)
     // Deterministic prose guard (ux-run1): runs on EVERY render, independent of the
     // Haiku audit gate — it is cheap and never touches the model. Observability only;
     // it logs + counts a structural leak, never blocks or retries (a prose nit must
@@ -119,16 +183,26 @@ export class AuditedFastThinker implements FastThinker {
     this.runProseGuard(first)
     if (!this.enabled) return first
 
+    // Release the winning render's buffered frames on every exit of a buffered
+    // turn (attempt 1 unless the corrected-retry arm flushed the retry buffer).
+    const releaseFirst = async (): Promise<void> => {
+      if (buffered) await (firstEmitter as BufferingTurnEmitter).flushTo(emit)
+    }
+
     const batch = extractBatch(ctx.ftHistory)
     const firstAudit = await this.classify(buildInput(ctx, first, batch), 'attempt-1')
     // Audit call failed, or the narration is clean → keep attempt 1.
-    if (firstAudit === null || firstAudit.class === 'clean') return first
+    if (firstAudit === null || firstAudit.class === 'clean') {
+      await releaseFirst()
+      return first
+    }
 
     // A violation. A retry re-runs the model, so it is only safe when attempt 1
     // called no tools (no side effects to double-apply, no streamed roll to
     // desync). Otherwise fail open.
     if (hasToolCalls(first)) {
       this.failOpen(firstAudit.class, 'tool_calls_present', { retriedClass: null })
+      await releaseFirst()
       return first
     }
 
@@ -139,24 +213,39 @@ export class AuditedFastThinker implements FastThinker {
     /* c8 ignore start — unreachable defensive narrowing: correctiveInstructionFor
        returns undefined ONLY for `clean`, and a clean audit already returned at the
        top of render, so this arm can never fire in practice. */
-    if (correctiveInstruction === undefined) return first
+    if (correctiveInstruction === undefined) {
+      await releaseFirst()
+      return first
+    }
     /* c8 ignore stop */
-    const retry = await this.inner.render({ ...ctx, correctiveInstruction }, this.retryEmitter)
+    // Buffered turn → the retry records into its OWN buffer (released below iff
+    // it wins); live turn → the silent emitter (never re-stream over accrued
+    // prose; the worker's whole-turn-replace push repairs the live client).
+    const retryBuffer = buffered ? new BufferingTurnEmitter() : null
+    const retry = await this.inner.render({ ...ctx, correctiveInstruction }, retryBuffer ?? this.retryEmitter)
     const retryAudit = await this.classify(buildInput(ctx, retry, batch), 'retry')
     if (retryAudit !== null && retryAudit.class === 'clean') {
       this.logger?.info?.(
         { event: 'ft_turn_audit_corrected', originalClass: firstAudit.class },
         'ft turn audit: violation corrected on retry',
       )
+      // myth-aiiao — arm the worker's post-persist whole-turn-replace push: on a
+      // LIVE turn the client's streamed attempt 1 now diverges from the durable
+      // retry. (A buffered turn flushed the retry itself — live == durable —
+      // and the worker skips the push for playerless turns.)
+      this.onCorrected?.({ class: firstAudit.class })
+      if (retryBuffer !== null) await retryBuffer.flushTo(emit)
       return retry
     }
 
     // The retry did not come back clean (still violating, or the retry audit
-    // itself failed). Fail open to attempt 1: it was the one streamed live, so
-    // streamed == persisted and the system behaves as if the gate were absent.
+    // itself failed). Fail open to attempt 1: it is the durable render (and on
+    // a live turn the one already streamed), so streamed == persisted and the
+    // system behaves as if the gate were absent.
     this.failOpen(firstAudit.class, 'retry_not_clean', {
       retriedClass: retryAudit === null ? null : retryAudit.class,
     })
+    await releaseFirst()
     return first
   }
 

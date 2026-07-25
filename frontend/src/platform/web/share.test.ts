@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { canWebShare, webShare, copyText } from './share.ts'
+import { absoluteUrl, canWebShare, webShare, copyText } from './share.ts'
 
 // The web realizations of the InvitePanel's share/clipboard capabilities. These
 // are the R1 carve-out (they touch `navigator`); the tests install own props on
@@ -35,5 +35,11 @@ describe('web share port', () => {
     define('clipboard', { writeText })
     await copyText('https://mythrun.com/join/ABC')
     expect(writeText).toHaveBeenCalledWith('https://mythrun.com/join/ABC')
+  })
+
+  it('absoluteUrl resolves an app-relative path against the page origin (the copy-link exit hands out a FULL url)', () => {
+    expect(absoluteUrl('/session/s1/recap')).toBe(`${window.location.origin}/session/s1/recap`)
+    // Already-absolute input passes through untouched (URL resolution semantics).
+    expect(absoluteUrl('https://mythrun.com/join/ABC')).toBe('https://mythrun.com/join/ABC')
   })
 })

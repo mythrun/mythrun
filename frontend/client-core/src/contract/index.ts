@@ -29,6 +29,8 @@ export type { TextProps, TextRole } from './text.ts'
 export type { StreamingProseProps } from './streaming-prose.ts'
 export type { HeadingProps, HeadingLevel, HeadingRole } from './heading.ts'
 export type { LinkProps } from './link.ts'
+// The flow escape-hatch line (ux-run2 myth-vjl7d) — quiet prompt + underlined action.
+export type { HatchLineProps } from './hatch-line.ts'
 export type { VisuallyHiddenProps } from './visually-hidden.ts'
 
 // Leaf-primitive contracts (MYT-82 Wave 1c) — Icon + Spinner, composed by the

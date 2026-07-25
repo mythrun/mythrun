@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CharacterLoadingBeat, Heading, Stack } from '@mythrun/ui'
+import { CharacterLoadingBeat, Heading, Stack, Text } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import {
@@ -226,6 +226,13 @@ export function CharacterLoadingSurface({
         {...(countdownLabel !== undefined ? { countdownLabel } : {})}
         {...(stalledLabel !== undefined ? { stalledLabel } : {})}
       />
+      {/* One line of setup for the invite affordance the surface shell renders
+          directly below (ux-run2 myth-3bl24) — bare, that link reads as
+          utility-nav that wandered in from a footer; this makes it an
+          invitation. Quiet body prose, not chrome. */}
+      <Text role="subtitle" as="p" data-testid="character-loading-table-room">
+        {t('characterCreate.loading.tableRoom')}
+      </Text>
     </Stack>
   )
 }

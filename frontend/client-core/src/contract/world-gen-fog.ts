@@ -34,6 +34,11 @@ export interface FogFieldEntity {
    *  drawn, so fog may roll over where it would sit). Omitted → `true` (the
    *  pre-tiering behaviour every standalone caller gets). */
   labeled?: boolean
+  /** Which side of the marker the worn label sits on (ux-run2 myth-uis1p): `'e'`
+   *  (east — the default) or `'w'` (west — the collision-relief mirror chosen for
+   *  a label revealed on an already-pinned field). The fog mirrors its keep-out
+   *  to match the drawn side. Omitted → `'e'`. */
+  side?: 'e' | 'w'
 }
 
 /**

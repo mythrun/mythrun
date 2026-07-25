@@ -41,6 +41,7 @@ const {
   buildModelMessages,
   formatPartyLedger,
   buildKmpFailure,
+  LivePcPrefixGate,
   stripLeadingPcPrefix,
   stripPcPrefixFromParts,
 } = await import(
@@ -204,10 +205,11 @@ describe('SonnetFastThinker.render', () => {
 
     const msg = await ft.render(makeCtx(), emit)
 
-    expect(seen).toEqual([
-      { kind: 'text', payload: 'A' },
-      { kind: 'text', payload: 'B' },
-    ])
+    // myth-aiiao: the live PC-prefix gate holds the turn's OPENING while it
+    // could still be a leading `<participant>:` ('A' prefixes 'Arin:'), so the
+    // first emission coalesces 'A'+'B'. Content + order are unchanged; only the
+    // first run's chunk boundary moves.
+    expect(seen).toEqual([{ kind: 'text', payload: 'AB' }])
     expect(msg.role).toBe('assistant')
     expect(msg.parts).toEqual([{ kind: 'text', text: 'AB' }])
   })
@@ -1902,6 +1904,121 @@ describe('myth-ph544 — stripLeadingPcPrefix', () => {
     const out = stripPcPrefixFromParts(parts, PCS)
     expect(out[0]).toEqual({ kind: 'text', text: 'she waits.' })
     expect(out[1]).toEqual({ kind: 'text', text: 'Onwe Tass: still here.' })
+  })
+})
+
+describe('myth-aiiao — LivePcPrefixGate (the live-stream hold-back)', () => {
+  const PCS = ['Sable', 'Brenna Kell']
+
+  /** Drive the gate over chunks and collect its live output pieces. */
+  function drive(chunks: readonly string[], participants: readonly string[] = PCS): string[] {
+    const gate = new LivePcPrefixGate(participants)
+    const out: string[] = []
+    for (const c of chunks) {
+      const live = gate.feed(c)
+      if (live !== '') out.push(live)
+    }
+    const rest = gate.flush()
+    if (rest !== '') out.push(rest)
+    return out
+  }
+
+  it('strips a leaked "<PC name>:" opening that arrives split across deltas (the run-2 signature)', () => {
+    const out = drive(['Sab', 'le: I hold the sliver ', 'in my cupped palm.'])
+    expect(out.join('')).toBe('I hold the sliver in my cupped palm.')
+    expect(out.join('')).not.toContain('Sable:')
+  })
+
+  it('matches the durable strip byte-for-byte (prefix + following spaces removed)', () => {
+    const text = 'Sable:   I hold the sliver.'
+    const out = drive([text])
+    expect(out.join('')).toBe(stripLeadingPcPrefix(text, PCS))
+  })
+
+  it('releases non-matching prose promptly once the prefix is ruled out', () => {
+    const gate = new LivePcPrefixGate(PCS)
+    // 'Th' is not a prefix of 'sable:' / 'brenna kell:' → released on first feed.
+    expect(gate.feed('Th')).toBe('Th')
+    // After the decision, everything passes straight through per-delta.
+    expect(gate.feed('e door opens.')).toBe('e door opens.')
+  })
+
+  it('a first run that is ONLY the prefix emits nothing (mirrors the dropped durable part)', () => {
+    expect(drive(['Sable:'])).toEqual([])
+  })
+
+  it('caps the hold-back: a long non-colon opening releases without waiting for stream end', () => {
+    const gate = new LivePcPrefixGate([])
+    const long = ' '.repeat(60)
+    // With no candidates and only whitespace, the cap forces the release.
+    expect(gate.feed(long)).toBe(long)
+  })
+
+  it('an empty roster name is skipped — a blank participant can never hold the stream or turn ":" into a prefix', () => {
+    const out = drive(['Sable: I check the door.'], ['', 'Sable'])
+    expect(out.join('')).toBe('I check the door.')
+  })
+
+  it('a mid-prose "Name:" is untouched (the gate only guards the opening)', () => {
+    const out = drive(['The warden watches. ', 'Sable: is written on the ledger.'])
+    expect(out.join('')).toBe('The warden watches. Sable: is written on the ledger.')
+  })
+
+  it('flush() before any text leaves the gate ARMED (tool-first turns still strip the first text run)', () => {
+    const gate = new LivePcPrefixGate(PCS)
+    expect(gate.flush()).toBe('') // text-less boundary — no decision
+    expect(gate.feed('Sable: I check the door.')).toBe('I check the door.')
+  })
+})
+
+describe('myth-aiiao — the live gate inside render (leak-shape integration)', () => {
+  it('the streamed emissions never contain the leading "Sable:" the durable strip removes', async () => {
+    mockResult([
+      { type: 'text-delta', id: '1', text: 'Sab' },
+      { type: 'text-delta', id: '1', text: 'le: I hold the sliver ' },
+      { type: 'text-delta', id: '1', text: 'and bring it to the light.' },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    const msg = await ft.render(makeCtx({ participants: ['Sable'] }), emit)
+
+    const live = seen
+      .filter((e) => e.kind === 'text')
+      .map((e) => e.payload as string)
+      .join('')
+    expect(live).toBe('I hold the sliver and bring it to the light.')
+    // Live == durable, byte-for-byte (the run-2 divergence closed).
+    expect(msg.parts).toEqual([{ kind: 'text', text: 'I hold the sliver and bring it to the light.' }])
+  })
+
+  it('a leaked prefix cut off by a tool call: the held text releases stripped at the boundary', async () => {
+    mockResult([
+      { type: 'text-delta', id: '1', text: 'Sable:' },
+      {
+        type: 'tool-call',
+        toolCallId: 'c1',
+        toolName: 'roll_dice',
+        input: { count: 1, sides: 20 },
+      },
+      {
+        type: 'tool-result',
+        toolCallId: 'c1',
+        toolName: 'roll_dice',
+        input: { count: 1, sides: 20 },
+        output: { count: 1, sides: 20, results: [11], total: 11 },
+      },
+    ])
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit, seen } = makeEmitter()
+
+    const msg = await ft.render(makeCtx({ participants: ['Sable'] }), emit)
+
+    // The prefix-only first run emits NO live text (matching the dropped part);
+    // the dice frame still emits.
+    expect(seen.filter((e) => e.kind === 'text')).toEqual([])
+    expect(seen.some((e) => e.kind === 'dice_roll')).toBe(true)
+    expect(msg.parts.filter((p) => p.kind === 'text')).toEqual([])
   })
 })
 

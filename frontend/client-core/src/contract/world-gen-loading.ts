@@ -44,15 +44,37 @@ export interface WorldGenLoadingProps extends Omit<BaseProps, 'children'> {
    *  deterministic cycle (the FogSim pattern). UI jitter, not game mechanics:
    *  the ZFC/no-random rule governs dice, not flavor order. */
   random?: () => number
-  /** The per-second countdown line (already-resolved i18n string, e.g.
-   *  "~4:37 left") — the consumer owns the 1s tick + the `~M:SS` formatting
-   *  (from `remainingWaitMs`) and re-supplies this each second. Omitted →
-   *  no countdown (cold-start / no timings history). Rendered `aria-hidden`:
-   *  a line that changes every second would be live-region noise — the
-   *  Spinner's `role="status"` + label carry the busy meaning to AT. */
+  /** The REAL-EVENT accretion level (0..1) driving the dither mark's quantized
+   *  fill (ux-run2 myth-i2pdo — `worldGenAccretion`: completed stages + arrived
+   *  entities over the expected total, so structural resolution means work
+   *  happened and stillness means stillness). At 0 (or omitted) the mark runs
+   *  the ambient breathe field instead — alive from frame one, never an empty
+   *  fill frame. */
+  accretion?: number
+  /** The permission-to-leave line (already-resolved i18n, e.g. "Safe to leave.
+   *  The world keeps forming." — ux-run2 myth-i2pdo), quietly closing the
+   *  screen. Real content (not aria-hidden); backed by real product behavior
+   *  (re-entry lands back on this wait with progress intact). Omitted → no
+   *  line. */
+  leaveLabel?: string
+  /** The countdown line (already-resolved i18n string, e.g. "Ready in about
+   *  4 min") — the consumer owns the tick, the AGGREGATE derivation (the whole
+   *  visible wait — the same budget the act-two status card shows), the coarse
+   *  bucket wording, and the MONOTONIC clamp (ux-run2 myth-uz1bn: the number
+   *  may hold, never climb). Omitted → no countdown (cold-start / no timings
+   *  history, or `stalledLabel` stands in). Rendered `aria-hidden`: a churning
+   *  line would be live-region noise — the Spinner's `role="status"` + label
+   *  carry the busy meaning to AT. */
   countdownLabel?: string
-  /** i18n key: the Spinner's screen-reader label (the busy announcement — the
-   *  flavor line is decorative; this carries the meaning to AT). */
+  /** The degrade-in-language stand-in for an EXHAUSTED estimate (ux-run2
+   *  myth-uz1bn: a frozen number never sits — "Still working…" replaces it).
+   *  Shown in the countdown slot only when `countdownLabel` is absent; real
+   *  content (a one-time state change), so NOT aria-hidden. */
+  stalledLabel?: string
+  /** i18n key: the accreting mark's screen-reader label (the busy announcement
+   *  — the flavor line is decorative; this carries the meaning to AT). Named
+   *  for the Spinner it once labelled; the mark is now the accretion-driven
+   *  dither square (ux-run2 myth-i2pdo). */
   spinnerLabel?: string
   /** Entities have started streaming → show the watch button. Default false
    *  (the pure prep act). */

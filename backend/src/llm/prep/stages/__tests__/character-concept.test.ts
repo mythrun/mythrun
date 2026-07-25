@@ -93,6 +93,95 @@ describe('runCharacterConceptStage', () => {
     expect(callOpts.prompt).toContain('a road-weary cleric')
     expect(callOpts.prompt).not.toContain('{{worldName}}')
     expect(callOpts.prompt).not.toContain('{{conceptText}}')
+    expect(callOpts.prompt).not.toContain('{{guidedChoices}}')
+    // Freeform (empty guidedChoices): the prompt says so explicitly.
+    expect(callOpts.prompt).toContain('(none — the player wrote a freeform concept)')
+  })
+
+  // myth-4jhrk: guided-builder picks travel structurally and are framed as
+  // committed choices in the prompt.
+  it('renders present guided picks as field lines in the prompt', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: VALID_CONCEPT,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+    await runCharacterConceptStage({
+      ...ARGS,
+      guidedChoices: {
+        class: 'Cleric',
+        subclass: 'Life Domain',
+        species: 'Human',
+        background: 'Hermit',
+      },
+    })
+    const callOpts = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    expect(callOpts.prompt).toContain('class: Cleric')
+    expect(callOpts.prompt).toContain('subclass: Life Domain')
+    expect(callOpts.prompt).toContain('species: Human')
+    expect(callOpts.prompt).toContain('background: Hermit')
+    expect(callOpts.prompt).not.toContain('(none — the player wrote a freeform concept)')
+  })
+
+  it('pins the guided subclass over the model echo (deterministic override, ZFC)', async () => {
+    // The model dropped the pick (the run-2 failure mode): no subclass emitted.
+    mockGenerateText.mockResolvedValueOnce({
+      output: VALID_CONCEPT,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+    const dropped = await runCharacterConceptStage({
+      ...ARGS,
+      guidedChoices: { subclass: 'Life Domain' },
+    })
+    expect(dropped.concept.subclass).toBe('Life Domain')
+
+    // The model substituted a DIFFERENT subclass: the pick still wins.
+    mockGenerateText.mockResolvedValueOnce({
+      output: { ...VALID_CONCEPT, subclass: 'Grave Domain' },
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+    const substituted = await runCharacterConceptStage({
+      ...ARGS,
+      guidedChoices: { subclass: 'Life Domain' },
+    })
+    expect(substituted.concept.subclass).toBe('Life Domain')
+  })
+
+  it('freeform: a model-emitted subclass passes through, and no pick means none is invented', async () => {
+    // Player stated a subclass in freeform prose; the model echoed it.
+    mockGenerateText.mockResolvedValueOnce({
+      output: { ...VALID_CONCEPT, subclass: 'Life Domain' },
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+    const echoed = await runCharacterConceptStage(ARGS)
+    expect(echoed.concept.subclass).toBe('Life Domain')
+
+    // No pick, no echo: the field stays absent.
+    mockGenerateText.mockResolvedValueOnce({
+      output: VALID_CONCEPT,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+    const bare = await runCharacterConceptStage(ARGS)
+    expect(bare.concept.subclass).toBeUndefined()
+  })
+
+  it('treats a malformed legacy guided_choices row as freeform (no picks)', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: VALID_CONCEPT,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+    const result = await runCharacterConceptStage({
+      ...ARGS,
+      guidedChoices: { class: 42, unknown_key: true },
+    })
+    const callOpts = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    expect(callOpts.prompt).toContain('(none — the player wrote a freeform concept)')
+    expect(result.concept.subclass).toBeUndefined()
   })
 
   it('rethrows LLM errors', async () => {

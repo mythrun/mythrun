@@ -4,22 +4,22 @@ import { remainingWaitMs } from '@mythrun/client-core/worldgen'
 import type { StageProgress } from '@mythrun/client-core/contract'
 import { WorldGenLoading } from './WorldGenLoading.tsx'
 
-// WorldGenLoading — act ONE of the two-act generating flow. While the prep stages
-// (concept_intake → world_color → vocabulary_intake, the first ~2 minutes) run,
-// there is nothing to draw — so the player gets the DS Spinner (the brand dither
-// wave) over a flavor line cycling twenty short playful loading messages every
-// ~10s in RANDOM order (MYT-89 waiting-feedback: a shuffled permutation, every
-// line once before any repeats, no back-to-back repeat across the reshuffle; a
-// hard swap — no animated transition), plus the COARSE COUNTDOWN to the wiki
-// reveal (MYT-102: minute-granular "N min remaining", dropped when the estimate
-// exhausts — the LiveCountdown specimen drives the real `remainingWaitMs`
-// derivation so the coarse label steps down). When entities start
-// streaming, the "watch your world be born" watch button appears: generation
-// keeps running regardless; pressing it swaps the route to the graph view. Every
-// string arrives resolved from the shell (the DS owns no copy); these specimens use
-// the real MYT-100 copy. Under prefers-reduced-motion the Spinner goes static and
-// the cycler freezes on its opening line — the countdown still ticks (content, not
-// decoration).
+// WorldGenLoading — act ONE of the two-act generating flow (reworked for
+// ux-run2 myth-i2pdo + myth-xe38q). The calm wait: an ACCRETING ~96px dither
+// mark (quantized fill driven by real-event `accretion`; ambient breathe at 0 —
+// never an empty frame) over a whisper line at headline scale (~20px) cycling
+// twenty short playful loading messages every ~10s in RANDOM order (a shuffled
+// permutation, every line once before any repeats, no back-to-back repeat
+// across the reshuffle), past whispers settling beneath as a faint LEDGER — the
+// growing list is the progress texture. Below, the COARSE aggregate countdown
+// ("Ready in about N min" — one monotonic budget shared with the live-map
+// status card; the stalled line stands in on exhaustion), and one quiet mono
+// line of permission to leave. When entities start streaming, the "watch your
+// world be born" button appears: generation keeps running regardless; pressing
+// it swaps the route to the graph view. Every string arrives resolved from the
+// shell (the DS owns no copy); these specimens use the real copy. Under
+// prefers-reduced-motion the mark stills and the cycler freezes on its opening
+// line (empty ledger) — the countdown still updates (content, not decoration).
 
 const meta: Meta<typeof WorldGenLoading> = {
   title: 'Patterns/WorldGenLoading',
@@ -60,8 +60,10 @@ const FLAVORS = [
 
 // The resolved watch-button label the shell supplies (real MYT-100 copy, worldGen.watch).
 const WATCH = 'Watch it take shape'
-// The resolved Spinner SR label (real MYT-100 copy, worldGen.loadingLabel).
+// The resolved mark SR label (real MYT-100 copy, worldGen.loadingLabel).
 const SPINNER = 'Making your world'
+// The permission-to-leave line (real copy, worldGen.safeToLeave).
+const LEAVE = 'Safe to leave. The world keeps forming.'
 
 // --- The live countdown harness -------------------------------------------
 // Drives the REAL derivation the app uses: historical per-stage averages ∩ a
@@ -88,19 +90,24 @@ function demoStages(startMs: number): StageProgress[] {
 }
 
 /** Format the remaining ms as the COARSE countdown line (mirrors the app's
- *  MYT-102 register — minute-granular "N min remaining" / "under a minute
- *  remaining", never a ticking `M:SS`; the words are resolved i18n in the app,
+ *  register — minute-granular "Ready in about N min" / "Ready in under a
+ *  minute", never a ticking `M:SS`; the words are resolved i18n in the app,
  *  specimens use the same shape). Returns undefined when the estimate exhausts
- *  (remaining ≤ 0) — the never-dead-zero behavior: the line is dropped rather
- *  than sitting at 0:00, and the Spinner + flavor cycle carry the wait. */
+ *  (remaining ≤ 0) — the app swaps in the stalled line there. */
 function formatCountdown(remainingMs: number | null): string | undefined {
   if (remainingMs === null || remainingMs <= 0) return undefined
   const time =
-    remainingMs < 60_000 ? 'Under a minute' : `${String(Math.max(1, Math.round(remainingMs / 60_000)))} min`
-  return `${time} remaining`
+    remainingMs < 60_000 ? 'under a minute' : `about ${String(Math.max(1, Math.round(remainingMs / 60_000)))} min`
+  return `Ready in ${time}`
 }
 
-function LiveCountdownDemo({ watchReady = false }: { watchReady?: boolean }): React.JSX.Element {
+function LiveCountdownDemo({
+  watchReady = false,
+  accretion = 0,
+}: {
+  watchReady?: boolean
+  accretion?: number
+}): React.JSX.Element {
   const [startMs] = useState(() => Date.now())
   const [nowMs, setNowMs] = useState(startMs)
   useEffect(() => {
@@ -119,6 +126,8 @@ function LiveCountdownDemo({ watchReady = false }: { watchReady?: boolean }): Re
       <WorldGenLoading
         flavorLabels={FLAVORS}
         spinnerLabel={SPINNER}
+        accretion={accretion}
+        leaveLabel={LEAVE}
         {...(countdownLabel !== undefined ? { countdownLabel } : {})}
         watchReady={watchReady}
         watchLabel={WATCH}
@@ -130,27 +139,50 @@ function LiveCountdownDemo({ watchReady = false }: { watchReady?: boolean }): Re
   )
 }
 
-// PREP — the pure act-one state: the Spinner + the randomly-cycling flavor line +
-// the live per-second countdown, no button. Watch the line shuffle every ~3
-// seconds and the number walk down every second.
+// PREP — the fresh act-one state: the mark BREATHING (zero accretion — nothing
+// has landed yet), the whisper cycling, the live coarse countdown, the leave
+// line. Watch the whispers settle into the ledger every ~10s.
 export const Prep: Story = {
   render: () => <LiveCountdownDemo />,
 }
 
+// ACCRETING — real events have landed (a third of the expected total): the mark
+// runs its quantized fill. Structural resolution means work happened.
+export const Accreting: Story = {
+  render: () => <LiveCountdownDemo accretion={0.35} />,
+}
+
 // WATCH READY — entities have started streaming: the "watch your world be born"
-// button appears (the deliberate beat). The flavor line keeps cycling and the
+// button appears (the deliberate beat). The whispers keep cycling and the
 // countdown keeps walking — generation runs regardless; the button only swaps
 // the view.
 export const WatchReady: Story = {
-  render: () => <LiveCountdownDemo watchReady />,
+  render: () => <LiveCountdownDemo watchReady accretion={0.2} />,
+}
+
+// STALLED — the estimate exhausted: the stalled reassurance stands in for the
+// number (degrade in language, never a frozen floor — ux-run2 myth-uz1bn).
+export const Stalled: Story = {
+  render: () => (
+    <div className="min-h-dvh bg-bg">
+      <WorldGenLoading
+        flavorLabels={FLAVORS}
+        spinnerLabel={SPINNER}
+        accretion={0.6}
+        leaveLabel={LEAVE}
+        stalledLabel="Still working. This is taking longer than usual."
+        watchLabel={WATCH}
+      />
+    </div>
+  ),
 }
 
 // COLD START — no timings history yet (a fresh deployment): no countdown line,
-// the surface degrades gracefully to the Spinner + flavor cycle.
+// the surface degrades gracefully to the mark + whisper cycle.
 export const ColdStart: Story = {
   render: () => (
     <div className="min-h-dvh bg-bg">
-      <WorldGenLoading flavorLabels={FLAVORS} spinnerLabel={SPINNER} watchLabel={WATCH} />
+      <WorldGenLoading flavorLabels={FLAVORS} spinnerLabel={SPINNER} leaveLabel={LEAVE} watchLabel={WATCH} />
     </div>
   ),
 }

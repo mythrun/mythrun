@@ -108,11 +108,22 @@ export function guidedReducer(state: GuidedState, action: GuidedAction): GuidedS
   }
 }
 
-/** The chosen display value for a rung, or undefined when that step is unpicked. */
+/** The chosen display value for a rung, or undefined when that step is unpicked.
+ *  The class rung folds a chosen subclass into its value ("Cleric · Life Domain")
+ *  — the subclass is a sub-question of the CLASS station, never its own rung
+ *  (ux-run2 myth-udhp3 / myth-mttu7). */
 function chosenFor(step: GuidedStep, choice: GuidedChoiceDraft): string | undefined {
   switch (step) {
-    case 'class':
-      return choice.className !== undefined ? canonicalClassName(choice.className) : undefined
+    case 'class': {
+      if (choice.className === undefined) return undefined
+      const name = canonicalClassName(choice.className)
+      return choice.subclass !== undefined ? `${name} · ${choice.subclass}` : name
+    }
+    // The only caller (guidedRail) iterates NO_SUBCLASS_ORDER — the rail never
+    // carries a subclass station (the subclass rides the class rung's value) —
+    // so this arm never executes; it exists for switch exhaustiveness over
+    // GuidedStep.
+    /* v8 ignore next 2 */
     case 'subclass':
       return choice.subclass
     case 'species':
@@ -125,20 +136,29 @@ function chosenFor(step: GuidedStep, choice: GuidedChoiceDraft): string | undefi
 }
 
 /** The grounding rung's fixed label — the same brain-side chrome register as
- *  STEP_LABELS (resolved copy is a later web-layer concern for all of them). */
-const GROUNDING_LABEL = 'Grounding'
+ *  STEP_LABELS (resolved copy is a later web-layer concern for all of them).
+ *  "Arrival" (not the design-doc "Grounding") — it pairs with the step's own
+ *  question, "And how do you come to be here?" (ux-run2 myth-udhp3). */
+const GROUNDING_LABEL = 'Arrival'
 
-/** The progress rail: one rung per step in the actual path, each marked done / now /
- *  todo relative to the cursor (all done once the flow is complete) — PLUS the final
+/** The progress rail: one rung per DISPLAY station, each marked done / now / todo
+ *  relative to the cursor (all done once the flow is complete) — PLUS the final
  *  grounding rung (MYT-102). Grounding is the screen after the builder (the route's
  *  `complete` branch), not a reducer step, but it IS the last leg of the same journey:
  *  the rail carries it as `todo` while the builder runs and `now` once the flow
  *  completes, so the player stays oriented at the exact moment the builder chrome
- *  disappears. It is never `done` — a successful submit unmounts the flow. */
+ *  disappears. It is never `done` — a successful submit unmounts the flow.
+ *
+ *  The display stations are STABLE (ux-run2 myth-udhp3): the rail never grows a
+ *  SUBCLASS station mid-flow — a plan that changes while it is walked reads as a
+ *  malfunction. The subclass is a sub-question of the CLASS station: while the
+ *  cursor sits on the reducer's `subclass` step the CLASS rung stays `now`, and a
+ *  chosen subclass rides the class rung's value ("Cleric · Life Domain"). */
 export function guidedRail(state: GuidedState): RailStep[] {
-  const sequence = stepSequence(state.choice.className, state.level)
-  const cursor = state.complete ? sequence.length : sequence.indexOf(state.step)
-  const rungs: RailStep[] = sequence.map((step, index) => {
+  const stations = NO_SUBCLASS_ORDER
+  const cursorStep: GuidedStep = state.step === 'subclass' ? 'class' : state.step
+  const cursor = state.complete ? stations.length : stations.indexOf(cursorStep)
+  const rungs: RailStep[] = stations.map((step, index) => {
     const progress: RailStep['state'] = index < cursor ? 'done' : index === cursor ? 'now' : 'todo'
     const chosen = chosenFor(step, state.choice)
     return chosen === undefined

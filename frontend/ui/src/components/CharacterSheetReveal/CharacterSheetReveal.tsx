@@ -54,6 +54,9 @@ const FULL_EQUIPMENT_TITLE = 'Everything they carry'
 const FULL_SPELLS_TITLE = 'Every spell they know'
 const PROFICIENT_TAG = 'proficient'
 const EXPERTISE_TAG = 'expertise'
+// The caster's spellcasting-ability mark (ux-run2 myth-8ps4n) — quiet prose on
+// the tile, telling a newcomer WHY their spells work.
+const CASTING_TAG = 'casting'
 
 // The identity eyebrow — mono uppercase ember, the machine-register line under the
 // serif name.
@@ -85,7 +88,11 @@ const ABILITY_TILE_CLASS = cn(
 )
 const ABILITY_ABBREV_CLASS = 'font-ui text-xs uppercase tracking-wide text-ink-tertiary'
 const ABILITY_SCORE_CLASS = 'font-body text-2xl font-semibold leading-[1.1] text-ink'
-const ABILITY_MOD_CLASS = 'font-ui text-sm text-accent-fg'
+// The modifier carries real weight (ux-run2 myth-8ps4n): in play it is the number
+// hands reach for — the score is the bookkeeping, the modifier is the handle.
+const ABILITY_MOD_CLASS = 'font-ui text-base font-medium text-accent-fg'
+// The quiet casting mark under the modifier — tertiary mono prose, never a chip.
+const ABILITY_CASTING_CLASS = 'font-ui text-[0.65rem] uppercase tracking-wide text-ink-tertiary'
 
 // The connection prose — generous serif, the emotional centre of the reveal. Sized a
 // touch above the base role (the mockup's 1.05rem/1.65) because this is the payoff
@@ -102,6 +109,12 @@ const PANEL_LIST_CLASS = 'flex list-none flex-col px-[var(--space-3)] py-[var(--
 const PANEL_ITEM_CLASS = 'border-b border-border py-[var(--space-2)] last:border-b-0'
 const PANEL_ITEM_NAME = 'block font-body text-sm font-semibold text-ink'
 const PANEL_ITEM_GLOSS = 'mt-[2px] block font-body text-xs text-ink-tertiary'
+// The label·value row register (the spells panel — ux-run2 myth-wbd89): the
+// entry name is a quiet mono group label ("Cantrips", "Level 1") and the gloss
+// carries the actual content as readable serif ink — one line per level group,
+// the house state-as-prose form, never a per-item receipt.
+const PANEL_ITEM_LABEL = 'block font-ui text-xs uppercase tracking-wide text-ink-tertiary'
+const PANEL_ITEM_VALUE = 'mt-[2px] block font-body text-sm leading-[1.5] text-ink'
 // The "what they can do" gloss is canonical SRD rule text authored in the SECOND
 // person ("When you reach 3rd level, you gain…"), sitting under a THIRD-person panel
 // title ("What they can do") — frame and fill disagree (MYT-olo9c). The deep fix is a
@@ -123,9 +136,18 @@ const SKILL_TAG_CLASS = 'shrink-0 font-ui text-xs uppercase tracking-wide text-a
 const SAVES_VALUE_CLASS = 'px-[var(--space-3)] py-[var(--space-2)] font-body text-sm text-ink'
 
 // The action row — a full-width column on phone (the buttons stretch via the flex-
-// column default `stretch`), a wrapping centred row on desktop.
-const ACTIONS_CLASS =
-  'flex flex-col items-stretch gap-[var(--space-3)] sm:flex-row sm:flex-wrap sm:items-center'
+// column default `stretch`), a wrapping centred row on desktop. A hairline rule
+// separates the decision row from the sheet (ux-run2 myth-fca4y), and the
+// discard action sits ALONE at the far edge (`ml-auto` on its wrapper) —
+// keep-actions left, discard right: distance is the confirmation.
+const ACTIONS_CLASS = cn(
+  'flex flex-col items-stretch gap-[var(--space-3)] border-t border-border pt-[var(--space-4)]',
+  'sm:flex-row sm:flex-wrap sm:items-center',
+)
+// The inline start-over confirm (two-step, CONTROLLED): the prompt over its two
+// verbs, right-aligned in the discard action's isolated slot.
+const START_OVER_SLOT = 'ml-auto flex min-w-0 flex-col items-end gap-[var(--space-2)]'
+const START_OVER_PROMPT = 'text-right font-body text-sm text-ink'
 
 /** Format an ability modifier with an explicit sign — `+3`, `+0`, `−1` (the mono
  * typographic minus, matching the machine register). */
@@ -147,31 +169,38 @@ const SKILL_TAG: Record<ReturnType<typeof skillState>, string> = {
   none: '',
 }
 
-/** One square ability tile — abbrev, score, signed modifier. */
+/** One square ability tile — abbrev, score, signed modifier, and (on a caster's
+ *  spellcasting ability) the quiet casting mark. */
 function AbilityTileView({ tile }: { tile: AbilityTile }): React.JSX.Element {
   return (
     <div data-testid="character-sheet-reveal-ability" data-abbrev={tile.abbrev} className={ABILITY_TILE_CLASS}>
       <span className={ABILITY_ABBREV_CLASS}>{tile.abbrev}</span>
       <span className={ABILITY_SCORE_CLASS}>{tile.score}</span>
       <span className={ABILITY_MOD_CLASS}>{formatModifier(tile.modifier)}</span>
+      {tile.casting === true && <span className={ABILITY_CASTING_CLASS}>{CASTING_TAG}</span>}
     </div>
   )
 }
 
 /** A titled panel of name (+ optional gloss) rows. `glossAsRule` distances the gloss
  *  into a quoted rule reference (the features panel's SRD 2nd-person bodies — see
- *  PANEL_ITEM_GLOSS_RULE); equipment/spells keep the plain quiet gloss. */
+ *  PANEL_ITEM_GLOSS_RULE); equipment keeps the plain quiet gloss; `labelValue`
+ *  inverts the pair for grouped prose lines (the spells panel — the name is the
+ *  quiet group label, the gloss is the readable content; ux-run2 myth-wbd89). */
 function EntryPanel({
   title,
   entries,
   testid,
   glossAsRule = false,
+  labelValue = false,
 }: {
   title: string
   entries: SheetEntry[]
   testid: string
   glossAsRule?: boolean
+  labelValue?: boolean
 }): React.JSX.Element {
+  const glossClass = glossAsRule ? PANEL_ITEM_GLOSS_RULE : labelValue ? PANEL_ITEM_VALUE : PANEL_ITEM_GLOSS
   return (
     <div data-testid={testid} className={PANEL_CLASS}>
       {/* A category label, not a document heading — styled, non-heading element so it
@@ -180,10 +209,8 @@ function EntryPanel({
       <ul className={PANEL_LIST_CLASS}>
         {entries.map((entry) => (
           <li key={entry.name} className={PANEL_ITEM_CLASS}>
-            <span className={PANEL_ITEM_NAME}>{entry.name}</span>
-            {entry.gloss !== undefined && (
-              <span className={glossAsRule ? PANEL_ITEM_GLOSS_RULE : PANEL_ITEM_GLOSS}>{entry.gloss}</span>
-            )}
+            <span className={labelValue ? PANEL_ITEM_LABEL : PANEL_ITEM_NAME}>{entry.name}</span>
+            {entry.gloss !== undefined && <span className={glossClass}>{entry.gloss}</span>}
           </li>
         ))}
       </ul>
@@ -240,15 +267,102 @@ function FullSheetView({ full }: { full: FullSheet }): React.JSX.Element {
           title={FULL_SPELLS_TITLE}
           entries={full.spells}
           testid="character-sheet-reveal-full-spells"
+          labelValue
         />
       )}
     </Stack>
   )
 }
 
+/** The saving throws as a quiet label·value panel in the CURATED left column —
+ *  it holds the column below the prose so the column carries content for the
+ *  right column's full height instead of dying into dead paper (ux-run2
+ *  myth-wbd89; previously hoarded by "See full sheet"). */
+function CuratedSaves({ savingThrows }: { savingThrows: string[] }): React.JSX.Element {
+  return (
+    <div data-testid="character-sheet-reveal-saves-curated" className={PANEL_CLASS}>
+      <p className={PANEL_TITLE_CLASS}>{SAVES_TITLE}</p>
+      <p className={SAVES_VALUE_CLASS}>{savingThrows.join(' · ')}</p>
+    </div>
+  )
+}
+
+/** The action row (ux-run2 myth-fca4y): the keep-actions (confirm · toggle the
+ *  full sheet) hold the left; the discard action sits ALONE at the far right,
+ *  behind a two-step inline confirm — the destructive path never shares a gap
+ *  with a read-only one. */
+function RevealActions({
+  labels,
+  expanded,
+  fullSheetId,
+  onToggleExpand,
+  onConfirm,
+  startOverConfirming,
+  onRequestStartOver,
+  onCancelStartOver,
+  onStartOver,
+}: Pick<
+  CharacterSheetRevealProps,
+  | 'labels'
+  | 'expanded'
+  | 'onToggleExpand'
+  | 'onConfirm'
+  | 'startOverConfirming'
+  | 'onRequestStartOver'
+  | 'onCancelStartOver'
+  | 'onStartOver'
+> & { fullSheetId: string }): React.JSX.Element {
+  return (
+    <div className={ACTIONS_CLASS}>
+      <Button variant="primary" size="lg" onPress={onConfirm}>
+        {labels.confirm} <span aria-hidden="true">→</span>
+      </Button>
+      <Button
+        variant="secondary"
+        size="lg"
+        onPress={onToggleExpand}
+        aria-expanded={expanded}
+        aria-controls={fullSheetId}
+      >
+        {expanded ? labels.hideFull : labels.seeFull}
+      </Button>
+      {startOverConfirming ? (
+        <div data-testid="character-sheet-reveal-start-over-confirm" className={START_OVER_SLOT}>
+          <p className={START_OVER_PROMPT}>{labels.startOverPrompt}</p>
+          <div className="flex flex-wrap items-center justify-end gap-[var(--space-2)]">
+            <Button variant="secondary" size="md" onPress={onStartOver}>
+              {labels.startOverConfirm}
+            </Button>
+            <Button variant="ghost" size="md" onPress={onCancelStartOver}>
+              {labels.startOverKeep}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className={START_OVER_SLOT}>
+          <Button variant="ghost" size="lg" onPress={onRequestStartOver}>
+            {labels.startOver}
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export const CharacterSheetReveal = forwardRef<HTMLDivElement, CharacterSheetRevealProps>(
   function CharacterSheetReveal(
-    { labels, curated, full, expanded, onToggleExpand, onConfirm, onStartOver },
+    {
+      labels,
+      curated,
+      full,
+      expanded,
+      onToggleExpand,
+      onConfirm,
+      startOverConfirming,
+      onRequestStartOver,
+      onCancelStartOver,
+      onStartOver,
+    },
     ref,
   ) {
     const hasSpells = curated.spells !== undefined && curated.spells.length > 0
@@ -294,6 +408,7 @@ export const CharacterSheetReveal = forwardRef<HTMLDivElement, CharacterSheetRev
                 </p>
               ))}
             </div>
+            <CuratedSaves savingThrows={full.savingThrows} />
           </div>
           <div className="flex min-w-0 flex-col gap-[var(--space-4)]">
             <EntryPanel
@@ -312,6 +427,7 @@ export const CharacterSheetReveal = forwardRef<HTMLDivElement, CharacterSheetRev
                 title={labels.panelSpells}
                 entries={curated.spells}
                 testid="character-sheet-reveal-spells"
+                labelValue
               />
             )}
           </div>
@@ -326,24 +442,17 @@ export const CharacterSheetReveal = forwardRef<HTMLDivElement, CharacterSheetRev
           </div>
         )}
 
-        {/* Actions: confirm into the party · toggle the full sheet · start over. */}
-        <div className={ACTIONS_CLASS}>
-          <Button variant="primary" size="lg" onPress={onConfirm}>
-            {labels.confirm} <span aria-hidden="true">→</span>
-          </Button>
-          <Button
-            variant="secondary"
-            size="lg"
-            onPress={onToggleExpand}
-            aria-expanded={expanded}
-            aria-controls={fullSheetId}
-          >
-            {expanded ? labels.hideFull : labels.seeFull}
-          </Button>
-          <Button variant="ghost" size="lg" onPress={onStartOver}>
-            {labels.startOver}
-          </Button>
-        </div>
+        <RevealActions
+          labels={labels}
+          expanded={expanded}
+          fullSheetId={fullSheetId}
+          onToggleExpand={onToggleExpand}
+          onConfirm={onConfirm}
+          startOverConfirming={startOverConfirming}
+          onRequestStartOver={onRequestStartOver}
+          onCancelStartOver={onCancelStartOver}
+          onStartOver={onStartOver}
+        />
       </Stack>
     )
   },

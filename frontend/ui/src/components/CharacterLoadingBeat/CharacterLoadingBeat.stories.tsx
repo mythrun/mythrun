@@ -4,18 +4,27 @@ import type { LoadingBeat } from '@mythrun/client-core/contract'
 import { CharacterLoadingBeat } from './CharacterLoadingBeat.tsx'
 
 // CharacterLoadingBeat — the "coming into being" beat that holds the screen while
-// the pipeline generates the character sheet. The 1-bit silhouette fills in (a
-// reused Dither hatch rising from the base) beside a column of surfacing beats.
-// Pure/presentational: the specimens below hand it fixed `beats` snapshots at
-// different progress. The beat labels are realistic samples (stories are
-// lint-exempt); the real screen streams them from the client-core view-model.
+// the pipeline generates the character sheet. Since ux-run2 (myth-8ddt4 +
+// myth-zyk6o): a TYPOGRAPHIC ladder (no bordered "button-cosplay" rows) with
+// three states — done = leading filled accent square + quiet accent label,
+// ACTIVE = emphasized ink + ellipsis, pending = dimmed — over the quantized
+// figure, which BREATHES until the first beat lands (never an empty fill frame)
+// and wears the panel-weight muted frame. The panel caps near 600px; the coarse
+// estimate sits label·value on the kicker row. Pure/presentational: the
+// specimens hand it fixed `beats` snapshots; the real stage copy below is
+// praise-ledger (reused verbatim).
 
 const MID_BEATS: LoadingBeat[] = [
-  { id: 'name', label: 'Kessa Vurm — a name surfaces', state: 'done' },
-  { id: 'class', label: 'Human · Fighter — Champion', state: 'done' },
-  { id: 'scores', label: 'rolling ability scores…', state: 'active' },
-  { id: 'kit', label: 'gathering equipment…', state: 'pending' },
+  { id: 'name', label: 'A name surfaces', state: 'done' },
+  { id: 'class', label: 'A calling takes shape', state: 'done' },
+  { id: 'scores', label: 'Ability scores settle', state: 'active' },
+  { id: 'kit', label: 'Equipment is gathered', state: 'pending' },
 ]
+
+// Fresh entry — nothing done yet: the ladder all-pending and the figure in its
+// ambient BREATHE field (the myth-zyk6o fix: alive dither from frame one, never
+// an empty black-bordered rectangle).
+const FRESH_BEATS: LoadingBeat[] = MID_BEATS.map((b) => ({ ...b, state: 'pending' }))
 
 const COMPLETE_BEATS: LoadingBeat[] = MID_BEATS.map((b) => ({ ...b, state: 'done' }))
 
@@ -44,8 +53,14 @@ export default meta
 
 type Story = StoryObj<typeof CharacterLoadingBeat>
 
-// Mid-progress — two beats done (the fill is ~half-risen), one surfacing in ember,
-// one still dimmed.
+// Fresh — zero progress: breathe figure, all-pending ladder (never-empty proof).
+export const Fresh: Story = {
+  name: 'Fresh (0 of 4 — breathing figure)',
+  args: { beats: FRESH_BEATS, reducedMotion: false },
+}
+
+// Mid-progress — two beats done (quiet accent + filled squares), one active
+// (ink emphasis + ellipsis), one still dimmed.
 export const MidProgress: Story = {
   name: 'Mid-progress (2 of 4)',
   args: { beats: MID_BEATS, reducedMotion: false },
@@ -57,14 +72,15 @@ export const Complete: Story = {
   args: { beats: COMPLETE_BEATS, reducedMotion: false },
 }
 
-// With the countdown — the quiet COARSE remaining-wait line under the ladder
-// (MYT-102 timer revamp): minute-granular ("2 min remaining"), never a ticking
-// `0:24`. The label arrives resolved from the consumer (the surface owns the
-// tick + i18n); it is OMITTED entirely on cold-start, so the mid-progress story
-// above doubles as the no-estimate specimen.
+// With the countdown — the quiet COARSE estimate seated label·value on the
+// kicker row (ux-run2 myth-8ddt4 — never floating attached to nothing):
+// minute-granular ("Ready in about 2 min"), never a ticking `0:24`. The label
+// arrives resolved from the consumer (the surface owns the tick + i18n); it is
+// OMITTED entirely on cold-start, so the mid-progress story above doubles as
+// the no-estimate specimen.
 export const WithCountdown: Story = {
   name: 'With countdown (coarse)',
-  args: { beats: MID_BEATS, reducedMotion: false, countdownLabel: '2 min remaining' },
+  args: { beats: MID_BEATS, reducedMotion: false, countdownLabel: 'Ready in about 2 min' },
 }
 
 // Stalled — the estimate exhausted (the running stage overran) so the countdown
@@ -86,7 +102,7 @@ export const Stalled: Story = {
 // here so the frozen fill + coarse estimate pairing has a specimen.
 export const ReducedMotion: Story = {
   name: 'Reduced motion (mid-progress, no transitions)',
-  args: { beats: MID_BEATS, reducedMotion: true, countdownLabel: '2 min remaining' },
+  args: { beats: MID_BEATS, reducedMotion: true, countdownLabel: 'Ready in about 2 min' },
 }
 
 // Narrow — the loadwrap at ~375px, confirming the figure + text column hold
@@ -131,7 +147,7 @@ function LoadingDriver(): React.JSX.Element {
       heading={HEADING}
       beats={beatsAt(done)}
       reducedMotion={false}
-      countdownLabel="2 min remaining"
+      countdownLabel="Ready in about 2 min"
     />
   )
 }

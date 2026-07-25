@@ -733,6 +733,76 @@ export function stripLeadingPcPrefix(text: string, participants: readonly string
   return text
 }
 
+/** myth-aiiao — the LIVE-stream twin of `stripLeadingPcPrefix`. The durable
+ *  strip runs at finalize, AFTER every delta already streamed — so the run-2
+ *  player saw a leaked `Sable: …` block styled as DM narration even though the
+ *  persisted turn was clean. This gate HOLDS BACK the opening of the turn's
+ *  first text run (bounded, ~40 chars) until a leading `<participant>:` prefix
+ *  is either confirmed (stripped — live matches the durable normalization
+ *  byte-for-byte) or ruled out (released verbatim). Deterministic and
+ *  first-run-only, mirroring `stripPcPrefixFromParts`: after the first
+ *  decision every subsequent delta passes straight through. */
+export class LivePcPrefixGate {
+  private held = ''
+  private done = false
+  private seenText = false
+  private readonly cap: number
+
+  constructor(private readonly participants: readonly string[]) {
+    // Enough room for any roster name + the colon + a following char, floored
+    // at 40 so pathological whitespace can't hold prose back indefinitely.
+    const maxName = participants.reduce((m, n) => Math.max(m, n.length), 0)
+    this.cap = Math.max(40, maxName + 8)
+  }
+
+  /** Feed one live chunk; returns the text to emit NOW ('' while holding). */
+  feed(text: string): string {
+    if (this.done) return text
+    this.seenText = true
+    this.held += text
+    if (this.stillAmbiguous() && this.held.length <= this.cap) return ''
+    return this.release()
+  }
+
+  /** A boundary arrived (tool call / stream end). Finalize ONLY once text has
+   *  been seen: the durable strip targets the first TEXT part, which may come
+   *  after tool-only steps — a text-less boundary must leave the gate armed. */
+  flush(): string {
+    if (this.done || !this.seenText) return ''
+    return this.release()
+  }
+
+  private release(): string {
+    this.done = true
+    const out = stripLeadingPcPrefix(this.held, this.participants)
+    this.held = ''
+    return out
+  }
+
+  /** True while the held text could still be (or just completed) a leading
+   *  `<name>:` prefix whose aftermath is not yet decidable. */
+  private stillAmbiguous(): boolean {
+    const t = this.held.trimStart()
+    if (t === '') return true
+    const tl = t.toLowerCase()
+    for (const name of this.participants) {
+      if (name === '') continue
+      const prefix = `${name}:`.toLowerCase()
+      if (tl.length < prefix.length) {
+        if (prefix.startsWith(tl)) return true
+        continue
+      }
+      if (tl.startsWith(prefix)) {
+        // The full `<name>:` matched — keep holding while only spaces/tabs
+        // follow, so the release strips the same trailing whitespace the
+        // durable normalization does (live == durable byte-for-byte).
+        return /^[ \t]*$/.test(t.slice(prefix.length))
+      }
+    }
+    return false
+  }
+}
+
 /** Apply `stripLeadingPcPrefix` to the FIRST text part of an assembled turn. A
  *  part left empty after stripping is dropped. */
 export function stripPcPrefixFromParts(
@@ -792,13 +862,23 @@ export class SonnetFastThinker implements FastThinker {
     const correctionTurn = ctx.correctionTurn === true
     let correctionFired = false
     let preamble = ''
+    // myth-aiiao — the live PC-prefix hold-back: the DURABLE side is stripped at
+    // finalize (stripPcPrefixFromParts), but the live stream used to leak the
+    // `<participant>:` opening before the strip could run. The gate holds the
+    // first text run's opening (bounded) until the prefix is confirmed-stripped
+    // or ruled out; the assembler keeps receiving the raw text (the durable
+    // path is unchanged — finalize still normalizes it).
+    const liveGate = new LivePcPrefixGate(ctx.participants)
+    const emitLive = async (out: string): Promise<void> => {
+      if (out !== '') await emit.emitText(out)
+    }
     const sink = async (out: string): Promise<void> => {
       if (correctionTurn && !correctionFired) {
         preamble += out
         return
       }
       assembler.pushTextDelta(out)
-      await emit.emitText(out)
+      await emitLive(liveGate.feed(out))
     }
     // Track each pending tool-call's input by id so a roll_dice result can
     // fall back to it for count/sides.
@@ -826,6 +906,10 @@ export class SonnetFastThinker implements FastThinker {
         // A delimiter can't straddle a tool call — flush any held partial as
         // prose before the tool boundary closes the text run.
         await deltaGuard.flushPending(sink)
+        // The text run (if any) is closed — the live gate decides now, so held
+        // prose is never delayed past a tool boundary. A text-less boundary
+        // leaves the gate armed for the first REAL text run.
+        await emitLive(liveGate.flush())
         // The correction fired — drop the withheld machinery preamble; trailing
         // text now streams normally.
         if (correctionTurn && part.toolName === 'issue_correction') {
@@ -840,6 +924,7 @@ export class SonnetFastThinker implements FastThinker {
 
       if (part.type === 'tool-result') {
         await deltaGuard.flushPending(sink)
+        await emitLive(liveGate.flush())
         assembler.pushToolResult(part.toolCallId, part.toolName, part.output)
         await this.emitFrameForResult(part.toolName, part.output, pendingInputs.get(part.toolCallId), emit)
         continue
@@ -853,11 +938,14 @@ export class SonnetFastThinker implements FastThinker {
     // Fail-open: a correction turn that produced NO issue_correction call is
     // malformed, but the withheld text was ordinary prose — flush it rather than
     // silently drop a whole turn. (The happy path discarded `preamble` when the
-    // correction fired, so this is empty there.)
+    // correction fired, so this is empty there.) Routed through the live gate
+    // like every other emission — the fail-open text is the turn's first run.
     if (correctionTurn && !correctionFired && preamble.length > 0) {
       assembler.pushTextDelta(preamble)
-      await emit.emitText(preamble)
+      await emitLive(liveGate.feed(preamble))
     }
+    // Stream over — release anything the live gate still holds.
+    await emitLive(liveGate.flush())
 
     const totalUsage = await stream.totalUsage
     const usage = mapUsage(totalUsage)

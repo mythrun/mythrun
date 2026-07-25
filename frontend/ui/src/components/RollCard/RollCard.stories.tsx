@@ -28,6 +28,8 @@ const STORY_LABELS: RollCardLabels = {
   advantage: 'Advantage',
   disadvantage: 'Disadvantage',
   dieResult: 'You rolled',
+  explainerFor: (skill, modifier) => `Roll a d20 · ${skill} ${modifier} is your bonus`,
+  dcExplainer: 'The DC is the mark to meet',
 }
 
 // `satisfies` (not `: CardItem`) so SKILL keeps its concrete skill_check type —

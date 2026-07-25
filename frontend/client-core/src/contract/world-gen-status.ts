@@ -53,16 +53,29 @@ export interface WorldGenStatusCardProps extends Omit<BaseProps, 'children'> {
    *  match no bar). The percent is `completedCount / watched-entity-count` (fixed
    *  denominator); the running entry marks the "current" stage. */
   stages: readonly StageProgress[]
-  /** The per-second COUNTDOWN line (already resolved, e.g. "~4:37 left") — the
-   *  consumer owns the 1s tick + the `~M:SS` formatting (from
-   *  `remainingWaitMs` over the stage-timings history) and re-supplies this
-   *  each second; it may hold when a stage overruns and jump at the next stage
-   *  event (MYT-89 waiting-feedback — replaces the old coarse minute-granular
-   *  estimate). Omitted → no countdown (cold-start / no history), so the card
-   *  shows just the bars. Rendered `aria-hidden`: a per-second change would be
-   *  live-region noise — the determinate progressbar carries the progress
+  /** The COUNTDOWN line (already resolved, e.g. "Ready in about 4 min") — the
+   *  consumer owns the tick, the AGGREGATE derivation (`remainingWaitMs` over
+   *  the stage-timings history — the whole visible wait, not this act's slice),
+   *  the coarse bucket wording, and the MONOTONIC clamp (`clampEtaMonotonic`:
+   *  the shown number may hold, never climb — ux-run2 myth-uz1bn). Omitted →
+   *  no countdown (cold-start / no history, or the estimate exhausted and
+   *  `stalledLabel` stands in). Rendered `aria-hidden`: a churning line would
+   *  be live-region noise — the determinate progressbar carries the progress
    *  semantics to AT. */
   countdownLabel?: string
+  /** The degrade-in-language stand-in for an EXHAUSTED estimate (ux-run2
+   *  myth-uz1bn: a frozen number never sits — "Still working…" replaces it).
+   *  Shown in the countdown slot only when `countdownLabel` is absent; real
+   *  content (a one-time state change), so NOT aria-hidden. */
+  stalledLabel?: string
+  /** The quiet return-to-the-calm-wait text link (ux-run2 myth-t11az — the live
+   *  map must not be a one-way door). Rendered only when BOTH `returnLabel` and
+   *  `onReturn` are supplied; the card is pointer-transparent chrome, so the
+   *  link re-enables its own pointer events. */
+  returnLabel?: string
+  /** Pressed the return link — the consumer swaps back to the calm loading
+   *  view. */
+  onReturn?: () => void
   /** Map from raw stage id (`vocabulary_intake`) → an i18n'd FRIENDLY label the
    *  consumer resolves. An unmapped stage falls back to the card's `titleLabel` (its
    *  generic running caption) — with the full stage map supplied, that fallback is

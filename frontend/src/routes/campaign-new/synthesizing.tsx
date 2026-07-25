@@ -85,12 +85,17 @@ export function SynthesizingScreen({
         <Text role="ui-label" data-testid="synthesizing-eyebrow">
           {t('campaignNew.synthesizing.eyebrow')}
         </Text>
-        <StreamingProse
-          data-testid="synthesizing-prose"
-          text={text}
-          writing={state.status === 'streaming'}
-          writingLabel={t('campaignNew.synthesizing.stillWriting')}
-        />
+        {/* The arriving brief holds the SAME reading measure the settled
+            preview caps to (ux-run2 myth-ia9v2) — the synthesize → preview
+            swap keeps the text seated, no reflow to a wider wall. */}
+        <Stack maxWidth="prose">
+          <StreamingProse
+            data-testid="synthesizing-prose"
+            text={text}
+            writing={state.status === 'streaming'}
+            writingLabel={t('campaignNew.synthesizing.stillWriting')}
+          />
+        </Stack>
       </Stack>
       {failed ? (
         <Stack gap={3} align="start">

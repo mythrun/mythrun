@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useRef, useState } from 'react'
 import type { DieSpinProps } from '@mythrun/client-core/contract'
+import { cn } from '../../lib/cn.ts'
 import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
 
 // DieSpin (MYT-93, spec §5) — the flat 2D OUTLINED d20 the RollCard spins. This
@@ -8,16 +9,19 @@ import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
 // directed "a 2D outline in some 1-bit register, spun" — so authoring it here is
 // sanctioned by spec §5, distinct from the general "no hand-authored glyph" rule.
 //
-// GLYPH — a FACET-BAND d20 (end-polish pass, 2026-07-21): a pointy-top hexagon
-// silhouette with the icosahedron's top + bottom triangular facets drawn (a shallow
-// gable at each pole, split by a spoke to the point), and the EQUATORIAL BAND left
-// OPEN so the stamped numeral sits on clean ground — no facet stroke crosses the
-// numeral's field at any value (single- or two-digit). This replaced an earlier
-// centre-triangle whose edges sliced the numeral. Open geometry (not a knockout
-// plate) is deliberate: the die renders on BOTH the page --bg (standalone) and a
-// card --surface (in RollCard), so a paper-fill plate would mismatch one ground —
-// an open centre is ground-independent. Miter joins + butt caps (SVG defaults) keep
-// the sharp square/1-bit register; currentColor stroke, fill none.
+// GLYPH — a FACETED d20 (myth-ydu35): the pointy-top hexagon silhouette with the
+// icosahedron's full interior fan drawn — a central triangular face plus the
+// twelve edges connecting it to every silhouette vertex (the classic
+// front-face-with-a-number construction; run-2's facet-band hexagon read as "a
+// hex nut, not a d20"). The central face is drawn slightly LARGER than the true
+// projection so its interior stays a clean field: the result numeral stamps
+// INSIDE the face (sized to fit it, nudged to its centroid), so no facet stroke
+// crosses the digits at any value — and the geometry is unmistakably an
+// icosahedron at rest AND at result. Open geometry (no knockout plate) is still
+// deliberate: the die renders on BOTH the page --bg (standalone) and a card
+// --surface (in RollCard), so a paper-fill plate would mismatch one ground.
+// Miter joins + butt caps (SVG defaults) keep the sharp square/1-bit register;
+// currentColor stroke, fill none.
 //
 // MOTION — a STEPPED rotation, NEVER a smooth CSS transition (the motion analog of
 // the brand's stepped Bayer dither; deliberately overrides UX §13's "smooth"). Eight
@@ -36,12 +40,18 @@ import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
 // aria-hidden decoration; the numeral does NOT rotate (a sibling of the spun svg),
 // so it lands upright.
 
-// The authored facet-band d20 on the pixelarticons 24-grid (viewBox 0 0 24 24),
-// stroked in currentColor (fill none): the pointy-top hexagon silhouette, a shallow
-// gable + pole-spoke at top and bottom (the two end facets), and an OPEN equatorial
-// band across the middle where the numeral stamps.
+// The authored faceted d20 on the pixelarticons 24-grid (viewBox 0 0 24 24),
+// stroked in currentColor (fill none): the pointy-top hexagon silhouette, the
+// central triangular face (apex 12,4.2 · base y 17.3 — enlarged past the true
+// projection so the numeral fits inside it), the three vertex spokes, and the
+// nine remaining fan edges tying every silhouette corner to the face.
 const D20_OUTLINE_PATH =
-  'M12 2 L21 7 L21 17 L12 22 L3 17 L3 7 Z M3 7 L12 5.8 L21 7 M3 17 L12 18.2 L21 17 M12 2 L12 5.8 M12 18.2 L12 22'
+  'M12 2 L21 7 L21 17 L12 22 L3 17 L3 7 Z ' + // silhouette
+  'M12 4.2 L19.6 17.3 L4.4 17.3 Z ' + // central face
+  'M12 2 L12 4.2 M3 17 L4.4 17.3 M21 17 L19.6 17.3 ' + // vertex spokes
+  'M3 7 L12 4.2 M21 7 L12 4.2 ' + // upper facet edges
+  'M3 7 L4.4 17.3 M21 7 L19.6 17.3 ' + // side facet edges
+  'M12 22 L4.4 17.3 M12 22 L19.6 17.3' // lower facet edges
 
 // myth-0qvay: per-die silhouettes in the SAME facet-band language as the d20 — a
 // hard polygon SILHOUETTE plus end-facet hints kept to the poles (above ~y8 / below
@@ -98,9 +108,17 @@ const REST_FRAME = { angle: SPIN_FRAMES.length * STEP_DEG, scale: 1 }
 // it; the numeral centres over it.
 const WRAP_CLASS = 'relative inline-flex h-16 w-16 items-center justify-center'
 // The stamped result: mono `--font-ui`, centred over the die, inheriting the die's
-// currentColor. `leading-none` keeps a two-digit numeral optically centred.
-const NUMERAL_CLASS =
-  'absolute inset-0 flex items-center justify-center font-ui text-lg font-semibold leading-none'
+// currentColor. The size class precedes `leading-none` (composed at the call
+// site) because a font-size utility carries its own line-height — merged the
+// other way round, the `leading-none` that keeps a two-digit numeral optically
+// centred would be dropped.
+const NUMERAL_BASE_CLASS = 'absolute inset-0 flex items-center justify-center font-ui font-semibold'
+// The d20 family stamps the numeral INSIDE the central face (myth-ydu35): one step
+// smaller so a two-digit value clears the face's slanted edges, nudged down to the
+// face's centroid (the face sits below the box centre on the 24-grid).
+const NUMERAL_D20_CLASS = 'text-base translate-y-[4%]'
+// The open-centre shapes (d4…d12) keep the large stamp at the box centre.
+const NUMERAL_OPEN_CLASS = 'text-lg'
 
 export const DieSpin = forwardRef<HTMLDivElement, DieSpinProps>(function DieSpin(
   { spinning, result, reducedMotion, onSpinComplete, resultLabel, sides = 20 },
@@ -170,7 +188,14 @@ export const DieSpin = forwardRef<HTMLDivElement, DieSpinProps>(function DieSpin
       </svg>
 
       {showResult && (
-        <span data-testid="die-spin-result" className={NUMERAL_CLASS}>
+        <span
+          data-testid="die-spin-result"
+          className={cn(
+            NUMERAL_BASE_CLASS,
+            pathForSides(sides) === D20_OUTLINE_PATH ? NUMERAL_D20_CLASS : NUMERAL_OPEN_CLASS,
+            'leading-none',
+          )}
+        >
           {result}
         </span>
       )}

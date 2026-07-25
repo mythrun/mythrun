@@ -26,6 +26,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { rowsToConversation } from '../transcript-codec.js'
 import {
+  extractResolvedSkillChecks,
   fuseDirectionIntoLastUserMessage,
   SessionController,
   type SessionControllerDeps,
@@ -38,6 +39,7 @@ import type { WorkingSetProposal } from '../working-set/types.js'
 import type { WorldDelta } from '../../llm/schemas/world-delta.js'
 import type {
   AssistantMessage,
+  ContentPart,
   ConversationMessage,
   FastThinker,
   FtTurnContext,
@@ -763,6 +765,98 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     expect(scribePayloads[0]?.injections).toEqual([injected])
   })
 
+  it('myth-g4hf3: carries the RESOLVED skill checks (roll output + lookup skill_gate) onto the payload for the tripwire grounding floor', async () => {
+    const assistant: AssistantMessage = {
+      role: 'assistant',
+      parts: [
+        { kind: 'text', text: 'Sable leans close to the stone.' },
+        { kind: 'tool_call', toolCallId: 'tc-sc', toolName: 'roll_skill_check', input: {} },
+        {
+          kind: 'tool_result',
+          toolCallId: 'tc-sc',
+          toolName: 'roll_skill_check',
+          // The snake_case tool output shape (as persisted + emitted).
+          output: {
+            character_name: 'Sable',
+            skill: 'Investigation',
+            context: 'examining the statue',
+            roll: 20,
+            roll2: null,
+            roll_type: 'normal',
+            modifier: 4,
+            total: 24,
+            dc: 12,
+            outcome_tier: 'great_success',
+            constraint: 'reveals the statue grips something precious',
+          },
+        },
+        { kind: 'tool_call', toolCallId: 'tc-err', toolName: 'roll_skill_check', input: {} },
+        {
+          kind: 'tool_result',
+          toolCallId: 'tc-err',
+          toolName: 'roll_skill_check',
+          // An error output = no roll happened → excluded.
+          output: { error: 'unknown skill' },
+        },
+        { kind: 'tool_call', toolCallId: 'tc-lore', toolName: 'search_lore', input: {} },
+        {
+          kind: 'tool_result',
+          toolCallId: 'tc-lore',
+          toolName: 'search_lore',
+          // A lookup result whose skill gate FIRED (camelCase frame payload).
+          output: {
+            result: 'You recall a fragment.',
+            roll_hidden: false,
+            skill_gate: {
+              characterName: 'Sable',
+              skill: 'History',
+              context: 'recalling the glyph',
+              roll: 11,
+              roll2: null,
+              rollType: 'normal',
+              modifier: 2,
+              total: 13,
+              dc: 13,
+              outcomeTier: 'success',
+              constraint: 'a partial match surfaces',
+            },
+          },
+        },
+      ],
+      usage: { input: 5, output: 7 },
+    }
+    const { controller, scribePayloads } = build({ assistant })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    await controller.enqueueScribeJob()
+
+    expect(scribePayloads[0]?.skillChecks).toEqual([
+      {
+        characterName: 'Sable',
+        skill: 'Investigation',
+        dc: 12,
+        outcomeTier: 'great_success',
+        constraint: 'reveals the statue grips something precious',
+      },
+      {
+        characterName: 'Sable',
+        skill: 'History',
+        dc: 13,
+        outcomeTier: 'success',
+        constraint: 'a partial match surfaces',
+      },
+    ])
+  })
+
+  it('myth-g4hf3: a turn with no resolved checks carries an EMPTY skillChecks array (never undefined at the producer)', async () => {
+    const { controller, scribePayloads } = build()
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    await controller.enqueueScribeJob()
+
+    expect(scribePayloads[0]?.skillChecks).toEqual([])
+  })
+
   it('enqueueScribeJob is a no-op before the assistant renders (assistant === null)', async () => {
     const { controller, scribePayloads } = build()
     await controller.loadFromRedis()
@@ -821,5 +915,84 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
     await controller.processDmTurn(1)
 
     expect(capturedFtCtx.ctx?.participants).toEqual(['Bryn', 'Arin'])
+  })
+})
+
+describe('extractResolvedSkillChecks (pure, myth-g4hf3)', () => {
+  const VALID = {
+    character_name: 'Sable',
+    skill: 'Investigation',
+    dc: 12,
+    outcome_tier: 'great_success',
+    constraint: 'reveals the statue grips something precious',
+  }
+
+  function rollResult(output: unknown): ContentPart {
+    return { kind: 'tool_result', toolCallId: 'c1', toolName: 'roll_skill_check', output }
+  }
+
+  it('extracts a roll_skill_check result (snake_case) onto the camelCase outcome', () => {
+    expect(extractResolvedSkillChecks([rollResult(VALID)])).toEqual([
+      {
+        characterName: 'Sable',
+        skill: 'Investigation',
+        dc: 12,
+        outcomeTier: 'great_success',
+        constraint: 'reveals the statue grips something precious',
+      },
+    ])
+  })
+
+  it('extracts a lookup tool skill_gate (already camelCase)', () => {
+    const part: ContentPart = {
+      kind: 'tool_result',
+      toolCallId: 'c2',
+      toolName: 'search_lore',
+      output: {
+        skill_gate: {
+          characterName: 'Sable',
+          skill: 'History',
+          dc: 10,
+          outcomeTier: 'success',
+          constraint: 'recalls the ferry schedule',
+        },
+      },
+    }
+    expect(extractResolvedSkillChecks([part])).toEqual([
+      {
+        characterName: 'Sable',
+        skill: 'History',
+        dc: 10,
+        outcomeTier: 'success',
+        constraint: 'recalls the ferry schedule',
+      },
+    ])
+  })
+
+  // A drifted tool output is SKIPPED, never crashed on and never pushed onto
+  // the Scribe payload half-shaped — one case per structural check.
+  it.each([
+    ['a non-string character name', { ...VALID, character_name: 7 }],
+    ['a non-string skill', { ...VALID, skill: 7 }],
+    ['a non-numeric dc', { ...VALID, dc: '12' }],
+    ['a non-string tier', { ...VALID, outcome_tier: 3 }],
+    ['an unknown tier', { ...VALID, outcome_tier: 'nat20' }],
+    ['a non-string constraint', { ...VALID, constraint: null }],
+  ])('skips an out-of-shape outcome: %s', (_label, output) => {
+    expect(extractResolvedSkillChecks([rollResult(output)])).toEqual([])
+  })
+
+  it('skips a null output (no roll happened) and a non-object output', () => {
+    expect(extractResolvedSkillChecks([rollResult(null), rollResult('nonsense')])).toEqual([])
+  })
+
+  it('a lookup with a NULL skill_gate (auto-success) contributes nothing', () => {
+    const part: ContentPart = {
+      kind: 'tool_result',
+      toolCallId: 'c3',
+      toolName: 'faction_tree',
+      output: { skill_gate: null },
+    }
+    expect(extractResolvedSkillChecks([part])).toEqual([])
   })
 })

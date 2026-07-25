@@ -47,8 +47,15 @@ const stack = cva('flex [&>*]:min-w-0', {
     },
     // Full dynamic-viewport floor (mirrors Box's minHeight="screen" — `dvh`, not
     // `vh`, so mobile chrome doesn't leave a gap). Full literal so the v4 scanner emits it.
+    // `page` floors at the IN-FRAME content region: viewport minus the app frame's
+    // fixed dressing (~64px header + hairline + 32px content padding ×2 ≈ 8.5rem,
+    // rounded UP so the floor never forces a page scroll by itself). Lets a short
+    // flow screen seat its block with grow-weighted spacers (optical centering)
+    // instead of pooling at the top edge (ux-run2 myth-ma8yv). On small viewports
+    // the content usually exceeds the floor, so the spacers quietly collapse.
     minHeight: {
       screen: 'min-h-dvh',
+      page: 'min-h-[calc(100dvh-8.5rem)]',
     },
     // flex-1 fill for the body region of a fixed-crown column. `grow={true}` →
     // this class; a NUMERIC weight is applied via inline `flexGrow` instead (an
@@ -63,9 +70,13 @@ const stack = cva('flex [&>*]:min-w-0', {
     // fill UP TO the cap, then the max-width holds. Full literals so the v4 scanner
     // emits them (a `max-w-[var(--measure)]` would be a color-safe arbitrary value,
     // but the fixed rem measures read clearer at the call site).
+    // `content` (~720px) is the card-row content column (ux-run2 myth-ma8yv):
+    // option lists / rosters whose card rows and confirm affordances share the
+    // column's edges instead of running full-bleed (the critics' 720–760px cap).
     maxWidth: {
       prose: 'mx-auto w-full max-w-[34rem]',
       form: 'mx-auto w-full max-w-[36rem]',
+      content: 'mx-auto w-full max-w-[45rem]',
       wide: 'mx-auto w-full max-w-[56rem]',
     },
   },

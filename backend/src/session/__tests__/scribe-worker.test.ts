@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SecretTripwireOutput } from '../../llm/secret-tripwire.js'
 import type { RetconAuthorOutput } from '../../llm/retcon-author.js'
 import { processScribeJob, type ScribeProcessorDeps } from '../scribe-worker.js'
+import { splitPlaybook } from '../playbook-split.js'
 import { WORKING_SET_CAP } from '../scribe-config.js'
 import {
   enqueueScribe,
@@ -63,6 +64,15 @@ interface Recorders {
   enqueuedTurns: TurnJobPayload[]
   enqueuedStEvals: { name: string; payload: StEvalPayload }[]
   respondedSeq: number
+  /** myth-g4hf3 — every persisted tripwire verdict row. */
+  verdicts: {
+    campaignId: string
+    sessionId: string
+    turnId: string
+    severity: string
+    confidence: number
+    secretRef: string | null
+  }[]
 }
 
 interface Knobs {
@@ -96,6 +106,7 @@ function makeDeps(over: Partial<Knobs> = {}): {
     enqueuedTurns: [],
     enqueuedStEvals: [],
     respondedSeq: 12,
+    verdicts: [],
   }
 
   const deps: ScribeProcessorDeps = {
@@ -108,6 +119,12 @@ function makeDeps(over: Partial<Knobs> = {}): {
               ? null
               : { sdPlaybook: knobs.sdPlaybook, ftContext: knobs.ftContext },
           ),
+      },
+      tripwireVerdicts: {
+        insert: (v) => {
+          rec.verdicts.push({ ...v })
+          return Promise.resolve()
+        },
       },
     },
     triggerState: { getRespondedSeq: () => Promise.resolve(rec.respondedSeq) },
@@ -163,6 +180,35 @@ function job(over: Partial<ScribeJobPayload> = {}): { data: ScribeJobPayload } {
     },
   }
 }
+
+/** A playbook shaped like the prep template (myth-g4hf3 split fixture): two
+ *  NPC secrets + one revelation conclusion = three [SECRET-n] handles; the
+ *  encounter script ("fingers do not open") is CONSISTENCY material. */
+const STRUCTURED_PLAYBOOK = `# Stage-Direction Playbook: Test, Session 3
+
+## Session Goals
+- Let the party reach the vault.
+
+## NPC Secrets & Revelation Conditions
+
+### Old Bram
+- **Secret / hidden facts:** Bram is the duke's poisoner.
+- **Revelation condition:** trust earned through action.
+
+### Madame Voss
+- **Secret / hidden facts:** Voss sailed on the Crimson Marlin.
+
+## Revelation List (Three Clue Rule)
+
+### The duke ordered the poisoning
+- **Clue 1** (social) [corroborating]: Trigger: drinks with Bram.
+
+## Encounter Notes
+- The middle statue's fingers do not open. If pried: still stone.
+
+## Pacing Guidance
+- If dragging → [STAGE] a bell rings across the harbor [/STAGE]
+`
 
 const stInjection: WorkingSetProposal = {
   kind: 'fact',
@@ -445,8 +491,8 @@ describe('enqueueScribe', () => {
 })
 
 describe('processScribeJob — hard_reveal is recall-biased on confidence', () => {
-  it('case 8: a LOW-confidence hard_reveal still fires the open retcon (severity gates, not confidence)', async () => {
-    const { deps, rec } = makeDeps()
+  it('case 8: a LOW-confidence hard_reveal (with a recognized handle) still fires the open retcon (severity gates, not confidence)', async () => {
+    const { deps, rec } = makeDeps({ sdPlaybook: STRUCTURED_PLAYBOOK })
     deps.runTripwire = vi
       .fn()
       .mockResolvedValue(tripwireOut({ severity: 'hard_reveal', confidence: 0.15, secretRef: '[SECRET-2]' }))
@@ -465,21 +511,263 @@ describe('processScribeJob — hard_reveal is recall-biased on confidence', () =
     expect(retcon?.subjectName).toBe('[SECRET-2]')
   })
 
-  it('case 12: hard_reveal with a null secretRef → defensive [SECRET-1] fallback handle', async () => {
+  it('case 12 (myth-g4hf3 handle gate): hard_reveal with a NULL secretRef routes to the SILENT ST steer — no open retcon', async () => {
     const { deps, rec } = makeDeps()
     deps.runTripwire = vi
       .fn()
       .mockResolvedValue(tripwireOut({ severity: 'hard_reveal', confidence: 0.9, secretRef: null }))
+    deps.runRetcon = vi.fn()
+
+    await processScribeJob(deps, job())
+
+    // A hard verdict that names NO listed secret is not licensed to retcon —
+    // the Streisand-retcon protection's structural backstop.
+    expect(deps.runRetcon).not.toHaveBeenCalled()
+    expect(rec.enqueuedTurns).toHaveLength(0)
+    expect(rec.enqueuedStEvals).toHaveLength(1)
+    const warns = vi.mocked(deps.logger.warn).mock.calls.map((c) => String(c[1]))
+    expect(warns.some((m) => m.includes('without a recognized secret handle'))).toBe(true)
+  })
+})
+
+describe('splitPlaybook — per-secret handles vs consistency material (myth-g4hf3)', () => {
+  it('case 15: a template-shaped playbook splits into per-secret [SECRET-n] blocks; scripts/pacing become consistency', () => {
+    const split = splitPlaybook(STRUCTURED_PLAYBOOK)
+
+    expect(split.fallback).toBe(false)
+    expect(split.handles).toEqual(['[SECRET-1]', '[SECRET-2]', '[SECRET-3]'])
+    // Each NPC secret + the revelation conclusion is its own handle-annotated block.
+    expect(split.secrets).toContain('[SECRET-1] ### Old Bram')
+    expect(split.secrets).toContain('[SECRET-2] ### Madame Voss')
+    expect(split.secrets).toContain('[SECRET-3] ### The duke ordered the poisoning')
+    // The encounter script is NOT secret material.
+    expect(split.secrets).not.toContain('fingers do not open')
+    expect(split.consistency).toContain('fingers do not open')
+    expect(split.consistency).toContain('## Pacing Guidance')
+    expect(split.consistency).toContain('## Session Goals')
+    // And no secret material bleeds into the consistency block.
+    expect(split.consistency).not.toContain('poisoner')
+    expect(split.consistency).not.toContain('Crimson Marlin')
+  })
+
+  it('case 16: a playbook with NO recognizable secret section falls back to the v1 whole-playbook lump (over-protective)', () => {
+    const split = splitPlaybook('The duke is the poisoner; the ring is cursed.')
+
+    expect(split.fallback).toBe(true)
+    expect(split.handles).toEqual(['[SECRET-1]'])
+    expect(split.secrets).toBe('[SECRET-1] The duke is the poisoner; the ring is cursed.')
+    expect(split.consistency).toBe('')
+  })
+
+  it('case 28: a secret section with NO ### sub-heads rides whole as ONE handle (prep drift degrades toward protection)', () => {
+    const split = splitPlaybook(
+      '# Playbook\n\n## NPC Secrets & Revelation Conditions\nThe duke ordered the poisoning.\n\n## Session Goals\nKeep the party moving.',
+    )
+
+    expect(split.fallback).toBe(false)
+    expect(split.handles).toEqual(['[SECRET-1]'])
+    expect(split.secrets).toBe(
+      '[SECRET-1] ## NPC Secrets & Revelation Conditions\nThe duke ordered the poisoning.',
+    )
+    expect(split.consistency).toContain('## Session Goals')
+    expect(split.consistency).not.toContain('poisoning')
+  })
+
+  it('case 29: an EMPTY secret section emits no phantom handle (the other secret section still splits)', () => {
+    const split = splitPlaybook(
+      '## NPC Secrets & Revelation Conditions\n\n## Revelation List (Three Clue Rule)\n### The duke ordered the poisoning\nClue one; clue two; clue three.',
+    )
+
+    expect(split.fallback).toBe(false)
+    expect(split.handles).toEqual(['[SECRET-1]'])
+    expect(split.secrets).toContain('[SECRET-1] ### The duke ordered the poisoning')
+  })
+})
+
+describe('processScribeJob — tripwire input carries the split + the dice grounding floor (myth-g4hf3)', () => {
+  it('case 17: secrets = per-secret blocks; consistencyContext = scripts/pacing; diceOutcomes = the resolved checks', async () => {
+    const { deps } = makeDeps({ sdPlaybook: STRUCTURED_PLAYBOOK })
+    const tw = vi.fn().mockResolvedValue(tripwireOut())
+    deps.runTripwire = tw
+
+    await processScribeJob(
+      deps,
+      job({
+        skillChecks: [
+          {
+            characterName: 'Sable',
+            skill: 'Investigation',
+            dc: 12,
+            outcomeTier: 'great_success',
+            constraint: 'reveals the statue grips something precious',
+          },
+        ],
+      }),
+    )
+
+    const arg = tw.mock.calls[0]?.[0] as {
+      secrets: string
+      consistencyContext: string
+      diceOutcomes: string
+    }
+    expect(arg.secrets).toContain('[SECRET-2] ### Madame Voss')
+    expect(arg.secrets).not.toContain('fingers do not open')
+    expect(arg.consistencyContext).toContain('fingers do not open')
+    expect(arg.diceOutcomes).toContain('Sable · Investigation vs DC 12 → great_success')
+    expect(arg.diceOutcomes).toContain('reveals the statue grips something precious')
+  })
+
+  it('case 18: no skillChecks on the payload (pre-upgrade job) → empty diceOutcomes, no crash', async () => {
+    const { deps } = makeDeps()
+    const tw = vi.fn().mockResolvedValue(tripwireOut())
+    deps.runTripwire = tw
+
+    await processScribeJob(deps, job())
+
+    const arg = tw.mock.calls[0]?.[0] as { diceOutcomes: string }
+    expect(arg.diceOutcomes).toBe('')
+  })
+})
+
+describe('processScribeJob — hard_reveal handle gate (myth-g4hf3 crit-grant protection)', () => {
+  it('case 19: hard_reveal citing [CONSISTENCY] → SILENT ST steer, never an open retcon', async () => {
+    const { deps, rec } = makeDeps({ sdPlaybook: STRUCTURED_PLAYBOOK })
+    deps.runTripwire = vi
+      .fn()
+      .mockResolvedValue(tripwireOut({ severity: 'hard_reveal', confidence: 0.8, secretRef: '[CONSISTENCY]' }))
+    deps.runRetcon = vi.fn()
+
+    await processScribeJob(deps, job())
+
+    expect(deps.runRetcon).not.toHaveBeenCalled()
+    expect(rec.enqueuedTurns).toHaveLength(0)
+    expect(rec.enqueuedStEvals).toHaveLength(1)
+  })
+
+  it('case 20: hard_reveal citing a hallucinated handle ([SECRET-9]) → SILENT ST steer', async () => {
+    const { deps, rec } = makeDeps({ sdPlaybook: STRUCTURED_PLAYBOOK })
+    deps.runTripwire = vi
+      .fn()
+      .mockResolvedValue(tripwireOut({ severity: 'hard_reveal', confidence: 0.8, secretRef: '[SECRET-9]' }))
+    deps.runRetcon = vi.fn()
+
+    await processScribeJob(deps, job())
+
+    expect(deps.runRetcon).not.toHaveBeenCalled()
+    expect(rec.enqueuedTurns).toHaveLength(0)
+    expect(rec.enqueuedStEvals).toHaveLength(1)
+  })
+
+  it('case 21: a bracket/case-drifted but REAL handle (secret-2) still passes the gate (normalize, not string-equal)', async () => {
+    const { deps, rec } = makeDeps({ sdPlaybook: STRUCTURED_PLAYBOOK })
+    deps.runTripwire = vi
+      .fn()
+      .mockResolvedValue(tripwireOut({ severity: 'hard_reveal', confidence: 0.8, secretRef: 'secret-2' }))
     deps.runRetcon = vi.fn().mockResolvedValue(retconOut())
 
     await processScribeJob(deps, job())
 
     expect(deps.runRetcon).toHaveBeenCalledTimes(1)
-    // The retcon-author receives the fallback handle as its `breach` input.
-    const breachArg = (vi.mocked(deps.runRetcon).mock.calls[0]?.[0] as { breach: string }).breach
-    expect(breachArg).toBe('[SECRET-1]')
-    const retcon = rec.appended.flat().find((i) => i.source === 'retcon')
-    expect(retcon?.subjectName).toBe('[SECRET-1]')
+    expect(rec.enqueuedTurns).toHaveLength(1)
+  })
+})
+
+describe('processScribeJob — dice_outcome provenance (myth-g4hf3 canonize-on-grant)', () => {
+  const delta = {
+    worldDelta: { facts: [{ subject: 'the sliver', content: 'Sable holds a stone sliver.', kind: 'fact' as const }] },
+  }
+  const check = (tier: 'fail' | 'success' | 'great_success') => ({
+    characterName: 'Sable',
+    skill: 'Investigation',
+    dc: 12,
+    outcomeTier: tier,
+    constraint: 'c',
+  })
+
+  it('case 22: a great_success turn stamps its ft_delta facts dice_outcome (canon-on-grant)', async () => {
+    const { deps, rec } = makeDeps()
+    deps.runTripwire = vi.fn().mockResolvedValue(tripwireOut())
+
+    await processScribeJob(deps, job({ ...delta, skillChecks: [check('fail'), check('great_success')] }))
+
+    const item = rec.appended[0]?.[0]
+    expect(item?.source).toBe('ft_delta')
+    expect(item?.provenance).toEqual({ kind: 'dice_outcome', outcomeTier: 'great_success' })
+  })
+
+  it('case 23: a turn with only FAILED checks (or none) keeps objective provenance', async () => {
+    const { deps, rec } = makeDeps()
+    deps.runTripwire = vi.fn().mockResolvedValue(tripwireOut())
+
+    await processScribeJob(deps, job({ ...delta, skillChecks: [check('fail')] }))
+
+    expect(rec.appended[0]?.[0]?.provenance).toEqual({ kind: 'objective' })
+  })
+
+  it('case 27: a plain success (no great) stamps dice_outcome success — the grant tier the dice actually earned', async () => {
+    const { deps, rec } = makeDeps()
+    deps.runTripwire = vi.fn().mockResolvedValue(tripwireOut())
+
+    await processScribeJob(deps, job({ ...delta, skillChecks: [check('fail'), check('success')] }))
+
+    expect(rec.appended[0]?.[0]?.provenance).toEqual({ kind: 'dice_outcome', outcomeTier: 'success' })
+  })
+})
+
+describe('processScribeJob — verdict persistence (myth-g4hf3)', () => {
+  it('case 24: every verdict persists one row (severity/confidence/sanitized handle)', async () => {
+    const { deps, rec } = makeDeps({ sdPlaybook: STRUCTURED_PLAYBOOK })
+    deps.runTripwire = vi
+      .fn()
+      .mockResolvedValue(tripwireOut({ severity: 'soft_consistency', confidence: 0.6, secretRef: '[SECRET-1]' }))
+
+    await processScribeJob(deps, job())
+
+    expect(rec.verdicts).toEqual([
+      {
+        campaignId: CAMPAIGN,
+        sessionId: SESSION,
+        turnId: TURN,
+        severity: 'soft_consistency',
+        confidence: 0.6,
+        secretRef: '[SECRET-1]',
+      },
+    ])
+  })
+
+  it('case 25: an unrecognized secretRef persists as [UNRECOGNIZED] — arbitrary model text never lands durably', async () => {
+    const { deps, rec } = makeDeps({ sdPlaybook: STRUCTURED_PLAYBOOK })
+    deps.runTripwire = vi.fn().mockResolvedValue(
+      tripwireOut({
+        severity: 'hard_reveal',
+        confidence: 0.7,
+        secretRef: 'the duke poisoned the well', // a model echoing content, not a handle
+      }),
+    )
+    deps.runRetcon = vi.fn()
+
+    await processScribeJob(deps, job())
+
+    expect(rec.verdicts[0]?.secretRef).toBe('[UNRECOGNIZED]')
+    // And the unrecognized handle also fails the routing gate (no open retcon).
+    expect(deps.runRetcon).not.toHaveBeenCalled()
+  })
+
+  it('case 26: a verdict-persist failure fail-softs — routing still runs (the job is TOTAL)', async () => {
+    const { deps, rec } = makeDeps({ sdPlaybook: STRUCTURED_PLAYBOOK })
+    deps.repo.tripwireVerdicts.insert = () => Promise.reject(new Error('pg boom'))
+    deps.runTripwire = vi
+      .fn()
+      .mockResolvedValue(tripwireOut({ severity: 'hard_reveal', confidence: 0.9, secretRef: '[SECRET-1]' }))
+    deps.runRetcon = vi.fn().mockResolvedValue(retconOut())
+
+    await expect(processScribeJob(deps, job())).resolves.toBeUndefined()
+
+    // The retcon path still ran despite the persist failure.
+    expect(deps.runRetcon).toHaveBeenCalledTimes(1)
+    expect(rec.enqueuedTurns).toHaveLength(1)
+    const warns = vi.mocked(deps.logger.warn).mock.calls.map((c) => String(c[1]))
+    expect(warns.some((m) => m.includes('verdict persist failed'))).toBe(true)
   })
 })
 

@@ -23,7 +23,7 @@ The `summary` and `emergingThreads` are prose you author — write them in the r
 
 {{include:shared/prose-register}}
 
-`summary`: 2-4 sentences. A tight recap of what the party did and what visibly happened, player-witnessed only.
+`summary`: a tight recap of what the party did and what visibly happened, player-witnessed only. Shape it to the session's movement: 1-4 SHORT paragraphs (2-4 sentences each), separated by a blank line, broken where the session itself breaks — a discovery, a confrontation, a journey, a retreat. A session that was one continuous scene may be a single paragraph; a session with several distinct movements must NOT be compressed into one dense block. The paragraph breaks are structural only — same words, same register as a single paragraph would carry.
 
 `emergingThreads`: the open questions and tensions the players themselves are now chasing or have visibly stumbled into. Player-witnessed only — no prep-only threads.
 
@@ -37,4 +37,4 @@ The `summary` and `emergingThreads` are prose you author — write them in the r
 - `handoff.keyLocations`: the session's notable locations (~6 max). For each, a VERBATIM sensory `atmosphere` snippet drawn from the transcript prose.
 
 Emit ONLY the structured object:
-{ "summary": "<2-4 sentence player-facing recap>", "emergingThreads": ["<player-witnessed open thread>"], "handoff": { "party": [ { "characterName": "<PC name>", "location": "<exact end-of-session location>", "condition": "<exact end-of-session condition>" } ], "timeOfDay": "<in-world time at session end>", "unresolvedThreads": ["<open thread, most urgent first>"], "npcs": [ { "name": "<NPC name>", "state": "<current disposition toward the party>", "voice": ["<verbatim transcript line>"] } ], "keyLocations": [ { "name": "<location name>", "atmosphere": "<verbatim sensory snippet>" } ] } }
+{ "summary": "<player-facing recap: 1-4 short paragraphs separated by blank lines>", "emergingThreads": ["<player-witnessed open thread>"], "handoff": { "party": [ { "characterName": "<PC name>", "location": "<exact end-of-session location>", "condition": "<exact end-of-session condition>" } ], "timeOfDay": "<in-world time at session end>", "unresolvedThreads": ["<open thread, most urgent first>"], "npcs": [ { "name": "<NPC name>", "state": "<current disposition toward the party>", "voice": ["<verbatim transcript line>"] } ], "keyLocations": [ { "name": "<location name>", "atmosphere": "<verbatim sensory snippet>" } ] } }

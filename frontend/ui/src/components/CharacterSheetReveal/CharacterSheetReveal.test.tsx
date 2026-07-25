@@ -55,15 +55,16 @@ const MARTIAL_FULL: FullSheet = {
   spells: [],
 }
 
-// A caster (a Wizard): the curated + full spells panels are present.
+// A caster (a Wizard): the curated + full spells panels are present. Spells
+// arrive as level-grouped label·value prose lines (ux-run2 myth-wbd89 — the
+// sheetViewModel groups them; the panel renders whatever entries it is handed).
 const CASTER_CURATED: CuratedSheet = {
   ...MARTIAL_CURATED,
   name: 'Ilma the Unwritten',
   identityLine: 'Level 3 · Gnome Wizard · Evocation',
   spells: [
-    { name: 'Fire Bolt', gloss: 'Cantrip · a mote of directed flame.' },
-    { name: 'Shield', gloss: 'Reaction · a sudden wall of force.' },
-    { name: 'Magic Missile' },
+    { name: 'Cantrips', gloss: 'Fire Bolt · Shield' },
+    { name: 'Level 1', gloss: 'Magic Missile' },
   ],
 }
 
@@ -71,22 +72,22 @@ const CASTER_FULL: FullSheet = {
   ...MARTIAL_FULL,
   savingThrows: ['Intelligence', 'Wisdom'],
   spells: [
-    { name: 'Fire Bolt' },
-    { name: 'Shield' },
-    { name: 'Magic Missile' },
-    { name: 'Detect Magic' },
+    { name: 'Cantrips', gloss: 'Fire Bolt · Shield' },
+    { name: 'Level 1', gloss: 'Magic Missile · Detect Magic' },
   ],
 }
 
 const noop = (): void => undefined
 
-// The resolved chrome labels the shell supplies (real MYT-100 copy — `startOver`
-// resolves `$t(shared.beginAgain)`).
+// The resolved chrome labels the shell supplies (real MYT-100 copy).
 const LABELS = {
   confirm: 'This is me',
   seeFull: 'See full sheet',
   hideFull: 'Hide full sheet',
-  startOver: 'Begin again',
+  startOver: 'Start over',
+  startOverPrompt: 'Start over? This discards this character.',
+  startOverConfirm: 'Yes, start over',
+  startOverKeep: 'Keep them',
   panelFeatures: 'What they can do',
   panelEquipment: 'What they carry',
   panelSpells: 'What they can cast',
@@ -100,6 +101,9 @@ function baseProps(overrides: Partial<React.ComponentProps<typeof CharacterSheet
     expanded: false,
     onToggleExpand: noop,
     onConfirm: noop,
+    startOverConfirming: false,
+    onRequestStartOver: noop,
+    onCancelStartOver: noop,
     onStartOver: noop,
     ...overrides,
   }
@@ -139,6 +143,29 @@ describe('CharacterSheetReveal', () => {
     expect(byAbbrev('CHA').textContent).toContain('−1')
   })
 
+  // ux-run2 myth-8ps4n: the caster's spellcasting ability carries the quiet
+  // casting mark; a martial sheet shows none.
+  it('marks the casting ability tile when the view-model flags it', () => {
+    const castingCurated: CuratedSheet = {
+      ...CASTER_CURATED,
+      abilities: CASTER_CURATED.abilities.map((tile) =>
+        tile.abbrev === 'INT' ? { ...tile, casting: true } : tile,
+      ),
+    }
+    const caster = render(
+      <CharacterSheetReveal {...baseProps({ curated: castingCurated, full: CASTER_FULL })} />,
+    )
+    const intTile = caster
+      .getAllByTestId('character-sheet-reveal-ability')
+      .find((t) => t.getAttribute('data-abbrev') === 'INT')
+    expect(intTile?.textContent).toContain('casting')
+    caster.unmount()
+    const martial = render(<CharacterSheetReveal {...baseProps()} />)
+    for (const tile of martial.getAllByTestId('character-sheet-reveal-ability')) {
+      expect(tile.textContent).not.toContain('casting')
+    }
+  })
+
   it('renders the connection prose paragraphs', () => {
     const { getByText } = render(<CharacterSheetReveal {...baseProps()} />)
     for (const para of MARTIAL_CURATED.prose) {
@@ -163,8 +190,19 @@ describe('CharacterSheetReveal', () => {
       <CharacterSheetReveal {...baseProps({ curated: CASTER_CURATED, full: CASTER_FULL })} />,
     )
     const spells = within(caster.getByTestId('character-sheet-reveal-spells'))
-    expect(spells.getByText('Fire Bolt')).toBeInTheDocument()
+    expect(spells.getByText('Cantrips')).toBeInTheDocument()
+    expect(spells.getByText('Fire Bolt · Shield')).toBeInTheDocument()
     expect(spells.getByText('Magic Missile')).toBeInTheDocument()
+  })
+
+  // ux-run2 myth-wbd89: the left column holds content for the full height of the
+  // right — the saving throws (previously hoarded by "See full sheet") sit as a
+  // quiet label·value panel under the connection prose, always visible.
+  it('renders the curated saving-throws panel without expanding', () => {
+    const { getByTestId } = render(<CharacterSheetReveal {...baseProps({ expanded: false })} />)
+    const saves = getByTestId('character-sheet-reveal-saves-curated')
+    expect(saves.textContent).toContain('Strength')
+    expect(saves.textContent).toContain('Constitution')
   })
 
   it('hides the full sheet when expanded=false', () => {
@@ -206,7 +244,7 @@ describe('CharacterSheetReveal', () => {
       />,
     )
     const fullSpells = within(caster.getByTestId('character-sheet-reveal-full-spells'))
-    expect(fullSpells.getByText('Detect Magic')).toBeInTheDocument()
+    expect(fullSpells.getByText('Magic Missile · Detect Magic')).toBeInTheDocument()
   })
 
   it('the toggle label reflects the expanded state', () => {
@@ -267,11 +305,40 @@ describe('CharacterSheetReveal', () => {
     expect(onConfirm).toHaveBeenCalledOnce()
   })
 
-  it('fires onStartOver from the start-over control', async () => {
+  // ux-run2 myth-fca4y: the destructive restart is two-step. The Start over
+  // control only ARMS the confirm (onRequestStartOver); the discard itself fires
+  // only from the confirm verb. The control sits isolated right of the primary.
+  it('fires onRequestStartOver — never onStartOver — from the Start over control', async () => {
+    const onRequestStartOver = vi.fn()
     const onStartOver = vi.fn()
     const user = userEvent.setup()
-    const { getByRole } = render(<CharacterSheetReveal {...baseProps({ onStartOver })} />)
-    await user.click(getByRole('button', { name: /begin again/i }))
+    const { getByRole } = render(
+      <CharacterSheetReveal {...baseProps({ onRequestStartOver, onStartOver })} />,
+    )
+    const control = getByRole('button', { name: /^start over$/i })
+    // Isolated at the far edge of the action row, away from the keep-actions.
+    expect(control.parentElement?.className).toContain('ml-auto')
+    await user.click(control)
+    expect(onRequestStartOver).toHaveBeenCalledOnce()
+    expect(onStartOver).not.toHaveBeenCalled()
+  })
+
+  it('renders the inline confirm when startOverConfirming — confirm discards, dismiss keeps', async () => {
+    const onStartOver = vi.fn()
+    const onCancelStartOver = vi.fn()
+    const user = userEvent.setup()
+    const { getByRole, getByText, queryByRole } = render(
+      <CharacterSheetReveal
+        {...baseProps({ startOverConfirming: true, onStartOver, onCancelStartOver })}
+      />,
+    )
+    // The plain control is replaced by the prompt + the two verbs.
+    expect(queryByRole('button', { name: /^start over$/i })).toBeNull()
+    expect(getByText('Start over? This discards this character.')).toBeInTheDocument()
+    await user.click(getByRole('button', { name: /keep them/i }))
+    expect(onCancelStartOver).toHaveBeenCalledOnce()
+    expect(onStartOver).not.toHaveBeenCalled()
+    await user.click(getByRole('button', { name: /yes, start over/i }))
     expect(onStartOver).toHaveBeenCalledOnce()
   })
 

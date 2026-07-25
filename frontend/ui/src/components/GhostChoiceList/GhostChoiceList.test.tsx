@@ -98,6 +98,37 @@ describe('GhostChoiceList', () => {
     expect(ref.current).toBeInstanceOf(HTMLDivElement)
   })
 
+  it('stacks as a single column by default', () => {
+    const ref = createRef<HTMLDivElement>()
+    render(<GhostChoiceList ref={ref} items={fork()} />)
+    expect(ref.current?.className).toContain('flex-col')
+    expect(ref.current?.className).not.toContain('sm:grid-cols-2')
+  })
+
+  it('seats the choices side by side when columns=2 (restacking below sm)', () => {
+    // ux-run2 myth-ma8yv (critique 024): a binary fork reads as two doors, not a
+    // stack of bars — two columns at comfortable widths, one column at 375px.
+    const ref = createRef<HTMLDivElement>()
+    render(<GhostChoiceList ref={ref} items={fork()} columns={2} />)
+    expect(ref.current?.className).toContain('grid')
+    expect(ref.current?.className).toContain('grid-cols-1')
+    expect(ref.current?.className).toContain('sm:grid-cols-2')
+  })
+
+  it('gives the side-by-side cards their taller (door, not letterbox) floor', () => {
+    const { getAllByRole } = render(<GhostChoiceList items={fork()} columns={2} />)
+    for (const btn of getAllByRole('button')) {
+      expect(btn.className).toContain('min-h-[10rem]')
+    }
+  })
+
+  it('keeps the stacked strips at their content height (no tall floor)', () => {
+    const { getAllByRole } = render(<GhostChoiceList items={fork()} />)
+    for (const btn of getAllByRole('button')) {
+      expect(btn.className).not.toContain('min-h-[10rem]')
+    }
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(<GhostChoiceList items={fork()} />)
     expect(await axe(container)).toHaveNoViolations()

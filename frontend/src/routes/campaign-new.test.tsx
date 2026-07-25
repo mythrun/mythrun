@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
-import { render, screen, act, cleanup, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, act, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider, useParams } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
@@ -76,6 +76,9 @@ function renderRoute(): void {
     [
       { path: '/campaigns/new', element: <CampaignNewRoute /> },
       { path: '/campaigns/:campaignId', element: <CampaignTarget /> },
+      // The HOME landing — the fork's exit affordance (ux-run2 myth-80an1)
+      // resolves here; its presence proves the flow has a way out.
+      { path: '/', element: <div data-testid="route-home-target" /> },
     ],
     { initialEntries: ['/campaigns/new'] },
   )
@@ -190,8 +193,26 @@ describe('CampaignNewRoute', () => {
     expect(screen.getByTestId('screen-fork')).toBeDefined()
     expect(screen.getByText(ideaTitle())).toBeDefined()
     expect(screen.getByText(loveTitle())).toBeDefined()
-    // Back is hidden on the fork (it is the flow's root).
-    expect(screen.queryByTestId('campaign-new-back')).toBeNull()
+    // The fork has an EXIT (ux-run2 myth-80an1: "the only escape was guessing
+    // that the logo goes home") — the quiet Back leads home.
+    expect(screen.getByTestId('campaign-new-back')).toBeDefined()
+  })
+
+  it('the fork Back exits the flow to home (the flow root has a named way out)', () => {
+    renderRoute()
+    act(() => { screen.getByTestId('campaign-new-back').click() })
+    expect(screen.getByTestId('route-home-target')).toBeDefined()
+  })
+
+  it('labels the wizard-level top exit "Leave brainstorm" on guided (one Back, one meaning)', () => {
+    renderRoute()
+    act(() => { screen.getByText(loveTitle()).click() })
+    // ux-run2 myth-80an1: on step 3 the top control and the step-level "← Back"
+    // beside Next were IDENTICAL twins with different destinations. The top
+    // affordance now says what it does; the step Back stays the only "Back".
+    expect(screen.getByTestId('campaign-new-back').textContent).toBe(
+      i18n.t('campaignNew.guided.leave'),
+    )
   })
 
   it('advances to the freeform screen when "Start from an idea" is chosen', () => {
@@ -212,7 +233,8 @@ describe('CampaignNewRoute', () => {
     expect(screen.getByTestId('screen-freeform')).toBeDefined()
     act(() => { screen.getByTestId('campaign-new-back').click() })
     expect(screen.getByTestId('screen-fork')).toBeDefined()
-    expect(screen.queryByTestId('campaign-new-back')).toBeNull()
+    // Back on the fork it reads as the plain Back again (the home exit).
+    expect(screen.getByTestId('campaign-new-back').textContent).toBe(i18n.t('back'))
   })
 })
 
@@ -304,7 +326,7 @@ describe('CampaignNewRoute freeform screen', () => {
 
   it('switches to the guided path when the quiet switch line is pressed', () => {
     gotoFreeform()
-    act(() => { screen.getByTestId('freeform-switch').click() })
+    act(() => { within(screen.getByTestId('freeform-switch')).getByRole('button').click() })
     expect(screen.getByTestId('screen-guided')).toBeDefined()
   })
 })
@@ -352,6 +374,49 @@ describe('CampaignNewRoute guided screen', () => {
     // No step-back on step one; the quiet freeform switch is offered instead.
     expect(screen.queryByTestId('guided-back')).toBeNull()
     expect(screen.getByTestId('guided-switch')).toBeDefined()
+  })
+
+  it('scaffolds the blank page: an example placeholder + a shape hint wired to the why field', () => {
+    gotoGuided()
+    // ux-run2 myth-exobi: the story field carries one evocative real title as a
+    // faint placeholder, and a single mono hint under the why field says what
+    // shape of answer is plenty — wired via aria-describedby.
+    expect(nameInput().placeholder).toBe(i18n.t('campaignNew.guided.titlePlaceholder'))
+    const hint = screen.getByText(i18n.t('campaignNew.guided.whyHint'))
+    expect(hint.id).toBeTruthy()
+    expect(whyInput().getAttribute('aria-describedby')).toBe(hint.id)
+  })
+
+  it('advancing is sequence-aware: varied questions + settled picks echoed above (no data-loss beat)', () => {
+    gotoGuided()
+    // Step 1 asks with the protected opening copy.
+    expect(screen.getByText(i18n.t('campaignNew.guided.nameQuestion.one'))).toBeDefined()
+    expect(screen.queryByTestId('guided-settled-1')).toBeNull()
+    typePick(PICKS[0].title, PICKS[0].whyILikeIt)
+    act(() => { advanceBtn().click() })
+    // ux-run2 myth-tf60g: step 2 must NOT be a pixel-repeat over emptied fields —
+    // the question re-phrases for a SECOND story and step 1's answer stays
+    // on-screen as a settled ledger row.
+    expect(screen.getByText(i18n.t('campaignNew.guided.nameQuestion.two'))).toBeDefined()
+    expect(screen.getByTestId('guided-settled-1').textContent).toContain(PICKS[0].title)
+    expect(nameInput().value).toBe('')
+    typePick(PICKS[1].title, PICKS[1].whyILikeIt)
+    act(() => { advanceBtn().click() })
+    // Step 3: the terse closer + both settled stories in the ledger.
+    expect(screen.getByText(i18n.t('campaignNew.guided.nameQuestion.three'))).toBeDefined()
+    expect(screen.getByTestId('guided-settled-1').textContent).toContain(PICKS[0].title)
+    expect(screen.getByTestId('guided-settled-2').textContent).toContain(PICKS[1].title)
+  })
+
+  it('offers the escape hatch on EVERY step, not just step one', () => {
+    gotoGuided()
+    typePick(PICKS[0].title, PICKS[0].whyILikeIt)
+    act(() => { advanceBtn().click() })
+    // ux-run2 myth-vjl7d: "if the hatch is worth offering, offer it on every
+    // step" — and it still switches to freeform mid-wizard.
+    const hatch = screen.getByTestId('guided-switch')
+    act(() => { within(hatch).getByRole('button').click() })
+    expect(screen.getByTestId('screen-freeform')).toBeDefined()
   })
 
   it('advances through the three steps with the primary action', () => {
@@ -541,9 +606,9 @@ describe('CampaignNewRoute guided screen', () => {
     expect(opens[0]?.init.signal.aborted).toBe(true)
   })
 
-  it('switches to the freeform path from the step-one quiet switch line', () => {
+  it('switches to the freeform path from the quiet switch line', () => {
     gotoGuided()
-    act(() => { screen.getByTestId('guided-switch').click() })
+    act(() => { within(screen.getByTestId('guided-switch')).getByRole('button').click() })
     expect(screen.getByTestId('screen-freeform')).toBeDefined()
   })
 })
@@ -590,6 +655,71 @@ describe('CampaignNewRoute preview screen', () => {
     expect(screen.getByTestId('preview-start-over')).toBeDefined()
     // No spent-note before any rework.
     expect(screen.queryByTestId('preview-change-spent')).toBeNull()
+    // ux-run2 myth-ia9v2: a compact keep-pair sits ABOVE the prose too, so the
+    // first viewport already shows a decision exists; the commitment cost is
+    // disclosed under the primary (myth-fca4y).
+    expect(screen.getByTestId('preview-begin-top')).toBeDefined()
+    expect(screen.getByText(i18n.t('campaignNew.preview.cost'))).toBeDefined()
+  })
+
+  // ux-run2 myth-8u3h3: the weave acknowledges what it wove — the player's own
+  // three named stories as a quiet attribution line under the eyebrow. Read from
+  // the guided draft (which survives synthesize → preview), so the line needs a
+  // configured store; without one it simply doesn't render (the test below).
+  it('renders the "Woven from" attribution line from the guided picks', async () => {
+    configureGuidedDraft(makeDraftStore())
+    try {
+      await gotoPreview()
+      expect(screen.getByTestId('preview-woven-from').textContent).toBe(
+        i18n.t('campaignNew.preview.wovenFrom', { sources: 'Dark Souls · Dune · Annihilation' }),
+      )
+    } finally {
+      configureGuidedDraft(null)
+    }
+  })
+
+  it('omits the attribution line when no draft is readable', async () => {
+    await gotoPreview()
+    expect(screen.queryByTestId('preview-woven-from')).toBeNull()
+  })
+
+  it('renders the concept in PARAGRAPHS at its blank-line seams (no wall of text)', async () => {
+    const threePart = 'The archive drowns twice a day.\n\nThe Ledgermen tax the tide.\n\nYou begin at the low-water mark.'
+    await gotoPreview(threePart)
+    const prose = screen.getByTestId('preview-concept')
+    const paragraphs = prose.querySelectorAll('p')
+    expect(paragraphs).toHaveLength(3)
+    expect(paragraphs[0]?.textContent).toBe('The archive drowns twice a day.')
+    expect(paragraphs[2]?.textContent).toBe('You begin at the low-water mark.')
+  })
+
+  it('the top compact Begin commits exactly like the main one', async () => {
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns`, () =>
+        HttpResponse.json({ campaignId: 'c-top-1' }, { status: 201 }),
+      ),
+    )
+    await gotoPreview()
+    act(() => { screen.getByTestId('preview-begin-top').click() })
+    await waitFor(() => {
+      expect(screen.getByTestId('route-campaign-target').textContent).toBe('c-top-1')
+    })
+  })
+
+  it('Start over is a TWO-STEP confirm: the row swaps in place; Keep it declines', async () => {
+    await gotoPreview()
+    // First activation never discards — the row swaps to the inline confirm
+    // (ux-run2 myth-fca4y: "meant to commit, restarted instead" is the one
+    // error this screen must never permit).
+    act(() => { screen.getByTestId('preview-start-over').click() })
+    expect(screen.getByTestId('screen-preview')).toBeDefined()
+    expect(screen.getByText(i18n.t('campaignNew.preview.startOverConfirm'))).toBeDefined()
+    // The normal actions are swapped out while confirming.
+    expect(screen.queryByTestId('preview-begin')).toBeNull()
+    // Declining restores the action row with the draft intact.
+    act(() => { screen.getByTestId('preview-start-over-keep').click() })
+    expect(screen.getByTestId('preview-begin')).toBeDefined()
+    expect(screen.getByTestId('screen-preview')).toBeDefined()
   })
 
   it('commits the guided preview (wrapped body) and navigates to /campaigns/:id on Begin', async () => {
@@ -659,9 +789,10 @@ describe('CampaignNewRoute preview screen', () => {
     expect(screen.queryByTestId('screen-preview')).toBeNull()
   })
 
-  it('returns to the guided picks on Start over', async () => {
+  it('returns to the guided picks on a CONFIRMED Start over', async () => {
     await gotoPreview()
     act(() => { screen.getByTestId('preview-start-over').click() })
+    act(() => { screen.getByTestId('preview-start-over-yes').click() })
     expect(screen.getByTestId('screen-guided')).toBeDefined()
     expect(screen.queryByTestId('screen-preview')).toBeNull()
   })
@@ -764,6 +895,7 @@ describe('CampaignNewRoute guided draft persistence (§11)', () => {
   it('re-prefills the guided picks when Start over returns from the preview', async () => {
     await gotoPreviewWithDraft()
     act(() => { screen.getByTestId('preview-start-over').click() })
+    act(() => { screen.getByTestId('preview-start-over-yes').click() })
     // Back on guided (re-mounted from the persisted draft, on the last-typed step),
     // with that pick re-prefilled — the three picks were NOT lost (§11).
     expect(screen.getByTestId('screen-guided')).toBeDefined()

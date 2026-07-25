@@ -1,5 +1,6 @@
+import { useCallback } from 'react'
 import { z } from 'zod'
-import { useQuery, useSuspenseQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient, useSuspenseQuery } from '@tanstack/react-query'
 import {
   BalanceResponseSchema,
   type BalanceResponse,
@@ -51,6 +52,19 @@ export function useBalance() {
     queryKey: ['billing', 'balance'],
     queryFn: () => getBalance(undefined, ctx),
   })
+}
+
+/** A stable callback that marks the shared `['billing','balance']` cache stale
+ *  and refetches any active reader in the background (stale-while-revalidate —
+ *  suspense only gates the FIRST load, so the header readout updates in place).
+ *  The persistent chrome calls this on route navigation (myth-bsyu9): the
+ *  header never remounts, so a balance spent mid-route (ending a session)
+ *  otherwise survives as a stale readout on the next surface. */
+export function useInvalidateBalance(): () => void {
+  const queryClient = useQueryClient()
+  return useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['billing', 'balance'] })
+  }, [queryClient])
 }
 
 export const getSkus = defineEndpoint<SkuListingResponse>({

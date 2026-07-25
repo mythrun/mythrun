@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Stack, Text, Button, CharacterSheetReveal } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import {
   getCharacter as getCharacterApi,
   confirmCharacter as confirmCharacterApi,
@@ -54,6 +55,47 @@ type LoadState =
   | { status: 'error' }
   | { status: 'ready'; view: ReturnType<typeof toRevealViewModel> }
 
+/** The reveal's resolved chrome labels (shell-owned i18n). */
+function revealLabels(t: TFunction): React.ComponentProps<typeof CharacterSheetReveal>['labels'] {
+  return {
+    confirm: t('characterCreate.reveal.confirm'),
+    seeFull: t('characterCreate.reveal.seeFull'),
+    hideFull: t('characterCreate.reveal.hideFull'),
+    startOver: t('characterCreate.reveal.startOver'),
+    startOverPrompt: t('characterCreate.reveal.startOverPrompt'),
+    startOverConfirm: t('characterCreate.reveal.startOverConfirm'),
+    startOverKeep: t('characterCreate.reveal.startOverKeep'),
+    panelFeatures: t('characterCreate.reveal.panel.features'),
+    panelEquipment: t('characterCreate.reveal.panel.equipment'),
+    panelSpells: t('characterCreate.reveal.panel.spells'),
+  }
+}
+
+/** The calm loading line while the character read is in flight. */
+function RevealLoading({ t }: { t: TFunction }): React.JSX.Element {
+  return (
+    <Stack gap={4} data-testid="character-reveal-loading">
+      <Text role="ui-caption" as="p">
+        {t('characterCreate.reveal.loading')}
+      </Text>
+    </Stack>
+  )
+}
+
+/** The calm retryable error screen for a failed initial fetch. */
+function RevealError({ t, onRetry }: { t: TFunction; onRetry: () => void }): React.JSX.Element {
+  return (
+    <Stack gap={3} data-testid="character-reveal-error">
+      <Text role="ui-caption" as="p">
+        {t('characterCreate.reveal.loadError')}
+      </Text>
+      <Button variant="secondary" onPress={onRetry}>
+        {t('characterCreate.reveal.retry')}
+      </Button>
+    </Stack>
+  )
+}
+
 export function CharacterRevealSurface({
   campaignId,
   charId,
@@ -67,6 +109,10 @@ export function CharacterRevealSurface({
   const ctx = useApiContext()
   const [load, setLoad] = useState<LoadState>({ status: 'loading' })
   const [expanded, setExpanded] = useState(false)
+  // The two-step start-over confirm (ux-run2 myth-fca4y): the DS reveal is fully
+  // controlled, so this surface owns the armed/dismissed state; the destructive
+  // reset fires only from the confirm verb.
+  const [startOverConfirming, setStartOverConfirming] = useState(false)
   const [actionFailed, setActionFailed] = useState(false)
   // A retry nudge — bumping it re-runs the fetch effect.
   const [reloadKey, setReloadKey] = useState(0)
@@ -88,30 +134,16 @@ export function CharacterRevealSurface({
   }, [ctx, campaignId, charId, getCharacter, reloadKey])
 
   if (load.status === 'loading') {
-    return (
-      <Stack gap={4} data-testid="character-reveal-loading">
-        <Text role="ui-caption" as="p">
-          {t('characterCreate.reveal.loading')}
-        </Text>
-      </Stack>
-    )
+    return <RevealLoading t={t} />
   }
-
   if (load.status === 'error') {
     return (
-      <Stack gap={3} data-testid="character-reveal-error">
-        <Text role="ui-caption" as="p">
-          {t('characterCreate.reveal.loadError')}
-        </Text>
-        <Button
-          variant="secondary"
-          onPress={() => {
-            setReloadKey((k) => k + 1)
-          }}
-        >
-          {t('characterCreate.reveal.retry')}
-        </Button>
-      </Stack>
+      <RevealError
+        t={t}
+        onRetry={() => {
+          setReloadKey((k) => k + 1)
+        }}
+      />
     )
   }
 
@@ -147,16 +179,15 @@ export function CharacterRevealSurface({
           setExpanded((v) => !v)
         }}
         onConfirm={handleConfirm}
-        onStartOver={handleStartOver}
-        labels={{
-          confirm: t('characterCreate.reveal.confirm'),
-          seeFull: t('characterCreate.reveal.seeFull'),
-          hideFull: t('characterCreate.reveal.hideFull'),
-          startOver: t('characterCreate.reveal.startOver'),
-          panelFeatures: t('characterCreate.reveal.panel.features'),
-          panelEquipment: t('characterCreate.reveal.panel.equipment'),
-          panelSpells: t('characterCreate.reveal.panel.spells'),
+        startOverConfirming={startOverConfirming}
+        onRequestStartOver={() => {
+          setStartOverConfirming(true)
         }}
+        onCancelStartOver={() => {
+          setStartOverConfirming(false)
+        }}
+        onStartOver={handleStartOver}
+        labels={revealLabels(t)}
       />
       {actionFailed && (
         <Text role="ui-caption" as="p" data-testid="character-reveal-action-error">

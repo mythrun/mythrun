@@ -107,11 +107,26 @@ describe('Stack', () => {
     expect(screen.getByTestId('s').className).toContain('min-h-dvh')
   })
 
+  it('floors at the in-frame content region when minHeight="page"', () => {
+    // Viewport minus the app frame's fixed dressing — the floor that lets
+    // grow-weighted spacers seat a short flow screen optically (myth-ma8yv).
+    render(<Stack minHeight="page" data-testid="s" />)
+    expect(screen.getByTestId('s').className).toContain('min-h-[calc(100dvh-8.5rem)]')
+  })
+
   it('caps + centres the column when maxWidth is set (reading measure)', () => {
     render(<Stack maxWidth="form" data-testid="s" />)
     const el = screen.getByTestId('s')
     // The measure column: capped width, full up to the cap, centred via mx-auto.
     expect(el.className).toContain('max-w-[36rem]')
+    expect(el.className).toContain('mx-auto')
+    expect(el.className).toContain('w-full')
+  })
+
+  it('caps at the card-row content column when maxWidth="content" (~720px)', () => {
+    render(<Stack maxWidth="content" data-testid="s" />)
+    const el = screen.getByTestId('s')
+    expect(el.className).toContain('max-w-[45rem]')
     expect(el.className).toContain('mx-auto')
     expect(el.className).toContain('w-full')
   })

@@ -33,6 +33,7 @@ const CARD_WIDTH = 230
 export function CampaignCard({
   campaign,
   lowOnSessionCredits = false,
+  premier = false,
 }: {
   campaign: CampaignSummary
   /** Owner-only quiet low-credit line (MYT-95 T13, controller-applied post-91-merge).
@@ -40,6 +41,11 @@ export function CampaignCard({
    *  never sees the owner's billing state (no member-visible owner-balance read
    *  exists, by design). */
   lowOnSessionCredits?: boolean
+  /** This card holds the grid's premier (top-left) slot — the most-recent-activity
+   *  campaign (myth-z9eiq). When it also has a play record, it carries the accent
+   *  "Continue session" cta: the resume affordance a returning player came for.
+   *  Exactly one card per grid is premier (the hub passes it to index 0). */
+  premier?: boolean
 }): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const { id, name, worldName, worldColors, creator, party } = campaign
@@ -54,10 +60,23 @@ export function CampaignCard({
   // The mono ledger line (shared with the mobile index row — see card-phase-line).
   const stateLine = cardPhaseLine(campaign, t, i18n.language)
 
+  // The card's ONE accent cta line (myth-rhvkt / myth-z9eiq): a stalled
+  // needs-character card lifts its "Author your character →" out of metadata
+  // gray so "the ones waiting on me" pop when scanning a full grid; otherwise
+  // the premier slot's played card carries the resume cue. Never both — a card
+  // that needs a character can't be continued yet.
+  const cta =
+    campaign.cardPhase === 'needs-character'
+      ? stateLine
+      : premier && campaign.cardPhase === 'played'
+        ? t('home.card.continueSession')
+        : undefined
+
   return (
     <Link href={`/campaigns/${id}`} unstyled data-testid={`campaign-card-${id}`}>
       <CoverCard
         width={CARD_WIDTH}
+        {...(cta !== undefined ? { cta } : {})}
         cover={
           worldColors !== null ? (
             <CoverDither
@@ -99,10 +118,13 @@ export function CampaignCard({
               </AvatarGroup>
             ) : null}
             {/* Mono ledger line — the record/state, carried as plain text (the
-                register forbids a dot/badge/chip). */}
-            <Text role="meta" data-testid="card-state">
-              {stateLine}
-            </Text>
+                register forbids a dot/badge/chip). A needs-character card's line
+                IS the cta above, lifted to accent — no muted duplicate here. */}
+            {campaign.cardPhase !== 'needs-character' ? (
+              <Text role="meta" data-testid="card-state">
+                {stateLine}
+              </Text>
+            ) : null}
 
             {creator === null && lowOnSessionCredits ? (
               <Text role="meta" data-testid="card-low-credits">

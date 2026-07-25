@@ -16,7 +16,7 @@ import type {
   MessageStreamProps,
   TranscriptItem,
 } from '@mythrun/client-core/contract'
-import { Box, Drawer, Heading, IconButton, KnowledgeSidebar, ResizeHandle, useViewportBelowLg } from '@mythrun/ui'
+import { Box, Drawer, IconButton, KnowledgeSidebar, ResizeHandle, Text, useViewportBelowLg } from '@mythrun/ui'
 import { usePanelWidth } from '../../platform/web/use-panel-width.ts'
 
 // The play-screen knowledge layer (MYT-94, spec §6 / UX §9) — the brain + the
@@ -51,11 +51,12 @@ const RAIL_MAX_WIDTH = 560
 const RAIL_DEFAULT_WIDTH = 352
 const RAIL_WIDTH_KEY = 'mythrun:play:sidebar-width'
 
-/** The rail's height ceiling — the viewport minus a header allowance — so a TALL
- *  tab (a long wiki) scrolls INSIDE the rail instead of growing the page and
- *  pushing the chat input off-screen (the app-frame full-bleed root is a viewport
- *  FLOOR, `min-h-screen`, so a rail with no ceiling escapes it). */
-const RAIL_HEIGHT = 'h-[calc(100dvh-5rem)]'
+/** The rail fills the play shell's viewport-bounded row (myth-jyrs5): the shell
+ *  root now carries the hard height ceiling (100dvh minus the 5rem header
+ *  allowance), so the rail pins at every scroll position with its own internal
+ *  scroll — a TALL tab (a long wiki) scrolls INSIDE the rail, and the live edge
+ *  never sits beside a dead right gutter. */
+const RAIL_HEIGHT = 'h-full'
 
 // The stable seam/toggle testids MYT-92's shell tests key on — preserved so the
 // placeholder's meaning migrates into the real panel.
@@ -360,7 +361,7 @@ function DesktopRail({
   }
   return (
     // eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the docked rail row (resize handle + fixed-width viewport-bounded panel); the flex layout is not expressible via Box props
-    <aside className={`flex ${RAIL_HEIGHT} min-h-0 self-start`} data-testid={SEAM_TESTID}>
+    <aside className={`flex ${RAIL_HEIGHT} min-h-0`} data-testid={SEAM_TESTID}>
       <ResizeHandle
         value={width}
         min={RAIL_MIN_WIDTH}
@@ -371,9 +372,13 @@ function DesktopRail({
       />
       {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the docked panel at the reader-chosen width (dynamic style): header ATTACHED to the scrolling body as one bordered object */}
       <div style={{ width: `${String(width)}px` }} className="flex min-h-0 shrink-0 flex-col rounded-none border border-border-strong bg-surface">
-        {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the panel header row (title + collapse), joined to the body by the shared bottom border */}
+        {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the panel header row (label + collapse), joined to the body by the shared bottom border */}
         <div className="flex items-center justify-between gap-[var(--space-2)] border-b border-border-strong px-[var(--space-3)] py-[var(--space-2)]">
-          <Heading level={2} role="title">{t('play.sidebar.title')}</Heading>
+          {/* myth-6cs9q: a PLAIN quiet section label, not a serif title — the panel
+              is a margin note, not a title page, and the old title-scale row was
+              one of three stacked nav layers before any content. The chevron
+              beside it stays the real collapse affordance. */}
+          <Text role="ui-label" as="p">{t('play.sidebar.title')}</Text>
           <IconButton
             icon="chevron-right"
             label={t('play.sidebar.collapse')}

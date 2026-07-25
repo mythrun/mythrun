@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Stack, Heading, Text, Button, PartyRoster } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import {
   getCharacterCreationProgress as getProgressApi,
   finalizeCharacterCreation as finalizeApi,
+  getCharacter as getCharacterApi,
   getMyCampaigns,
   createSseStatusClient,
   useApiContext,
@@ -11,10 +13,12 @@ import {
   type ApiContext,
   type CampaignSummary,
   type CharacterCreationProgress,
+  type CharacterFull,
+  type ProgressState,
   type SseStatusClient,
 } from '@mythrun/client-core'
 import { partyRosterViewModel } from '@mythrun/client-core/character'
-import type { RosterMember } from '@mythrun/client-core/contract'
+import type { PartyRosterLabels, RosterMember } from '@mythrun/client-core/contract'
 import { useForegroundRefetch } from '../../platform/web/use-foreground-refetch.ts'
 import { CampaignInvitePanel, type InvitePanelDeps } from '../campaign-invite-panel.tsx'
 
@@ -54,6 +58,9 @@ type Finalize = (ctx: ApiContext, campaignId: string) => Promise<unknown>
 type GetCampaigns = (ctx: ApiContext) => Promise<readonly CampaignSummary[]>
 /** The status-SSE transport factory — defaults to the real client; tests substitute a hand-driven one. */
 type CreateClient = (ctx: ApiContext) => SseStatusClient
+/** One PC's full read (the character NAME for the roster row) — defaults to the
+ *  real endpoint; tests substitute it. */
+type GetCharacter = (ctx: ApiContext, campaignId: string, charId: string) => Promise<CharacterFull>
 
 /** The injectable endpoint + transport seam. Every field is optional and defaults to
  *  the real endpoint/transport; D8 mounts the surface with `deps` unset, tests +
@@ -64,6 +71,8 @@ export interface PartyStagingDeps {
   getCampaigns?: GetCampaigns
   /** The status-SSE transport the live roster subscribes to (default: the real client). */
   createClient?: CreateClient
+  /** The character read backing the roster's character-name rows (myth-wfgfi). */
+  getCharacter?: GetCharacter
 }
 
 export interface PartyStagingSurfaceProps {
@@ -144,6 +153,104 @@ function useOwnerRole(
   return role
 }
 
+/** Fetch + cache each made character's NAME by its characterId (ux-run2
+ *  myth-wfgfi: the lobby leads with the CHARACTER, and the progress wire carries
+ *  only ids). Each id is fetched once; a failed read calm-degrades (that row
+ *  keeps its account-led rendering). */
+function useCharacterNames(
+  campaignId: string,
+  progress: ProgressState,
+  ctx: ApiContext,
+  getCharacter: GetCharacter,
+): ReadonlyMap<string, string> {
+  const [names, setNames] = useState<ReadonlyMap<string, string>>(new Map())
+  useEffect(() => {
+    if (progress.status !== 'ready') return
+    const missing = progress.progress.concepts
+      .map((c) => c.characterId)
+      .filter((id): id is string => typeof id === 'string' && !names.has(id))
+    if (missing.length === 0) return
+    let active = true
+    void Promise.all(
+      missing.map((charId) =>
+        getCharacter(ctx, campaignId, charId)
+          .then((full) => [charId, full.character.name] as const)
+          .catch(() => null),
+      ),
+    ).then((pairs) => {
+      if (!active) return
+      const resolved = pairs.filter((pair): pair is readonly [string, string] => pair !== null)
+      if (resolved.length > 0) setNames((prev) => new Map([...prev, ...resolved]))
+    })
+    return () => {
+      active = false
+    }
+  }, [progress, ctx, campaignId, getCharacter, names])
+  return names
+}
+
+/** Attach each member's character name (userId → characterId → fetched name).
+ *  Absent names (still creating / fetch failed) leave the row untouched. */
+function withCharacterNames(
+  members: readonly RosterMember[],
+  concepts: CharacterCreationProgress['concepts'],
+  names: ReadonlyMap<string, string>,
+): RosterMember[] {
+  const charIdByUser = new Map(
+    concepts
+      .filter((c): c is typeof c & { characterId: string } => typeof c.characterId === 'string')
+      .map((c) => [c.userId, c.characterId]),
+  )
+  return members.map((member) => {
+    const charId = charIdByUser.get(member.userId)
+    const characterName = charId !== undefined ? names.get(charId) : undefined
+    return characterName !== undefined ? { ...member, characterName } : member
+  })
+}
+
+/** The roster's resolved labels — the partial-begin strings arrive count-resolved
+ *  here (the DS stays interpolation-free). */
+function rosterLabels(t: TFunction, readyCount: number, realCount: number): PartyRosterLabels {
+  return {
+    partyHeading: t('characterCreate.staging.partyHeading'),
+    inviteSub: t('characterCreate.staging.inviteSub'),
+    creating: t('characterCreate.staging.creating'),
+    gathering: t('characterCreate.staging.gathering'),
+    waiting: t('characterCreate.staging.waiting'),
+    beginSolo: t('characterCreate.staging.beginSolo'),
+    beginParty: t('characterCreate.staging.beginParty'),
+    beginPartial: t('characterCreate.staging.beginPartial', { ready: readyCount, total: realCount }),
+    beginConfirmPrompt: t('characterCreate.staging.beginConfirm', { count: realCount - readyCount }),
+    beginConfirmYes: t('characterCreate.staging.beginConfirmYes'),
+    beginConfirmNo: t('characterCreate.staging.beginConfirmNo'),
+  }
+}
+
+/** The calm loading line while the fetches are in flight. */
+function StagingLoading({ t }: { t: TFunction }): React.JSX.Element {
+  return (
+    <Stack gap={4} maxWidth="content" data-testid="party-staging-loading">
+      <Text role="ui-caption" as="p">
+        {t('characterCreate.staging.loading')}
+      </Text>
+    </Stack>
+  )
+}
+
+/** The calm retryable error screen for a failed roster fetch. */
+function StagingError({ t, onRetry }: { t: TFunction; onRetry: () => void }): React.JSX.Element {
+  return (
+    <Stack gap={3} maxWidth="content" data-testid="party-staging-error">
+      <Text role="ui-caption" as="p">
+        {t('characterCreate.staging.loadError')}
+      </Text>
+      <Button variant="secondary" onPress={onRetry}>
+        {t('characterCreate.staging.retry')}
+      </Button>
+    </Stack>
+  )
+}
+
 export function PartyStagingSurface({
   campaignId,
   viewerUserId,
@@ -158,17 +265,23 @@ export function PartyStagingSurface({
     finalize = finalizeApi,
     getCampaigns = defaultGetCampaigns,
     createClient = createSseStatusClient,
+    getCharacter = getCharacterApi,
   } = deps ?? {}
 
   const role = useOwnerRole(campaignId, viewerUserId, ctx, getCampaigns)
   const { state: progress, reload } = useLiveRoster(campaignId, ctx, { getProgress, createClient })
   useForegroundRefetch(reload)
+  const names = useCharacterNames(campaignId, progress, ctx, getCharacter)
   const [beginFailed, setBeginFailed] = useState(false)
+  // The partial-begin confirm (ux-run2 myth-wfgfi) — the DS roster is fully
+  // controlled, so this surface owns the armed/dismissed state.
+  const [beginConfirming, setBeginConfirming] = useState(false)
   // The inline invite disclosure (MYT-99g03) — opened from the dashed party slot, the
   // SINGLE invite entry point on staging (no standalone invite block above the party).
   const [inviteOpen, setInviteOpen] = useState(false)
 
   const handleBegin = (): void => {
+    setBeginConfirming(false)
     setBeginFailed(false)
     void finalize(ctx, campaignId)
       .then(() => {
@@ -186,36 +299,26 @@ export function PartyStagingSurface({
   }
 
   if (progress.status === 'loading' || role.status === 'loading') {
-    return (
-      <Stack gap={4} data-testid="party-staging-loading">
-        <Text role="ui-caption" as="p">
-          {t('characterCreate.staging.loading')}
-        </Text>
-      </Stack>
-    )
+    return <StagingLoading t={t} />
   }
-
   if (progress.status === 'error') {
-    return (
-      <Stack gap={3} data-testid="party-staging-error">
-        <Text role="ui-caption" as="p">
-          {t('characterCreate.staging.loadError')}
-        </Text>
-        <Button variant="secondary" onPress={reload}>
-          {t('characterCreate.staging.retry')}
-        </Button>
-      </Stack>
-    )
+    return <StagingError t={t} onRetry={reload} />
   }
 
-  const members = withInviteSlot(
-    partyRosterViewModel(progress.progress, viewerUserId, role.ownerUserId),
-    role.viewerIsOwner,
+  const members = withCharacterNames(
+    withInviteSlot(
+      partyRosterViewModel(progress.progress, viewerUserId, role.ownerUserId),
+      role.viewerIsOwner,
+    ),
+    progress.progress.concepts,
+    names,
   )
   // The owner may begin once their OWN concept is ready (a laggard party member
-  // does not gate it — the owner begins now or waits). The view-model leads with
-  // the owner's row, so read readiness off the owner's id.
+  // does not gate it — the owner begins now or waits, past an honest confirm). The
+  // view-model leads with the owner's row, so read readiness off the owner's id.
   const canBegin = members.some((m) => m.userId === role.ownerUserId && m.status === 'ready')
+  const realCount = members.filter((m) => m.status !== 'empty').length
+  const readyCount = members.filter((m) => m.status === 'ready').length
 
   // The owner's inline invite disclosure — the wired quiet panel rendered inside the
   // roster (below the party, above Begin) when the dashed slot is open. `undefined`
@@ -230,7 +333,8 @@ export function PartyStagingSurface({
     ) : undefined
 
   return (
-    <Stack gap={5} data-testid="party-staging">
+    // The centred ~720px lobby column (ux-run2 myth-ma8yv): five rows never earn full bleed.
+    <Stack gap={5} maxWidth="content" data-testid="party-staging">
       <Stack gap={1}>
         <Heading level={1} role="title">
           {t('characterCreate.staging.title')}
@@ -243,18 +347,17 @@ export function PartyStagingSurface({
         members={members}
         viewerIsOwner={role.viewerIsOwner}
         canBegin={canBegin}
+        beginConfirming={beginConfirming}
+        onRequestBegin={() => {
+          setBeginConfirming(true)
+        }}
+        onCancelBegin={() => {
+          setBeginConfirming(false)
+        }}
         onBegin={handleBegin}
         onInvite={handleInvite}
         {...(inviteExpansion !== undefined && { inviteExpansion })}
-        labels={{
-          partyHeading: t('characterCreate.staging.partyHeading'),
-          inviteSub: t('characterCreate.staging.inviteSub'),
-          creating: t('characterCreate.staging.creating'),
-          gathering: t('characterCreate.staging.gathering'),
-          waiting: t('characterCreate.staging.waiting'),
-          beginSolo: t('characterCreate.staging.beginSolo'),
-          beginParty: t('characterCreate.staging.beginParty'),
-        }}
+        labels={rosterLabels(t, readyCount, realCount)}
       />
       {beginFailed && (
         <Text role="ui-caption" as="p" data-testid="party-staging-begin-error">

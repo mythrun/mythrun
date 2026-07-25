@@ -27,7 +27,7 @@ export interface GhostHookItem {
  * GhostChoiceList, brought up to the LevelCard standard (ux-run1 myth-occld). Each
  * item is a real `<button>` that is a whole SELECTABLE CARD (1px interactive
  * `--border-strong` edge on `--surface`, comfortable padding, docked ember arrow
- * vertically centred against the card, decisive hover), STACKING a serif title
+ * on the title's line, decisive hover), STACKING a serif title
  * over an optional quiet place line over a prose paragraph capped to a readable
  * measure (~62ch). The ENTIRE card is the click target — one tab-stop, one focus
  * ring. Cards are separated by a gap (not hairline rules). Single column at every

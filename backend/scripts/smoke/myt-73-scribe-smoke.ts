@@ -205,6 +205,8 @@ async function phaseBreachRetcon(
     repo: {
       sessions: { getActiveByCampaign: (c) => repo.sessions.getActiveByCampaign(c) },
       sessionPreps: { getBy: (c, n) => repo.sessionPreps.getBy(c, n) },
+      // myth-g4hf3 — the real verdict persistence (the smoke DB has the table).
+      tripwireVerdicts: { insert: (v) => repo.tripwireVerdicts.insert(v) },
     },
     triggerState: { getRespondedSeq: () => Promise.resolve(0) },
     workingSet: ws.workingSet,

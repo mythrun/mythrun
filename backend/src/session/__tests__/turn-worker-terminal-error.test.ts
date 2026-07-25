@@ -132,6 +132,7 @@ describe('publishTerminalTurnError', () => {
       combatResolved: vi.fn((): Promise<void> => Promise.resolve()),
       dmCorrection: vi.fn((): Promise<void> => Promise.resolve()),
       turnEnd: vi.fn((): Promise<void> => Promise.resolve()),
+      turnReplace: vi.fn((): Promise<void> => Promise.resolve()),
       turnError: vi.fn((): Promise<void> => Promise.reject(publishErr)),
       emitFor: vi.fn(
         (): TurnEmitter => ({

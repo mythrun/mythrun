@@ -3,7 +3,7 @@
 // its own test file: `character-integration.test.ts`.
 
 import { describe, expect, it } from 'vitest'
-import { CharacterConceptOutputSchema } from '../character-concept.js'
+import { CharacterConceptOutputSchema, GuidedChoicesSchema } from '../character-concept.js'
 import { CANONICAL_SKILLS, CharacterSheetOutputSchema, skillEntrySchema } from '../character-sheet.js'
 
 const validConcept = {
@@ -60,6 +60,42 @@ describe('CharacterConceptOutputSchema', () => {
       CharacterConceptOutputSchema.safeParse({ ...validConcept, backstory: 'x'.repeat(4000) })
         .success,
     ).toBe(true)
+  })
+  // myth-4jhrk: subclass is optional — absent on the base fixture above (the
+  // accepts-a-valid-concept case pins that), present when the player named one.
+  it('accepts an optional subclass', () => {
+    expect(
+      CharacterConceptOutputSchema.safeParse({ ...validConcept, subclass: 'Life Domain' }).success,
+    ).toBe(true)
+  })
+  it('rejects a subclass over the 60-char label cap', () => {
+    expect(
+      CharacterConceptOutputSchema.safeParse({ ...validConcept, subclass: 'x'.repeat(61) }).success,
+    ).toBe(false)
+  })
+})
+
+// myth-4jhrk: the guided-builder wire contract — the exact shape POSTed by the
+// client and persisted into character_concepts.guided_choices.
+describe('GuidedChoicesSchema', () => {
+  it('accepts the full four-field shape', () => {
+    expect(
+      GuidedChoicesSchema.safeParse({
+        class: 'Cleric',
+        subclass: 'Life Domain',
+        species: 'Human',
+        background: 'Hermit',
+      }).success,
+    ).toBe(true)
+  })
+  it('accepts every field being absent (all optional)', () => {
+    expect(GuidedChoicesSchema.safeParse({}).success).toBe(true)
+  })
+  it('rejects a non-string pick', () => {
+    expect(GuidedChoicesSchema.safeParse({ class: 42 }).success).toBe(false)
+  })
+  it('rejects an empty-string pick', () => {
+    expect(GuidedChoicesSchema.safeParse({ subclass: '' }).success).toBe(false)
   })
 })
 

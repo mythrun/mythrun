@@ -451,4 +451,274 @@ describe('AuditedFastThinker', () => {
       expect(onProseGuard).not.toHaveBeenCalled()
     })
   })
+
+  // ── myth-aiiao — onCorrected seam + buffered playerless render ────────────
+
+  describe('onCorrected (the corrected-retry divergence signal)', () => {
+    it('fires exactly once when the retry comes back clean (streamed ≠ durable)', async () => {
+      const { ft } = makeInner([
+        textAssistant('Sable: I hold the sliver in my cupped palm.'), // attempt 1 (puppeteer)
+        textAssistant('The vault light holds steady.'), // retry (clean)
+      ])
+      const audit = vi
+        .fn<TurnAuditFn>()
+        .mockResolvedValueOnce(PC_VIOLATION)
+        .mockResolvedValueOnce(CLEAN)
+      const onCorrected = vi.fn()
+      const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true, onCorrected })
+
+      const result = await gate.render(CTX, NOOP_EMITTER)
+
+      expect(result.parts).toEqual([{ kind: 'text', text: 'The vault light holds steady.' }])
+      expect(onCorrected).toHaveBeenCalledTimes(1)
+      expect(onCorrected).toHaveBeenCalledWith({ class: 'pc_speech_authored' })
+    })
+
+    it('does NOT fire on a clean attempt 1 or on a fail-open', async () => {
+      const cleanInner = makeInner([textAssistant('clean prose')])
+      const cleanAudit = vi.fn<TurnAuditFn>().mockResolvedValue(CLEAN)
+      const onCorrected = vi.fn()
+      await new AuditedFastThinker({
+        inner: cleanInner.ft,
+        audit: cleanAudit,
+        enabled: true,
+        onCorrected,
+      }).render(CTX, NOOP_EMITTER)
+
+      const failInner = makeInner([textAssistant('bad 1'), textAssistant('bad 2')])
+      const failAudit = vi.fn<TurnAuditFn>().mockResolvedValue(PC_VIOLATION)
+      await new AuditedFastThinker({
+        inner: failInner.ft,
+        audit: failAudit,
+        enabled: true,
+        onCorrected,
+      }).render(CTX, NOOP_EMITTER)
+
+      expect(onCorrected).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('buffered playerless render (correction / farewell turns)', () => {
+    const PLAYERLESS_CTX: FtTurnContext = { ...CTX, playerlessTurn: true, correctionTurn: true }
+
+    /** A recording emitter: every frame lands as an ordered op string. */
+    function recordingEmitter(): { emitter: TurnEmitter; ops: string[] } {
+      const ops: string[] = []
+      const push = (s: string): Promise<void> => {
+        ops.push(s)
+        return Promise.resolve()
+      }
+      return {
+        ops,
+        emitter: {
+          emitText: (t) => push(`text:${t}`),
+          emitSkillCheck: () => push('skill_check'),
+          emitDiceRoll: () => push('dice_roll'),
+          emitLedgerUpdate: () => push('ledger'),
+          emitModeChange: () => push('mode'),
+          emitCombatStarted: () => push('combat_started'),
+          emitCombatResolved: () => push('combat_resolved'),
+          emitCorrection: (p) => push(`correction:${p.text}`),
+        },
+      }
+    }
+
+    /** An inner FT that EMITS through whatever emitter it receives, then
+     *  returns the scripted assistant — so the test observes which frames
+     *  reach the REAL emitter vs a gate-owned buffer. */
+    function emittingInner(
+      script: { emits: (emit: TurnEmitter) => Promise<void>; result: AssistantMessage }[],
+    ): FastThinker {
+      const queue = [...script]
+      return {
+        render: async (_ctx, emit) => {
+          const next = queue.shift()
+          if (next === undefined) throw new Error('inner render over-called')
+          await next.emits(emit)
+          return next.result
+        },
+      }
+    }
+
+    it('a puppeteer attempt 1 NEVER reaches the live emitter; the clean retry frames flush after the audit', async () => {
+      const inner = emittingInner([
+        {
+          // Attempt 1: the run-2 leak — player-intent prose streamed as DM narration.
+          emits: async (emit) => {
+            await emit.emitText('Sable: I hold the sliver in my cupped palm.')
+          },
+          result: textAssistant('Sable: I hold the sliver in my cupped palm.'),
+        },
+        {
+          // Retry: the correction delivered properly.
+          emits: async (emit) => {
+            await emit.emitCorrection({ text: 'The fingers do not open.' })
+            await emit.emitText('The statue is as it was.')
+          },
+          result: textAssistant('The statue is as it was.'),
+        },
+      ])
+      const audit = vi
+        .fn<TurnAuditFn>()
+        .mockResolvedValueOnce(PC_VIOLATION)
+        .mockResolvedValueOnce(CLEAN)
+      const { emitter, ops } = recordingEmitter()
+      const gate = new AuditedFastThinker({ inner, audit, enabled: true })
+
+      const result = await gate.render(PLAYERLESS_CTX, emitter)
+
+      // The player-visible channel carries ONLY the winning retry's frames.
+      expect(ops).toEqual(['correction:The fingers do not open.', 'text:The statue is as it was.'])
+      expect(result.parts).toEqual([{ kind: 'text', text: 'The statue is as it was.' }])
+    })
+
+    it('a clean attempt 1 flushes its buffered frames once, in emission order', async () => {
+      const inner = emittingInner([
+        {
+          emits: async (emit) => {
+            await emit.emitCorrection({ text: 'Earlier I misspoke.' })
+            await emit.emitText('The scene settles.')
+          },
+          result: textAssistant('The scene settles.'),
+        },
+      ])
+      const audit = vi.fn<TurnAuditFn>().mockResolvedValue(CLEAN)
+      const { emitter, ops } = recordingEmitter()
+      const gate = new AuditedFastThinker({ inner, audit, enabled: true })
+
+      await gate.render(PLAYERLESS_CTX, emitter)
+
+      expect(ops).toEqual(['correction:Earlier I misspoke.', 'text:The scene settles.'])
+    })
+
+    it('every mechanical frame kind buffers and flushes in emission order — the gate drops nothing', async () => {
+      const inner = emittingInner([
+        {
+          emits: async (emit) => {
+            await emit.emitSkillCheck({
+              characterName: 'Sable',
+              skill: 'Investigation',
+              context: 'the statue',
+              roll: 14,
+              roll2: null,
+              rollType: 'normal',
+              modifier: 3,
+              total: 17,
+              dc: 12,
+              outcomeTier: 'success',
+              constraint: 'the grip loosens',
+            })
+            await emit.emitDiceRoll({ count: 1, sides: 20, results: [11], total: 11 })
+            await emit.emitLedgerUpdate({ characterName: 'Sable', kind: 'gold', summary: '+5 gold', gold: 5 })
+            await emit.emitModeChange({ from: 'exploration', to: 'combat', reason: 'ambush on the road' })
+            await emit.emitCombatStarted({
+              enemies: [{ name: 'bandit', description: 'ragged', count: 2 }],
+              initiative: [{ combatant: 'Sable', roll: 15 }],
+            })
+            await emit.emitCombatResolved({
+              narration: 'It is done.',
+              outcome: 'victory',
+              casualties: [],
+              hpChanges: [],
+            })
+            await emit.emitText('The road is quiet again.')
+          },
+          result: textAssistant('The road is quiet again.'),
+        },
+      ])
+      const audit = vi.fn<TurnAuditFn>().mockResolvedValue(CLEAN)
+      const { emitter, ops } = recordingEmitter()
+      const gate = new AuditedFastThinker({ inner, audit, enabled: true })
+
+      await gate.render(PLAYERLESS_CTX, emitter)
+
+      expect(ops).toEqual([
+        'skill_check',
+        'dice_roll',
+        'ledger',
+        'mode',
+        'combat_started',
+        'combat_resolved',
+        'text:The road is quiet again.',
+      ])
+    })
+
+    it('retry still violating → fail-open flushes ATTEMPT 1 (the durable render), never both', async () => {
+      const inner = emittingInner([
+        {
+          emits: async (emit) => {
+            await emit.emitText('attempt-1 text')
+          },
+          result: textAssistant('attempt-1 text'),
+        },
+        {
+          emits: async (emit) => {
+            await emit.emitText('retry text')
+          },
+          result: textAssistant('retry text'),
+        },
+      ])
+      const audit = vi.fn<TurnAuditFn>().mockResolvedValue(PC_VIOLATION)
+      const { emitter, ops } = recordingEmitter()
+      const onFailOpen = vi.fn()
+      const gate = new AuditedFastThinker({ inner, audit, enabled: true, onFailOpen })
+
+      const result = await gate.render(PLAYERLESS_CTX, emitter)
+
+      expect(ops).toEqual(['text:attempt-1 text'])
+      expect(result.parts).toEqual([{ kind: 'text', text: 'attempt-1 text' }])
+      expect(onFailOpen).toHaveBeenCalledTimes(1)
+    })
+
+    it('a violating attempt 1 WITH tool calls fails open and still flushes (live == durable)', async () => {
+      const inner = emittingInner([
+        {
+          emits: async (emit) => {
+            await emit.emitCorrection({ text: 'The door was never locked.' })
+          },
+          result: toolAssistant('narration around the correction'),
+        },
+      ])
+      const audit = vi.fn<TurnAuditFn>().mockResolvedValue(PC_VIOLATION)
+      const { emitter, ops } = recordingEmitter()
+      const gate = new AuditedFastThinker({ inner, audit, enabled: true })
+
+      const result = await gate.render(PLAYERLESS_CTX, emitter)
+
+      // No retry (tool side effects), but the buffered frames DO reach the
+      // player — attempt 1 is the durable render on a fail-open.
+      expect(ops).toEqual(['correction:The door was never locked.'])
+      expect(result.parts[0]).toEqual({ kind: 'text', text: 'narration around the correction' })
+    })
+
+    it('a PLAYER-triggered turn still streams attempt 1 live and retries silently (no buffering)', async () => {
+      const inner = emittingInner([
+        {
+          emits: async (emit) => {
+            await emit.emitText('live attempt 1')
+          },
+          result: textAssistant('live attempt 1'),
+        },
+        {
+          emits: async (emit) => {
+            await emit.emitText('silent retry')
+          },
+          result: textAssistant('silent retry'),
+        },
+      ])
+      const audit = vi
+        .fn<TurnAuditFn>()
+        .mockResolvedValueOnce(PC_VIOLATION)
+        .mockResolvedValueOnce(CLEAN)
+      const { emitter, ops } = recordingEmitter()
+      const gate = new AuditedFastThinker({ inner, audit, enabled: true })
+
+      const result = await gate.render(CTX, emitter) // no playerlessTurn flag
+
+      // Attempt 1 streamed live (the latency contract); the retry did NOT
+      // re-stream (the worker's whole-turn-replace push repairs the client).
+      expect(ops).toEqual(['text:live attempt 1'])
+      expect(result.parts).toEqual([{ kind: 'text', text: 'silent retry' }])
+    })
+  })
 })

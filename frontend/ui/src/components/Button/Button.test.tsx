@@ -243,21 +243,25 @@ describe('Button', () => {
     }
   })
 
-  it('a disabled PRIMARY keeps its ember identity (muted ember ghost, not a dead grey slug) — MYT-0xao0', () => {
+  it('a disabled PRIMARY drops the accent entirely — muted ink on paper, never rust (myth-skbzw)', () => {
+    // Run-2, world-reveal Continue: the accent-carrying disabled primary (the
+    // MYT-0xao0 "ember ghost") was "visually indistinguishable from enabled. A
+    // player who has waited ten minutes will click it and get nothing." The fix
+    // inverts the old rationale: NO accent anywhere while non-interactive — a
+    // paper fill, muted border, ~45% ink label — so the accent fill is the
+    // exclusive mark of "clickable now", and it SNAPS in when enabled.
     const { getByRole } = render(<Button disabled>Begin</Button>)
     const el = getByRole('button')
-    // The disabled primary drops the loud fill but keeps the accent as an edge +
-    // label (theme-aware --accent-fg) — "the primary, not yet available".
-    expect(el).toHaveClass('disabled:bg-transparent', 'disabled:border-accent-fg', 'disabled:text-accent-fg')
-    // NOT the old blanket lifeless grey (bg-surface + tertiary ink) that read as broken.
-    expect(el).not.toHaveClass('disabled:bg-surface')
-    expect(el).not.toHaveClass('disabled:text-ink-tertiary')
+    expect(el).toHaveClass('disabled:bg-surface', 'disabled:border-border', 'disabled:text-ink-tertiary')
+    // No surviving accent in the disabled arm.
+    expect(el).not.toHaveClass('disabled:border-accent-fg')
+    expect(el).not.toHaveClass('disabled:text-accent-fg')
     // A rest-state transparent border reserves the 1px edge, so toggling disabled
     // fills/unfills without a reflow.
     expect(el).toHaveClass('border', 'border-transparent')
   })
 
-  it('a disabled SECONDARY / GHOST reads as a muted neutral (tertiary ink), per-variant not blanket', () => {
+  it('a disabled SECONDARY / GHOST reads as the same muted family (tertiary ink), per-variant geometry', () => {
     const secondary = render(
       <Button variant="secondary" disabled>
         x
@@ -267,10 +271,80 @@ describe('Button', () => {
     secondary.unmount()
     const ghost = render(
       <Button variant="ghost" disabled>
-        x
+        <span>x</span>
       </Button>,
     )
     expect(ghost.getByRole('button')).toHaveClass('disabled:bg-transparent', 'disabled:text-ink-tertiary')
+  })
+
+  it('uses a plain default cursor when non-interactive, not the slashed not-allowed glyph', () => {
+    // The critique prescribes cursor:default for the settling Continue — and the
+    // not-allowed glyph is a slashed CIRCLE, which the register bans anyway.
+    const { getByRole } = render(<Button disabled>x</Button>)
+    const el = getByRole('button')
+    expect(el).toHaveClass('disabled:cursor-default')
+    expect(el).not.toHaveClass('disabled:cursor-not-allowed')
+  })
+
+  it('busy makes the control non-interactive with aria-busy + a Spinner (like loading)', async () => {
+    const onPress = vi.fn()
+    const user = userEvent.setup()
+    const { getByRole } = render(
+      <Button onPress={onPress} busy>
+        go
+      </Button>,
+    )
+    const el = getByRole('button')
+    expect(el).toBeDisabled()
+    expect(el).toHaveAttribute('aria-busy', 'true')
+    expect(el.querySelector('[role="status"]')).not.toBeNull()
+    await user.click(el)
+    expect(onPress).not.toHaveBeenCalled()
+  })
+
+  it('busy wears the SAME muted treatment as disabled (no accent fill while working)', () => {
+    // The world-reveal settling Continue is busy, not invalid — but it must be
+    // just as legibly non-interactive: the accent fill only ever means
+    // "pressable now". The muted arm rides the native disabled: variants, so
+    // busy (which disables the control) is covered by construction.
+    const { getByRole } = render(<Button busy>Continue</Button>)
+    const el = getByRole('button')
+    expect(el).toBeDisabled()
+    expect(el).toHaveClass('disabled:bg-surface', 'disabled:border-border', 'disabled:text-ink-tertiary')
+  })
+
+  it('swaps the label to busyLabel while busy, and restores children when idle', () => {
+    const busyRender = render(
+      <Button busy busyLabel="Saving">
+        Save
+      </Button>,
+    )
+    const busyEl = busyRender.getByRole('button')
+    expect(busyEl).toHaveTextContent('Saving')
+    expect(busyEl).not.toHaveTextContent('Save')
+    busyRender.unmount()
+    // Idle: busyLabel is inert; the real label shows.
+    const idle = render(<Button busyLabel="Saving">Save</Button>)
+    const idleEl = idle.getByRole('button')
+    expect(idleEl).toHaveTextContent('Save')
+    expect(idleEl).not.toHaveTextContent('Saving')
+    expect(idleEl).toBeEnabled()
+  })
+
+  it('keeps the still-visible children as the busy label when no busyLabel is given', () => {
+    const { getByRole } = render(<Button busy>Save</Button>)
+    expect(getByRole('button')).toHaveTextContent('Save')
+  })
+
+  it('honours the legacy `loading` alias for busyLabel swapping too', () => {
+    const { getByRole } = render(
+      <Button loading busyLabel="Weaving">
+        Weave
+      </Button>,
+    )
+    const el = getByRole('button')
+    expect(el).toBeDisabled()
+    expect(el).toHaveTextContent('Weaving')
   })
 
   it('renders a leading icon slot before the label, hidden from assistive tech', () => {
@@ -362,11 +436,14 @@ describe('Button', () => {
     expect(on.getByRole('button', { pressed: true })).toBeInTheDocument()
   })
 
-  it('has no axe violations (default / disabled / loading)', async () => {
+  it('has no axe violations (default / disabled / busy / loading)', async () => {
     const { container } = render(
       <div>
         <Button>Save</Button>
         <Button disabled>Disabled</Button>
+        <Button busy busyLabel="Saving">
+          Save
+        </Button>
         <Button loading>Saving</Button>
       </div>,
     )

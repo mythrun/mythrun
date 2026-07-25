@@ -32,11 +32,40 @@ import { RejectionScreen, type RejectionState } from './campaign-new/rejection.t
 // The screens the flow can be on. `fork` is always the history root.
 type Screen = 'fork' | 'freeform' | 'guided' | 'synthesizing' | 'preview' | 'rejection'
 
-export function CampaignNewRoute(): React.JSX.Element {
+// ONE top affordance, one meaning per screen (ux-run2 myth-80an1): the fork's
+// is the EXIT home; the wizard's says what it does ("Leave brainstorm" — never
+// a twin of the step-level Back beside Next); everywhere else it is the plain
+// history-pop Back.
+function FlowTopAffordance({
+  current,
+  onBack,
+  onExitHome,
+}: {
+  current: Screen
+  onBack: () => void
+  onExitHome: () => void
+}): React.JSX.Element {
   const { t } = useTranslation()
+  return (
+    <Stack align="start">
+      <Button
+        variant="ghost"
+        size="sm"
+        icon={<Icon name="arrow-left" decorative />}
+        onPress={current === 'fork' ? onExitHome : onBack}
+        data-testid="campaign-new-back"
+      >
+        {t(current === 'guided' ? 'campaignNew.guided.leave' : 'back')}
+      </Button>
+    </Stack>
+  )
+}
+
+export function CampaignNewRoute(): React.JSX.Element {
   const navigate = useNavigate()
   // The back-history stack: the last entry is the current screen; `fork` is the
-  // permanent root (never popped), so `back` is shown iff the stack has depth.
+  // permanent root (never popped) — its top affordance exits the flow to home
+  // instead of popping (ux-run2 myth-80an1).
   const [history, setHistory] = useState<Screen[]>(['fork'])
   const current = history[history.length - 1] ?? 'fork'
   // The carried payloads. `synthesis` is the live guided stream the
@@ -100,19 +129,11 @@ export function CampaignNewRoute(): React.JSX.Element {
     // One centred reading-measure column (`maxWidth="form"`) so every funnel screen
     // shares a single spine (incl. the back affordance) instead of sprawling edge-to-edge.
     <Stack gap={6} maxWidth="form" data-testid="route-campaign-new">
-      {current !== 'fork' ? (
-        <Stack align="start">
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<Icon name="arrow-left" decorative />}
-            onPress={back}
-            data-testid="campaign-new-back"
-          >
-            {t('back')}
-          </Button>
-        </Stack>
-      ) : null}
+      <FlowTopAffordance
+        current={current}
+        onBack={back}
+        onExitHome={() => { void navigate('/') }}
+      />
       {current === 'fork' ? (
         <ForkScreen onFreeform={goFreeformBlank} onGuided={() => { go('guided') }} />
       ) : current === 'freeform' ? (

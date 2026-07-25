@@ -14,6 +14,21 @@ import type { WorldDelta } from '../llm/schemas/world-delta.js'
 export const QUEUE_SCRIBE = 'scribe' as const
 export const SCRIBE_JOB_NAME = 'scribe' as const
 
+/** myth-g4hf3 — one RESOLVED skill check from the turn (the deterministic roll +
+ *  the Haiku-pre-generated outcome constraint the FT wrote under). PUBLIC-tier
+ *  by construction: the outcome table is generated FT-side under enforced
+ *  ignorance and the constraint was already streamed to the players on the
+ *  skill_check frame. Carried onto the Scribe job so the tripwire can GROUND on
+ *  it — content the system licensed via a resolved roll is definitionally not a
+ *  breach. */
+export interface ResolvedSkillCheckOutcome {
+  readonly characterName: string
+  readonly skill: string
+  readonly dc: number
+  readonly outcomeTier: 'fail' | 'success' | 'great_success'
+  readonly constraint: string
+}
+
 export interface ScribeJobPayload {
   readonly campaignId: string
   readonly sessionId: string
@@ -27,6 +42,11 @@ export interface ScribeJobPayload {
   readonly worldDelta: WorldDelta | null
   /** ST injections (already secret-free vetted relay text) recorded this turn. */
   readonly injections: readonly WorkingSetProposal[]
+  /** myth-g4hf3 — the turn's resolved skill-check outcomes (roll_skill_check
+   *  results + world-lookup skill gates). Feeds the tripwire's grounding floor
+   *  and stamps `dice_outcome` provenance onto the turn's ft_delta proposals.
+   *  Optional so an in-flight pre-upgrade job still deserializes; absent → []. */
+  readonly skillChecks?: readonly ResolvedSkillCheckOutcome[]
 }
 
 /** Narrow producer surface (the turn worker's post-turn phase): just `add`. */

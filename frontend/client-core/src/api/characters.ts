@@ -31,11 +31,27 @@ import { defineEndpoint, type ApiContext } from './endpoint.ts'
 // mode for an out-of-range value stays at the request boundary. The endpoint
 // input also carries `campaignId` (for the path); the request schema strips it
 // back out at serialization, so it travels in the path only.
+//
+// myth-4jhrk: `guidedChoices` is the guided builder's STRUCTURED picks — the
+// shared wire contract with the backend's GuidedChoicesSchema
+// (backend/src/llm/schemas/character-concept.ts). The guided path sends BOTH
+// the flattened conceptText prose AND these picks; the backend persists the
+// picks and pins the subclass end-to-end (prose alone loses it — the run-2
+// "Life Domain became Grave Domain" forensics). Freeform omits the field.
 // -----------------------------------------------------------------------------
+
+const GuidedChoicesSchema = z.object({
+  class: z.string().min(1).max(60).optional(),
+  subclass: z.string().min(1).max(60).optional(),
+  species: z.string().min(1).max(60).optional(),
+  background: z.string().min(1).max(60).optional(),
+})
+export type GuidedChoicesPayload = z.infer<typeof GuidedChoicesSchema>
 
 const SubmitCharacterBodySchema = z.object({
   conceptText: z.string().min(20).max(4000),
   situationGroundingText: z.string().min(20).max(2000),
+  guidedChoices: GuidedChoicesSchema.optional(),
 })
 export type SubmitCharacterBody = z.infer<typeof SubmitCharacterBodySchema>
 

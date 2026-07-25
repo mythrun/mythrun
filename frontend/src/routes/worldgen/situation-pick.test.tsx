@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { render, screen, cleanup, fireEvent } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, within } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
@@ -153,6 +153,9 @@ function renderPick(overrides: Overrides = {}): {
       // The LEVEL-PICK landing (D2) — a bare probe: its presence proves the
       // post-pick navigation resolved to `/campaigns/:id/level`.
       { path: '/campaigns/:id/level', element: <div data-testid="level-pick" /> },
+      // The campaign-detail landing — the Back affordance (ux-run2 myth-80an1)
+      // resolves here (the reveal / campaign page the picker came from).
+      { path: '/campaigns/:id', element: <div data-testid="campaign-detail-target" /> },
     ],
     { initialEntries: [`/campaigns/${CAMPAIGN_ID}/situation`] },
   )
@@ -180,7 +183,29 @@ describe('SituationPickRoute — the owner-only picker', () => {
     // prose
     expect(screen.getByText('The counting-house wants paying.')).toBeDefined()
     // three selectable hooks
-    expect(screen.getAllByRole('button')).toHaveLength(3)
+    expect(within(hooks).getAllByRole('button')).toHaveLength(3)
+  })
+
+  it('anchors the WORLD in the eyebrow and states the contract line (count + commitment)', async () => {
+    renderPick()
+    await screen.findByTestId('situation-hooks')
+    // ux-run2 myth-8ozsw: nothing on the screen named the world the openings
+    // belong to — the eyebrow now carries it ("Emberdeep Hollow · Where it starts").
+    expect(
+      screen.getByText(
+        i18n.t('startingSituation.eyebrowNamed', { worldName: 'Emberdeep Hollow' }),
+      ),
+    ).toBeDefined()
+    // ux-run2 myth-wq6ln: the one quiet line names the option COUNT and what
+    // picking commits the player to.
+    expect(screen.getByText(i18n.t('startingSituation.contract'))).toBeDefined()
+  })
+
+  it('offers a Back to the campaign it came from (ux-run2 myth-80an1)', async () => {
+    renderPick()
+    await screen.findByTestId('situation-hooks')
+    fireEvent.click(screen.getByTestId('situation-back'))
+    await screen.findByTestId('campaign-detail-target')
   })
 
   it('shows a calm loading placeholder before the situations resolve', () => {
@@ -199,6 +224,12 @@ describe('SituationPickRoute — the member hold (owner gate)', () => {
     await screen.findByTestId('situation-pick-hold')
     expect(screen.queryByTestId('situation-hooks')).toBeNull()
     expect(screen.queryByTestId('situation-pick')).toBeNull()
+    // The member hold anchors the same world identity (ux-run2 myth-8ozsw).
+    expect(
+      screen.getByText(
+        i18n.t('startingSituation.eyebrowNamed', { worldName: 'Emberdeep Hollow' }),
+      ),
+    ).toBeDefined()
   })
 
   it('fails CLOSED to the hold when the role probe fails (never leaks the picker)', async () => {

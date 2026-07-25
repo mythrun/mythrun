@@ -23,8 +23,11 @@ describe('SeamlessInput', () => {
     const { getByRole } = render(<SeamlessInput multiline label="Describe the feel of your world" />)
     const el = getByRole('textbox')
     expect(el.tagName).toBe('TEXTAREA')
-    // Auto-grow: the field sizes to its content rather than a fixed rows count.
-    expect(el).toHaveClass('field-sizing-content', 'resize-none', 'overflow-hidden')
+    // Auto-grow: the field sizes to its content rather than a fixed rows count —
+    // capped at ~8 visible lines, past which the field scrolls internally
+    // (ux-run2 myth-x9ugl: unbounded growth pushed the CTA under the fold).
+    expect(el).toHaveClass('field-sizing-content', 'resize-none', 'overflow-y-auto')
+    expect(el).toHaveClass('max-h-[calc(8*1lh+2*var(--space-3))]')
   })
 
   it('the label (the question) is the field accessible name (programmatic association)', () => {
@@ -106,15 +109,18 @@ describe('SeamlessInput', () => {
     expect(onChange.mock.calls.every(([arg]) => typeof arg === 'string')).toBe(true)
   })
 
-  it('carries the shared DS focus ring (2px square accent outline, offset)', () => {
+  it('focus is ONE contiguous accent stroke — no offset gap, no double rule', () => {
     const { getByRole } = render(<SeamlessInput label="Q" />)
     const el = getByRole('textbox')
-    // The same a11y focus indicator every DS control uses (WCAG 2.4.13) — a 2px
-    // accent outline at a 2px offset, theme-aware via the --accent-fg token.
+    // ux-run2 myth-1pzjw: the offset ring over the field's own border read as a
+    // pressed-button/error double-stroke. Focus hugs the border (offset 0) and
+    // the border flips to the same accent, so the two read as one single
+    // distinctive sienna stroke (WCAG 2.4.13 still: 2px accent, theme-aware).
     expect(el).toHaveClass(
       'focus-visible:outline-2',
-      'focus-visible:outline-offset-2',
+      'focus-visible:outline-offset-0',
       'focus-visible:outline-accent-fg',
+      'focus-visible:border-accent-fg',
     )
   })
 
@@ -132,10 +138,21 @@ describe('SeamlessInput', () => {
     expect(el).toHaveClass('border', 'border-border-strong', 'bg-surface', 'rounded-none')
   })
 
-  it('renders display-size prose type (large serif body face)', () => {
+  it('renders reading-scale prose type (serif body face, ~22px)', () => {
     const { getByRole } = render(<SeamlessInput label="Q" />)
-    // The magical register: the serif body face at headline scale.
-    expect(getByRole('textbox')).toHaveClass('font-body', 'text-2xl')
+    // The literary register survives at a READING size (ux-run2 myth-x9ugl: the
+    // 28px field text pushed Q2 + the CTA under the fold; serif stays).
+    expect(getByRole('textbox')).toHaveClass('font-body', 'text-xl')
+  })
+
+  it('single-line: compact height + ellipsis on overflow (no mid-word clip at the edge)', () => {
+    const { getByRole } = render(<SeamlessInput label="Q" />)
+    const el = getByRole('textbox')
+    // ux-run2 myth-1pzjw: a ~70px single-line field implied a paragraph; the
+    // title arm is a true one-line input (~48px) whose overflow resolves to an
+    // ellipsis when unfocused instead of clipping flush against the border.
+    expect(el).toHaveClass('py-[var(--space-2)]', 'text-ellipsis')
+    expect(el).not.toHaveClass('py-[var(--space-3)]')
   })
 
   it('passes through placeholder as a faint hint (muted token, never the label)', () => {

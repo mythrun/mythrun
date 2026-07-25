@@ -5,21 +5,36 @@ import type { StageProgress, WorldGenStatusCardProps } from '@mythrun/client-cor
 import { cn } from '../../lib/cn.ts'
 
 // WorldGenStatusCard (MYT-89 Phase C, C4 + audit ③/⑥ + the two-act cut + reveal
-// timing + waiting-feedback) — a DOM overlay pinned top-left of the graph pane so the
-// visible wait reads as PROGRESS, not a hang. It shows: the current (running) stage's
-// friendly label, a completed/total percent, an optional per-second COUNTDOWN, and a
-// PAPER-REGISTER working indicator.
+// timing + waiting-feedback; ux-run2 myth-uz1bn + myth-t11az) — a DOM overlay
+// pinned top-left of the graph pane so the visible wait reads as PROGRESS, not a
+// hang. It shows: the current (running) stage's friendly label (the consumer
+// composes any stage-scope framing, e.g. "Stage 2 of 4 · …", into the label —
+// the DS owns no copy), an optional COUNTDOWN or its stalled stand-in, an
+// optional quiet RETURN link, and a PAPER-REGISTER working indicator.
 //
-// THE COUNTDOWN (MYT-89 waiting-feedback — replaces the old coarse minute-granular
-// ETA): `countdownLabel` is the consumer-ticked `~M:SS` to the wiki reveal (derived
-// from `remainingWaitMs` over the stage-timings history, re-supplied every second).
-// This card only RENDERS the string — a quiet mono/tabular line, no urgency
-// theatrics. It may hold when a stage overruns and jump at the next stage event;
-// that is the derivation's honest shape. aria-hidden: a line that changes every
-// second would be live-region noise — the determinate progressbar (label + percent
-// + valuetext) carries the progress semantics to AT, and the ticking number is
-// redundant with it for a listener. It still ticks under reduced motion: the number
-// is CONTENT (the remaining wait), not decoration.
+// THE COUNTDOWN (MYT-102 coarse buckets + ux-run2 myth-uz1bn): `countdownLabel`
+// is the consumer-supplied coarse overall estimate ("Ready in about 4 min") —
+// the consumer owns the tick, the aggregate derivation, and the MONOTONIC clamp
+// (the shown number never climbs; see client-core `clampEtaMonotonic`). This
+// card only RENDERS the string — a quiet mono/tabular line, no urgency
+// theatrics. aria-hidden: a churning line would be live-region noise — the
+// determinate progressbar (label + valuetext) carries the progress semantics to
+// AT. It still updates under reduced motion: the number is CONTENT (the
+// remaining wait), not decoration. `stalledLabel` is the degrade-in-language
+// stand-in the consumer swaps in the instant the estimate exhausts — a frozen
+// number never sits; the card shows at most one of the two (countdown wins,
+// defensively).
+//
+// NO PERCENT NUMERAL (ux-run2 myth-uz1bn): run 2 rendered "0%" over six named
+// markers already on the canvas, froze "50%" for ~90s, and let the numeral
+// contradict the bar fill. The numeral is gone — the segmented bars + the stage
+// line carry within-wait progress; percent lives only in the progressbar's
+// machine values (aria-valuenow).
+//
+// THE RETURN LINK (ux-run2 myth-t11az): once "Watch it take shape" was clicked
+// nothing offered a way back to the calm wait — a one-way door. `returnLabel` +
+// `onReturn` render a quiet mono text link under the readout; the card is
+// `pointer-events-none` chrome, so the link alone re-enables pointer events.
 //
 // The working indicator IS the percent bar: a segmented SQUARE bar with a FIXED count —
 // one cell per canonical `WATCHED_ENTITY_STAGES` stage (all known from frame one, NOT
@@ -74,13 +89,21 @@ const FOOTER_CLASS = cn(
 // (truncate), the countdown + percent hold their width on the right.
 const FOOTER_ROW_CLASS = 'flex items-baseline gap-[var(--space-3)]'
 const TITLE_CLASS = 'font-ui text-xs text-ink-tertiary leading-none'
-const ROW_CLASS = 'flex items-baseline justify-between gap-[var(--space-2)]'
 const LABEL_CLASS = 'font-body text-sm font-medium text-ink leading-[1.3] min-w-0'
-const PERCENT_CLASS = 'font-ui text-xs tabular-nums text-ink-secondary shrink-0'
 const BAR_CLASS = 'flex h-[6px] w-full gap-[2px]'
 // The countdown: quiet mono/tabular, paper register — mirrors the loading
 // screen's countdown line so the two waiting surfaces read as one voice.
 const COUNTDOWN_CLASS = 'font-ui text-xs tabular-nums text-ink-tertiary leading-none'
+// The stalled stand-in — real reassurance content (not per-second churn): a calm
+// secondary-ink line, a touch more present than the countdown, never loud.
+const STALLED_CLASS = 'font-body text-sm text-ink-secondary leading-[1.4]'
+// The return link (myth-t11az): a quiet mono text link back to the calm wait.
+// The card is pointer-transparent chrome, so the link re-enables its own pointer
+// events; self-start keeps its hit target to the text, not the card width.
+const RETURN_CLASS = cn(
+  'pointer-events-auto self-start cursor-pointer appearance-none border-0 bg-transparent p-0',
+  'font-ui text-xs text-ink-secondary underline underline-offset-2',
+)
 
 // Per-cell fill: solid ink = done, ember + pulse = the working cell, faint track =
 // pending. Square (0px radius), full-height, equal-width segments.
@@ -171,21 +194,26 @@ export const WorldGenStatusCard = forwardRef<HTMLDivElement, WorldGenStatusCardP
     {
       stages,
       countdownLabel,
+      stalledLabel,
       stageLabels,
       variant = 'overlay',
       titleLabel,
       doneLabel,
       progressLabel,
+      returnLabel,
+      onReturn,
       'data-testid': dataTestId,
     },
     ref,
   ) {
     const progress = computeProgress(stages)
     const currentLabel = currentLabelFrom(progress, doneLabel, titleLabel, stageLabels)
-    const percentText = `${String(progress.percent)}%`
 
     // The shared pieces both variants compose: the fixed segmented bar (the ONE
-    // progressbar, carrying the AT semantics) and the aria-hidden countdown line.
+    // progressbar, carrying the AT semantics — percent lives only in its machine
+    // values, never as a visible numeral), the countdown line or its stalled
+    // stand-in (at most one; the live countdown wins defensively), and the quiet
+    // return link.
     const bar = (
       <div
         role="progressbar"
@@ -193,7 +221,7 @@ export const WorldGenStatusCard = forwardRef<HTMLDivElement, WorldGenStatusCardP
         aria-valuenow={progress.percent}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuetext={`${currentLabel} — ${percentText}`}
+        aria-valuetext={currentLabel}
         data-testid="worldgen-status-bar"
         className={BAR_CLASS}
       >
@@ -207,24 +235,34 @@ export const WorldGenStatusCard = forwardRef<HTMLDivElement, WorldGenStatusCardP
         ))}
       </div>
     )
-    const countdown = countdownLabel !== undefined && (
-      <span aria-hidden="true" data-testid="worldgen-status-countdown" className={COUNTDOWN_CLASS}>
-        {countdownLabel}
-      </span>
+    const waitLine =
+      countdownLabel !== undefined ? (
+        <span aria-hidden="true" data-testid="worldgen-status-countdown" className={COUNTDOWN_CLASS}>
+          {countdownLabel}
+        </span>
+      ) : stalledLabel !== undefined ? (
+        <span data-testid="worldgen-status-stalled" className={STALLED_CLASS}>
+          {stalledLabel}
+        </span>
+      ) : null
+    const returnLink = returnLabel !== undefined && onReturn !== undefined && (
+      <button type="button" data-testid="worldgen-status-return" className={RETURN_CLASS} onClick={onReturn}>
+        {returnLabel}
+      </button>
     )
     const testId = dataTestId !== undefined ? { 'data-testid': dataTestId } : {}
 
-    // FOOTER (narrow viewports): one label + countdown + percent row over the bars —
-    // no caption, no absolute pinning; the graph places it below the full-bleed pane.
+    // FOOTER (narrow viewports): one label + countdown row over the bars — no
+    // caption, no absolute pinning; the graph places it below the full-bleed pane.
     if (variant === 'footer') {
       return (
         <div ref={ref} {...testId} data-variant="footer" className={FOOTER_CLASS}>
           <div className={FOOTER_ROW_CLASS}>
             <span className={cn(LABEL_CLASS, 'flex-1 truncate')}>{currentLabel}</span>
-            {countdown}
-            <span className={PERCENT_CLASS}>{percentText}</span>
+            {waitLine}
           </div>
           {bar}
+          {returnLink}
         </div>
       )
     }
@@ -232,12 +270,10 @@ export const WorldGenStatusCard = forwardRef<HTMLDivElement, WorldGenStatusCardP
     return (
       <div ref={ref} {...testId} data-variant="overlay" className={CARD_CLASS}>
         <span className={TITLE_CLASS}>{titleLabel}</span>
-        <div className={ROW_CLASS}>
-          <span className={LABEL_CLASS}>{currentLabel}</span>
-          <span className={PERCENT_CLASS}>{percentText}</span>
-        </div>
+        <span className={LABEL_CLASS}>{currentLabel}</span>
         {bar}
-        {countdown}
+        {waitLine}
+        {returnLink}
       </div>
     )
   },

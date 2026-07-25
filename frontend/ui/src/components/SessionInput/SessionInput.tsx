@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { SessionInputProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 import { TYPE_ROLE_CLASS } from '../../lib/typography.ts'
@@ -43,12 +43,20 @@ export function SessionInput({
   busy = false,
   busyLabel,
   placeholder,
+  summonHint,
   summonLabel,
   sendLabel,
   maxLength,
 }: SessionInputProps) {
   const fieldId = useId()
   const fieldRef = useRef<HTMLTextAreaElement>(null)
+  // myth-cimi3 — the modality hint: while the @DM summon is hovered/focused, the
+  // (empty-field) placeholder shifts to the out-of-character line, disclosing
+  // that the SAME textbox is action via Send and question via the summon. State
+  // lives on a wrapper span (hover + bubbled focus), so the Button component
+  // itself stays untouched (the chrome lane owns it).
+  const [hintingSummon, setHintingSummon] = useState(false)
+  const shownPlaceholder = hintingSummon && summonHint !== undefined ? summonHint : placeholder
   // The native maxLength on the textarea hard-caps typing AND paste, so a message
   // longer than the server accepts can't be composed; overCap is the belt that
   // also blocks send for a programmatically-set over-cap value.
@@ -98,7 +106,7 @@ export function SessionInput({
         id={fieldId}
         value={value}
         onChange={onChange}
-        placeholder={placeholder}
+        placeholder={shownPlaceholder}
         disabled={disabled}
         // The player's own writing wears the serif prose face + ember caret
         // (myth-xs9tc). Reading-size, not display-size: size/autoSize/rows unchanged.
@@ -122,9 +130,27 @@ export function SessionInput({
           {showBusy ? busyLabel : ''}
         </p>
         <div className={cn('flex flex-none items-center gap-[var(--space-2)]')}>
-          <Button variant="secondary" onPress={onSummonDm} disabled={summonGated}>
-            {summonLabel}
-          </Button>
+          {/* The hint wrapper: hover via mouse enter/leave, keyboard via the
+              button's BUBBLED focus/blur (React's synthetic focus bubbles) —
+              no props on Button beyond its contract. */}
+          <span
+            onMouseEnter={() => {
+              setHintingSummon(true)
+            }}
+            onMouseLeave={() => {
+              setHintingSummon(false)
+            }}
+            onFocus={() => {
+              setHintingSummon(true)
+            }}
+            onBlur={() => {
+              setHintingSummon(false)
+            }}
+          >
+            <Button variant="secondary" onPress={onSummonDm} disabled={summonGated}>
+              {summonLabel}
+            </Button>
+          </span>
           <Button variant="primary" onPress={onSend} disabled={sendGated}>
             {sendLabel}
           </Button>

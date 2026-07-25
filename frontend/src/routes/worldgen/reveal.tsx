@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Stack,
+  Box,
   Heading,
   Text,
   Button,
@@ -105,35 +106,59 @@ interface RevealChromeProps {
   wikiPanel: React.JSX.Element
   continueAction: React.JSX.Element
   moment: RevealMoment
+  /** The page header — the WORLD'S NAME once the snapshot delivers it
+   *  (ux-run2 myth-8ozsw: the prime slot must anchor the real name, not the
+   *  generic "Your world" chrome); the generic title is only the fallback
+   *  while the name is unknown. */
+  title: string
 }
 
-/** Desktop: the true 50/50, ARRIVING IN MOTION (D6). RevealPanes holds the
- *  graph at full width through the moment and eases it to the left half while
- *  the wiki slides in from the right at `resolve`, landing on the same
- *  equal-halves track the old `Grid columns={2}` built. The title fades in at
- *  `settle`, the explore prompt (and Continue) at `resolve` — whole-block
- *  opacity fades with their space reserved from the first frame, so nothing
- *  shifts mid-moment. A settled mount renders all of it visible, instantly. */
-function DesktopReveal({ graph, wikiPanel, continueAction, moment }: RevealChromeProps): React.JSX.Element {
+/** Desktop: the true 50/50, ARRIVING IN MOTION (D6). The WHOLE left column —
+ *  title over graph over the explore prompt + Continue — composes INSIDE the
+ *  panes row's stage cell (ux-run2 myth-ma8yv, critique 018), so the two panes
+ *  share both alignment edges: the wiki's top lands on the title's line and its
+ *  bottom on the Continue row's line (a spread in a book, not two components
+ *  that happened to load near each other). Pre-`resolve` the stage cell owns
+ *  the full width, so the stacking order the player sees mid-moment is
+ *  unchanged; at `resolve` the column eases to the left half while the wiki
+ *  slides in from the right. The title fades in at `settle`, the explore
+ *  prompt (and Continue) at `resolve` — whole-block opacity fades with their
+ *  space reserved from the first frame, so nothing shifts mid-moment. A
+ *  settled mount renders all of it visible, instantly. */
+function DesktopReveal({ graph, wikiPanel, continueAction, moment, title }: RevealChromeProps): React.JSX.Element {
   const { t } = useTranslation()
   return (
-    <Stack gap={4} data-testid="worldgen-reveal">
-      <RevealFade moment={moment} visibleFrom="settle">
-        <Heading level={1} role="title">
-          {t('worldReveal.title')}
-        </Heading>
-      </RevealFade>
-      <RevealPanes data-testid="reveal-panes" moment={moment} stage={graph} panel={wikiPanel} />
-      <RevealFade moment={moment} visibleFrom="resolve">
-        <Text role="prose-body" as="p">
-          {t('worldReveal.explorePrompt')}
-        </Text>
-        {/* Continue is present from first paint — disabled with a quiet settling
-            indicator while the tail runs (the pick's POST requires a complete
-            world), enabling in place when it finishes. Exploring is the intent
-            meanwhile; the prompt above stays truthful because the control exists. */}
-        {continueAction}
-      </RevealFade>
+    <Stack data-testid="worldgen-reveal">
+      <RevealPanes
+        data-testid="reveal-panes"
+        moment={moment}
+        stage={
+          <Stack grow gap={4}>
+            <RevealFade moment={moment} visibleFrom="settle">
+              {/* The world's NAME fades in at settle (ux-run2 myth-8ozsw) —
+                  the reveal's payoff string in the prime slot. */}
+              <Heading level={1} role="title">
+                {title}
+              </Heading>
+            </RevealFade>
+            {/* Box grow (`flex-1 min-h-0`) gives the graph a DEFINITE flexed
+                height between the title and the Continue row, so its fillHost
+                h-full chain resolves and it owns the column's slack. */}
+            <Box grow>{graph}</Box>
+            <RevealFade moment={moment} visibleFrom="resolve">
+              <Text role="prose-body" as="p">
+                {t('worldReveal.explorePrompt')}
+              </Text>
+              {/* Continue is present from first paint — disabled with a quiet settling
+                  indicator while the tail runs (the pick's POST requires a complete
+                  world), enabling in place when it finishes. Exploring is the intent
+                  meanwhile; the prompt above stays truthful because the control exists. */}
+              {continueAction}
+            </RevealFade>
+          </Stack>
+        }
+        panel={wikiPanel}
+      />
     </Stack>
   )
 }
@@ -157,13 +182,13 @@ interface MobileRevealProps extends RevealChromeProps {
  *  "handle arrives at the right edge"; before that nothing occludes the
  *  just-revealed world. Mount is monotonic (phases only advance), so the
  *  mount-persistence contract is untouched once it exists. */
-function MobileReveal({ graph, wikiPanel, continueAction, moment, open, onOpenChange }: MobileRevealProps): React.JSX.Element {
+function MobileReveal({ graph, wikiPanel, continueAction, moment, open, onOpenChange, title }: MobileRevealProps): React.JSX.Element {
   const { t } = useTranslation()
   return (
     <Stack data-testid="worldgen-reveal">
       <VisuallyHidden>
         <Heading level={1} role="title">
-          {t('worldReveal.title')}
+          {title}
         </Heading>
       </VisuallyHidden>
       <FullBleedStage inset={6} data-testid="reveal-stage">
@@ -183,7 +208,7 @@ function MobileReveal({ graph, wikiPanel, continueAction, moment, open, onOpenCh
           />
           <Drawer
             data-testid="reveal-drawer"
-            title={t('worldReveal.title')}
+            title={title}
             description={t('worldReveal.explorePrompt')}
             openLabel={t('worldReveal.wikiOpen')}
             closeLabel={t('worldReveal.wikiClose')}
@@ -267,6 +292,62 @@ export interface WorldRevealProps extends Pick<WorldGenStream, 'nodes' | 'edges'
 
 const NO_STAGES: WorldGenStream['stages'] = []
 
+// The graph-tap selection cluster. The PERSISTENT selection (the graph
+// highlight) vs the ONE-SHOT push signal (what the wiki's external-selection
+// effect consumes). Split because the wiki's `back()` reports nothing outward:
+// were the push signal persistent, re-tapping the SAME node after backing out
+// would read as "no change" and the page would never re-open (the D4-review
+// re-tap bug).
+//
+// The push signal clears once the mounted wiki has consumed it (child effects
+// run before this parent effect, and the wiki's same-entity push is a no-op,
+// so re-delivering is always safe). Deferred while the panel is still the
+// loading line (`modelReady` false): the signal must survive until the wiki
+// mounts and can consume it on its first effect pass.
+// COUPLING: this one-shot pattern relies on WorldWiki treating
+// externalSelection as a jump signal — clearing it to undefined must NOT
+// navigate home (WorldWiki's external-selection effect keys on the value
+// changing to a defined id). A D4-side semantics change breaks re-tap here.
+//
+// A graph tap: highlight, push the wiki page and — on mobile, where the wiki
+// sleeps in the drawer — SUMMON the sheet so the page is actually seen. The
+// summon is DEFERRED past the tapping gesture: the graph selects on
+// POINTERUP, but Radix (Dialog ≥1.1.17, `deferPointerDownOutside`) arms the
+// sheet's outside-dismiss at the gesture's POINTERDOWN — which landed on the
+// canvas, outside the sheet — and delivers it at the gesture's trailing
+// CLICK. Opening synchronously puts the sheet in its OPEN state by click
+// time, so its own armed dismissal immediately closes it (a one-gesture
+// open→shut flash; caught live). Deferring one macrotask lets that click
+// land on a still-closed sheet — whose closed-state dismiss suppression
+// swallows it — and then opens. A gesture with no trailing click (a drag)
+// never selects, so the timer only ever runs for real taps.
+function useGraphSelection(narrow: boolean, modelReady: boolean, summonDrawer: () => void) {
+  const [selection, setSelection] = useState<string | undefined>(undefined)
+  const [wikiPush, setWikiPush] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    if (modelReady && wikiPush !== undefined) setWikiPush(undefined)
+  }, [modelReady, wikiPush])
+  const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (openTimerRef.current !== null) clearTimeout(openTimerRef.current)
+    },
+    [],
+  )
+  const handleGraphSelect = (displayId: string): void => {
+    setSelection(displayId)
+    setWikiPush(displayId)
+    if (narrow) {
+      if (openTimerRef.current !== null) clearTimeout(openTimerRef.current)
+      openTimerRef.current = setTimeout(() => {
+        openTimerRef.current = null
+        summonDrawer()
+      }, 0)
+    }
+  }
+  return { selection, setSelection, wikiPush, handleGraphSelect }
+}
+
 export function WorldReveal({
   campaignId,
   nodes,
@@ -283,14 +364,6 @@ export function WorldReveal({
   // is told to settle static — honour the OS/browser preference (web layer).
   const prefersReducedMotion = usePrefersReducedMotion()
   const narrow = useViewportNarrow()
-
-  // The PERSISTENT selection (the graph highlight) vs the ONE-SHOT push signal
-  // (what the wiki's external-selection effect consumes). Split because the
-  // wiki's `back()` reports nothing outward: were the push signal persistent,
-  // re-tapping the SAME node after backing out would read as "no change" and
-  // the page would never re-open (the D4-review re-tap bug).
-  const [selection, setSelection] = useState<string | undefined>(undefined)
-  const [wikiPush, setWikiPush] = useState<string | undefined>(undefined)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [query, setQuery] = useState('')
   // The quiet refetch token: how many silent tail stages have completed. Each
@@ -298,51 +371,11 @@ export function WorldReveal({
   // player reads. Monotonic within a mount (stages only advance).
   const wikiRefreshToken = completedTailStageCount(stages)
   const wiki = useWikiModel(campaignId, fetchSnapshot, wikiRefreshToken)
-
-  // Clear the push signal once the mounted wiki has consumed it (child effects
-  // run before this parent effect, and the wiki's same-entity push is a no-op,
-  // so re-delivering is always safe). Deferred while the panel is still the
-  // loading line: the signal must survive until the wiki mounts and can
-  // consume it on its first effect pass.
-  // COUPLING: this one-shot pattern relies on WorldWiki treating
-  // externalSelection as a jump signal — clearing it to undefined must NOT
-  // navigate home (WorldWiki's external-selection effect keys on the value
-  // changing to a defined id). A D4-side semantics change breaks re-tap here.
-  useEffect(() => {
-    if (wiki.model !== null && wikiPush !== undefined) setWikiPush(undefined)
-  }, [wiki.model, wikiPush])
-
-  // A graph tap: highlight, push the wiki page and — on mobile, where the wiki
-  // sleeps in the drawer — summon the sheet so the page is actually seen.
-  //
-  // The summon is DEFERRED past the tapping gesture. The graph selects on
-  // POINTERUP, but Radix (Dialog ≥1.1.17, `deferPointerDownOutside`) arms the
-  // sheet's outside-dismiss at the gesture's POINTERDOWN — which landed on the
-  // canvas, outside the sheet — and delivers it at the gesture's trailing
-  // CLICK. Opening synchronously puts the sheet in its OPEN state by click
-  // time, so its own armed dismissal immediately closes it (a one-gesture
-  // open→shut flash; caught live). Deferring one macrotask lets that click
-  // land on a still-closed sheet — whose closed-state dismiss suppression
-  // swallows it — and then opens. A gesture with no trailing click (a drag)
-  // never selects, so the timer only ever runs for real taps.
-  const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(
-    () => () => {
-      if (openTimerRef.current !== null) clearTimeout(openTimerRef.current)
-    },
-    [],
+  const { selection, setSelection, wikiPush, handleGraphSelect } = useGraphSelection(
+    narrow,
+    wiki.model !== null,
+    () => { setDrawerOpen(true) },
   )
-  const handleGraphSelect = (displayId: string): void => {
-    setSelection(displayId)
-    setWikiPush(displayId)
-    if (narrow) {
-      if (openTimerRef.current !== null) clearTimeout(openTimerRef.current)
-      openTimerRef.current = setTimeout(() => {
-        openTimerRef.current = null
-        setDrawerOpen(true)
-      }, 0)
-    }
-  }
 
   const handleContinue = (): void => {
     if (onContinue) onContinue()
@@ -410,6 +443,8 @@ export function WorldReveal({
     />
   )
   const continueAction = <ContinueAffordance ready={continueReady} onPress={handleContinue} />
+  // The page header is the world's NAME (ux-run2 myth-8ozsw); generic fallback only pre-model.
+  const title = wiki.model?.introduction?.title ?? t('worldReveal.title')
 
   if (narrow) {
     return (
@@ -420,6 +455,7 @@ export function WorldReveal({
         moment={moment}
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
+        title={title}
       />
     )
   }
@@ -429,6 +465,7 @@ export function WorldReveal({
       wikiPanel={wikiPanel}
       continueAction={continueAction}
       moment={moment}
+      title={title}
     />
   )
 }

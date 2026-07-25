@@ -78,6 +78,22 @@ describe('checkFtProse — internal-term leak (myth-eehro)', () => {
   })
 })
 
+describe('checkFtProse — structure token (ux-run2, myth-g4hf3)', () => {
+  it('flags a bare horizontal-rule line ("---") that the client would render literally', () => {
+    expect(kinds('The correction stands — there is no sliver.\n\n---')).toContain('structure_token')
+  })
+
+  it('flags *** and ___ rule lines too', () => {
+    expect(kinds('The hall darkens.\n***\nA bell rings.')).toContain('structure_token')
+    expect(kinds('The hall darkens.\n  ___  \nA bell rings.')).toContain('structure_token')
+  })
+
+  it('does not flag an em-dash or a hyphenated aside inside a sentence', () => {
+    expect(kinds('The stone - old, sea-worn - does not yield.')).not.toContain('structure_token')
+    expect(kinds('He waits --- longer than he should --- then speaks.')).not.toContain('structure_token')
+  })
+})
+
 describe('checkFtProse — multiple classes in one pass', () => {
   it('reports each distinct defect once', () => {
     const v = checkFtProse('the *order was wrong.Hast wrote it as the session context says')

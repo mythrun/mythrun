@@ -11,6 +11,10 @@ import type { RailStep } from './types.ts'
 export interface GuidedRailProps {
   /** The rungs to show, in journey order (one per step, each done/now/todo). */
   rail: RailStep[]
+  /** Optional resolved step counter (e.g. "Step 2 of 5"), rendered as a quiet
+   *  trailing line on the rail row — the "how far" the rung row alone does not
+   *  carry (ux-run2 myth-udhp3). */
+  counter?: string
   /** Optional test hook for the root list (defaults to `guided-rail`). */
   'data-testid'?: string
 }

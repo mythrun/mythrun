@@ -37,6 +37,18 @@ export interface SecretTripwireInput {
    *  "Unsheathed Folly" incident — an NPC watching a door the briefing already
    *  said he watches). Public by construction; carries no secret. */
   readonly publicContext: string
+  /** myth-g4hf3 — NON-secret playbook material (encounter scripts, pacing,
+   *  knowledge bounds). Prose that contradicts or parallels it is a CONSISTENCY
+   *  matter — at most soft_consistency (the silent ST steer), NEVER hard_reveal.
+   *  Optional; absent renders as an empty block (fail-safe: nothing is treated
+   *  as consistency-only unless the caller classified it so). */
+  readonly consistencyContext?: string
+  /** myth-g4hf3 — the turn's RESOLVED skill-check outcome constraints, formatted
+   *  by the caller. Part of the grounding floor: content the system licensed via
+   *  a resolved roll (the Haiku-pre-generated outcome the deterministic dice
+   *  matched) is definitionally NOT a breach. Public by construction. Optional;
+   *  absent renders as an empty block. */
+  readonly diceOutcomes?: string
   readonly abortSignal?: AbortSignal
 }
 
@@ -55,6 +67,8 @@ export async function runSecretTripwire(input: SecretTripwireInput): Promise<Sec
       prose: input.prose,
       secrets: input.secrets,
       publicContext: input.publicContext,
+      consistencyContext: input.consistencyContext ?? '(none)',
+      diceOutcomes: input.diceOutcomes ?? '(none this turn)',
     }),
     callSite: 'secret-tripwire',
     repairStrategy: 'haiku-then-sonnet',

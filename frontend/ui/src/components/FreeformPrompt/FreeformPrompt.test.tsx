@@ -123,6 +123,47 @@ describe('FreeformPrompt', () => {
     expect(queryByTestId('freeform-step-indicator')).toBeNull()
   })
 
+  // ux-run2 myth-80an1: Back lives bottom-left in the action row when wired —
+  // the flow's one Back position, never a teleporting top-of-page label.
+  it('renders a quiet Back in the action row when onBack is wired, and fires it', async () => {
+    const onBack = vi.fn()
+    const user = userEvent.setup()
+    const { getByTestId, queryByTestId, unmount } = render(
+      <FreeformPrompt {...props({ onBack, backLabel: 'Back' })} />,
+    )
+    await user.click(getByTestId('freeform-prompt-back'))
+    expect(onBack).toHaveBeenCalledOnce()
+    unmount()
+    render(<FreeformPrompt {...props()} />)
+    expect(queryByTestId('freeform-prompt-back')).toBeNull()
+  })
+
+  // ux-run2 myth-4gnrp: the AI's bespoke prompt is the DM's voice, not form-hint
+  // chrome — `dm` promotes it to roman body size with a quiet left rule.
+  it('promotes the whisper to the DM voice register when whisperVoice="dm"', () => {
+    const { getByText, unmount } = render(<FreeformPrompt {...props({ whisperVoice: 'dm' })} />)
+    const dm = getByText('What brought them to the empty caravan at Greenward Toll?')
+    expect(dm.getAttribute('data-voice')).toBe('dm')
+    expect(dm.className).not.toContain('italic')
+    expect(dm.className).toContain('border-l-2')
+    unmount()
+    const hint = render(<FreeformPrompt {...props()} />).getByText(
+      'What brought them to the empty caravan at Greenward Toll?',
+    )
+    expect(hint.getAttribute('data-voice')).toBe('hint')
+    expect(hint.className).toContain('italic')
+  })
+
+  // ux-run2 myth-z45sb: the notes field starts at a ~3-line detail floor. In
+  // autoSize mode the floor is the row-bound minHeight style, not a rows attr.
+  it('floors the field at 3 rows when compact', () => {
+    const compact = render(<FreeformPrompt {...props({ compact: true })} />)
+    expect(compact.getByRole('textbox').style.minHeight).toContain('3 * 1lh')
+    compact.unmount()
+    const essay = render(<FreeformPrompt {...props()} />)
+    expect(essay.getByRole('textbox').style.minHeight).toContain('6 * 1lh')
+  })
+
   it('has no a11y violations with the step indicator present', async () => {
     const { container } = render(<FreeformPrompt {...props({ stepIndicator: '1 of 2' })} />)
     expect(await axe(container)).toHaveNoViolations()

@@ -81,6 +81,16 @@ describe('AppFrame — the banner chrome (MYT-99 redesign)', () => {
     expect(divider.getAttribute('role')).toBe('separator')
     expect(screen.getByTestId('app-frame-header').className).not.toContain('border')
   })
+
+  it('reserves the + glyph for campaign creation — Add credits carries no leading plus (myth-rhvkt)', () => {
+    // Run 2: three plus-prefixed controls diluted the glyph ("+ Add credits",
+    // "+ New campaign", "+ NEW CAMPAIGN"). A top-up is not "creating an object";
+    // the buy action keeps its label but drops the icon, so + consistently
+    // means create-campaign across the page.
+    renderFrame()
+    const buy = screen.getByTestId('frame-buy-credits')
+    expect(buy.querySelector('svg')).toBeNull()
+  })
 })
 
 describe('AppFrame — the full-bleed content variant (MYT-92 T15)', () => {
@@ -109,5 +119,23 @@ describe('AppFrame — the full-bleed content variant (MYT-92 T15)', () => {
   it('keeps the header row present in full-bleed mode (92 swaps only the content region; 95 owns the header)', () => {
     renderFrame({ fullBleed: true })
     expect(screen.getByTestId('app-frame-header')).toBeDefined()
+  })
+})
+
+describe('AppFrame — commerce chrome quiets on the immersive stage (myth-u5qro)', () => {
+  it('stands the buy affordance down on a full-bleed route (play + its waits)', () => {
+    // Run 2: "'+ Add credits' glowing in the corner while the curtain is
+    // lowered is the usher hawking concessions during the overture." On the
+    // immersive stage the balance readout stays; the purchase action retreats
+    // behind the settings gear (the arrangement phones always use).
+    renderFrame({ fullBleed: true })
+    expect(screen.queryByTestId('frame-buy-credits')).toBeNull()
+    // The gear — the interim billing entry — remains.
+    expect(screen.getByTestId('frame-settings')).toBeDefined()
+  })
+
+  it('keeps the buy affordance on ordinary framed routes', () => {
+    renderFrame()
+    expect(screen.getByTestId('frame-buy-credits')).toBeDefined()
   })
 })

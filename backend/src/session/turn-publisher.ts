@@ -19,7 +19,7 @@
 
 import type { Redis } from 'ioredis'
 import { sessionChannel } from '../contract/session-channel.js'
-import type { ServerFrame } from '../contract/session-events.js'
+import type { ParticipantSummary, ServerFrame } from '../contract/session-events.js'
 import type {
   CombatResolvedFramePayload,
   CombatStartedFramePayload,
@@ -50,6 +50,21 @@ export interface TurnPublisher {
   dmCorrection(campaignId: string, turnId: string, p: DmCorrectionFramePayload): Promise<void>
   turnEnd(campaignId: string, turnId: string): Promise<void>
   turnError(campaignId: string, turnId: string, message: string): Promise<void>
+  /** myth-aiiao — the corrected-turn WHOLE-TURN REPLACE: publish a live
+   *  `session_reconnect` frame carrying ONE turn's rebuilt replay messages.
+   *  The client's transcript reducer already does a per-turnId whole-turn
+   *  replace over any reconnect batch (prune items with the batch's turnIds,
+   *  re-fold the batch), so the same frame kind repairs a live client whose
+   *  streamed attempt 1 diverged from the persisted audit-corrected retry —
+   *  no new frame kind, no codec registration. `messages` MUST be the turn's
+   *  persisted rows mapped through rowToReplayFrame (seq-bearing), so the
+   *  client's high-water mark advances exactly as a real reconnect would. */
+  turnReplace(
+    campaignId: string,
+    messages: readonly ServerFrame[],
+    participants: readonly ParticipantSummary[],
+    mode: 'exploration' | 'combat',
+  ): Promise<void>
   /** A frame emitter bound to one (campaign, turn) for the Fast Thinker. */
   emitFor(campaignId: string, turnId: string): TurnEmitter
 }
@@ -219,6 +234,14 @@ export function createTurnPublisher(redis: Redis, keyPrefix: string): TurnPublis
     },
     async turnError(campaignId, turnId, message): Promise<void> {
       await publish(campaignId, { type: 'turn_error', turnId, message })
+    },
+    async turnReplace(campaignId, messages, participants, mode): Promise<void> {
+      await publish(campaignId, {
+        type: 'session_reconnect',
+        messages: [...messages],
+        participants: [...participants],
+        mode,
+      })
     },
     emitFor(campaignId, turnId): TurnEmitter {
       return {

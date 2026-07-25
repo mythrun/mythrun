@@ -14,8 +14,15 @@ export interface CharacterSheetRevealLabels {
   seeFull: string
   /** The same toggle in its expanded state (e.g. "Hide full sheet"). */
   hideFull: string
-  /** The discard-and-restart control (e.g. "Begin again"). */
+  /** The discard-and-restart control (e.g. "Start over" — zero shared morphology
+   *  with the confirm verb; ux-run2 myth-fca4y). */
   startOver: string
+  /** The start-over confirm prompt (e.g. "Start over? This discards this character."). */
+  startOverPrompt: string
+  /** The start-over confirm verb (e.g. "Yes, start over"). */
+  startOverConfirm: string
+  /** The start-over dismiss verb (e.g. "Keep them"). */
+  startOverKeep: string
   /** The curated "what they can do" panel title. */
   panelFeatures: string
   /** The curated "what they carry" panel title. */
@@ -38,6 +45,15 @@ export interface CharacterSheetRevealProps {
   onToggleExpand: () => void
   /** Confirm this character and move to the party roster. */
   onConfirm: () => void
-  /** Discard and restart character creation. */
+  /** The start-over confirm's CONTROLLED disclosure state (ux-run2 myth-fca4y):
+   *  `true` renders the inline confirm (prompt + confirm/dismiss verbs) in place
+   *  of the start-over control. The parent owns it — the reveal stays fully
+   *  controlled; the destructive act fires only from `onStartOver`. */
+  startOverConfirming: boolean
+  /** Ask to start over — the parent arms the inline confirm. */
+  onRequestStartOver: () => void
+  /** Dismiss the start-over confirm, keeping the character. */
+  onCancelStartOver: () => void
+  /** Discard and restart character creation (fired from the confirm verb only). */
   onStartOver: () => void
 }

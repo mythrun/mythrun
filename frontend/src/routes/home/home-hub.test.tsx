@@ -74,14 +74,40 @@ describe('CampaignHubBody', () => {
     expect(within(index).getAllByRole('separator')).toHaveLength(2)
   })
 
-  it('leads the grid with the create tile as the FIRST cell, linking to campaign-new (MYT-3jb55)', () => {
+  it('trails the grid with the create tile as the LAST cell, linking to campaign-new (myth-z9eiq)', () => {
     renderHub([makeCampaign({ id: 'a' }), makeCampaign({ id: 'b' })])
     const grid = screen.getByTestId('hub-grid')
     const createCard = within(grid).getByTestId('hub-create-card')
     // The create tile is a link to the campaign-new route…
     expect(createCard.getAttribute('href')).toBe('/campaigns/new')
-    // …and it is the FIRST grid cell (above the fold, ahead of every campaign card).
+    // …and it TERMINATES the grid (the Figma/Drive convention): the premier
+    // top-left cell belongs to the player's most-recent campaign, the ghost
+    // tile trails as a natural "+ one more". Create-primacy stays with the
+    // page header's filled button.
     const gridChildren = Array.from(grid.querySelectorAll('[data-testid^="campaign-card-"], [data-testid="hub-create-card"]'))
-    expect(gridChildren[0]).toBe(createCard)
+    expect(gridChildren[gridChildren.length - 1]).toBe(createCard)
+    expect(gridChildren[0]?.getAttribute('data-testid')).toBe('campaign-card-a')
+  })
+
+  it('gives the premier (most-recent-activity) card the continue-session cue when it has a play record', () => {
+    // b was played more recently than a → hub-sort puts b in the premier slot.
+    renderHub([
+      makeCampaign({ id: 'a', cardPhase: 'played', sessionCount: 2, lastPlayedAt: '2026-06-01T10:00:00.000Z' }),
+      makeCampaign({ id: 'b', cardPhase: 'played', sessionCount: 7, lastPlayedAt: '2026-06-20T10:00:00.000Z' }),
+    ])
+    const grid = screen.getByTestId('hub-grid')
+    const premier = within(grid).getByTestId('campaign-card-b')
+    expect(within(premier).getByTestId('cover-card-cta').textContent).toBe(
+      i18n.t('home.card.continueSession'),
+    )
+    // Only the premier slot carries the cue — never every played card.
+    const other = within(grid).getByTestId('campaign-card-a')
+    expect(within(other).queryByTestId('cover-card-cta')).toBeNull()
+  })
+
+  it('shows no continue-session cue when the premier campaign has not been played', () => {
+    renderHub([makeCampaign({ id: 'a', cardPhase: 'not-played' })])
+    const grid = screen.getByTestId('hub-grid')
+    expect(within(grid).queryByTestId('cover-card-cta')).toBeNull()
   })
 })

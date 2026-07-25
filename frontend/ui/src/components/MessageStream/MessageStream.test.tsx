@@ -176,6 +176,8 @@ const STUB_LABELS: RollCardLabels = {
   advantage: 'advantage',
   disadvantage: 'disadvantage',
   dieResult: 'You rolled',
+  explainerFor: (skill, modifier) => `Roll a d20 · ${skill} ${modifier} is your bonus`,
+  dcExplainer: 'The DC is the mark to meet',
 }
 
 const NO_REVEAL: RollRevealView = { phaseByKey: {}, gatedTurnIds: new Set<string>() }

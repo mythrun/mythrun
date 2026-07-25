@@ -8,6 +8,7 @@ import {
   type ApiContext,
   type CampaignSummary,
   type CharacterCreationProgress,
+  type CharacterFull,
   type SseStatusClient,
 } from '@mythrun/client-core'
 import type { PipelineEvent } from '@mythrun/contract/events'
@@ -117,6 +118,30 @@ function makeDriver(): {
   }
 }
 
+/** A full raw character read carrying the one field the surface uses (the NAME);
+ *  the rest are inert, schema-complete defaults. */
+function characterFull(name: string): CharacterFull {
+  return {
+    character: {
+      id: 'char-1',
+      user_id: OWNER,
+      entity_id: null,
+      name,
+      level: 3,
+      class: 'Cleric',
+      species: 'Human',
+      background: 'Hermit',
+      str: 10, dex: 10, con: 10, int: 10, wis: 16, cha: 12,
+      hit_points: 21, max_hit_points: 21, armor_class: 15,
+      proficiency_bonus: 2, gold: 15, hit_die: 8, hit_dice_remaining: 3,
+      spellcasting_progression: 'full',
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    },
+    skills: [], features: [], equipment: [], spells: [],
+  }
+}
+
 /** Resolve a full deps object from partial overrides — every seam defaults to a
  *  happy-path mock so a test only names the seam it cares about. */
 function resolveDeps(deps: PartyStagingDeps = {}): Required<PartyStagingDeps> {
@@ -127,6 +152,9 @@ function resolveDeps(deps: PartyStagingDeps = {}): Required<PartyStagingDeps> {
     // A quiet default transport (never emits, never connects) so the roster is
     // static unless a test drives its own driver.
     createClient: deps.createClient ?? makeDriver().createClient,
+    // The default fixtures carry no characterId, so the name read never fires;
+    // a rejecting default keeps any unexpected call calm (the hook degrades).
+    getCharacter: deps.getCharacter ?? vi.fn().mockRejectedValue(new Error('not fixtured')),
   }
 }
 
@@ -344,5 +372,80 @@ describe('PartyStagingSurface — load lifecycle', () => {
     expect(getProgress.mock.calls.length).toBeGreaterThan(1)
     const beginAfter = await screen.findByRole('button', { name: /begin/i })
     expect((beginAfter as HTMLButtonElement).disabled).toBe(false)
+  })
+})
+
+describe('PartyStagingSurface — ux-run2 lobby truth (myth-wfgfi)', () => {
+  it('leads the ready row with the fetched character name; the account demotes to the sub-line', async () => {
+    const getCharacter = vi.fn().mockResolvedValue(characterFull('Sable'))
+    renderSurface({
+      deps: {
+        getProgress: vi.fn().mockResolvedValue(
+          progress({
+            concepts: [
+              {
+                userId: OWNER,
+                displayName: 'Kessa',
+                status: 'completed',
+                submittedAt: 't1',
+                characterId: 'char-1',
+              },
+            ],
+          }),
+        ),
+        getCharacter,
+      },
+    })
+    // The character's name arrives as the row's serif primary line.
+    const primary = await screen.findByText('Sable')
+    expect(getCharacter).toHaveBeenCalledWith(testCtx, CID, 'char-1')
+    const row = primary.closest('[data-testid="party-roster-member"]')
+    expect(row?.textContent).toContain('Kessa')
+    // The fiction leads: the character name is the serif line, the account mono.
+    expect(primary.className).toContain('font-body')
+  })
+
+  it('carries the partial truth on Begin and finalizes only through the inline confirm', async () => {
+    const finalize = vi.fn().mockResolvedValue({ campaignId: CID, jobId: 'job-1' })
+    renderSurface({
+      deps: {
+        finalize,
+        getProgress: vi.fn().mockResolvedValue(
+          progress({
+            totalMembers: 2,
+            concepts: [
+              { userId: OWNER, displayName: 'Kessa', status: 'completed', submittedAt: 't1' },
+              { userId: MEMBER, displayName: 'Pell', status: 'processing', submittedAt: 't2' },
+            ],
+          }),
+        ),
+      },
+    })
+    // The label carries the truth — never a silent gray-out.
+    const begin = await screen.findByRole('button', {
+      name: i18n.t('characterCreate.staging.beginPartial', { ready: 1, total: 2 }),
+    })
+    fireEvent.click(begin)
+    expect(finalize).not.toHaveBeenCalled()
+    // The single confirm: count-aware prompt + the two verbs.
+    expect(
+      screen.getByText(i18n.t('characterCreate.staging.beginConfirm', { count: 1 })),
+    ).toBeDefined()
+    fireEvent.click(
+      screen.getByRole('button', { name: i18n.t('characterCreate.staging.beginConfirmNo') }),
+    )
+    expect(finalize).not.toHaveBeenCalled()
+    // Dismissing remounts the Begin control — re-query before re-arming.
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: i18n.t('characterCreate.staging.beginPartial', { ready: 1, total: 2 }),
+      }),
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: i18n.t('characterCreate.staging.beginConfirmYes') }),
+    )
+    await waitFor(() => {
+      expect(finalize).toHaveBeenCalledTimes(1)
+    })
   })
 })

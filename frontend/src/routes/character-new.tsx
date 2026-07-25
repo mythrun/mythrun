@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { Drawer, Heading, IconButton, ResizeHandle, Stack, useViewportBelowLg } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Navigate, useParams } from 'react-router-dom'
+import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import {
   getCharacterCreationProgress,
   getStartingSituations,
@@ -12,6 +12,7 @@ import {
   useApiContext,
   type ApiContext,
   type CharacterCreationProgress,
+  type GuidedChoicesPayload,
   type StartingSituation,
   type StartingSituationsResponse,
   type SubmitCharacterBody,
@@ -237,8 +238,8 @@ function WikiRail({
         edge="leading"
         label={t('worldReveal.wikiResize')}
       />
-      {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the docked panel at the reader-chosen width (dynamic style): header ATTACHED to the scrolling body as one bordered object */}
-      <div style={{ width: `${String(width)}px` }} className="flex min-h-0 shrink-0 flex-col rounded-none border border-border-strong bg-surface">
+      {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the docked panel at the reader-chosen width (dynamic style): header ATTACHED to the scrolling body as one bordered object. No border-l — the ResizeHandle's rule IS the panel's left edge (one line, not a double-hairline seam; ux-run2 myth-sd5vh) */}
+      <div style={{ width: `${String(width)}px` }} className="flex min-h-0 shrink-0 flex-col rounded-none border-y border-r border-border-strong bg-surface">
         {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the panel header row (title + collapse), joined to the body by the shared bottom border */}
         <div className="flex items-center justify-between gap-[var(--space-2)] border-b border-border-strong px-[var(--space-3)] py-[var(--space-2)]">
           <Heading level={2} role="title">{t('worldReveal.title')}</Heading>
@@ -335,12 +336,16 @@ export function CharacterNewRoute({
 }: CharacterNewRouteProps = {}): React.JSX.Element {
   const { t } = useTranslation()
   const ctx = useApiContext()
+  const navigate = useNavigate()
   // The route only matches with an `:id`; `?? ''` keeps the hook calls unconditional.
   const { id = '' } = useParams<{ id: string }>()
   const [flow, setFlow] = useState<CreateState>(createMachine.initial)
   const dispatch = (event: CreateEvent): void => {
     setFlow((state) => createMachine.transition(state, event))
   }
+  // The guided path reports its current selection's canonical name (myth-ehcf4);
+  // the wiki panel uses it as the match needle for its step-aware context strip.
+  const [stepContext, setStepContext] = useState<string | undefined>(undefined)
 
   const { situation, startingLevel, prerequisitesMissing } = useStartingContext(id, ctx, fetchSituations)
   // myth-qkjdq: consult the roster on entry. A refresh / deep-link that lands here
@@ -398,8 +403,20 @@ export function CharacterNewRoute({
     )
   }
 
-  const submitBoth = (conceptText: string, situationGroundingText: string): Promise<void> =>
-    submit(ctx, id, { conceptText, situationGroundingText }).then(() => undefined)
+  // The guided path hands over its STRUCTURED picks alongside the flattened
+  // conceptText (myth-4jhrk: the backend persists the picks and pins the
+  // subclass end-to-end — prose alone loses it); the freeform path omits the
+  // field. Conditional spread keeps an absent payload absent, not undefined.
+  const submitBoth = (
+    conceptText: string,
+    situationGroundingText: string,
+    guidedChoices?: GuidedChoicesPayload,
+  ): Promise<void> =>
+    submit(ctx, id, {
+      conceptText,
+      situationGroundingText,
+      ...(guidedChoices !== undefined && { guidedChoices }),
+    }).then(() => undefined)
 
   let screen: React.JSX.Element
   if (flow === 'chooser') {
@@ -410,6 +427,9 @@ export function CharacterNewRoute({
         }}
         onChooseGuided={() => {
           dispatch('chooseGuided')
+        }}
+        onBack={() => {
+          void navigate(`/campaigns/${id}`)
         }}
       />
     )
@@ -439,6 +459,7 @@ export function CharacterNewRoute({
         onBack={() => {
           dispatch('back')
         }}
+        onStepContext={setStepContext}
         store={draftStoreImpl}
         campaignId={id}
       />
@@ -470,7 +491,8 @@ export function CharacterNewRoute({
   }
 
   // The wiki panel — ONE element shared by both layout regimes so the reader
-  // state (query, current page) rides whichever mount the viewport picks.
+  // state (query, current page) rides whichever mount the viewport picks. The
+  // guided path's selection needle makes it step-aware (myth-ehcf4).
   const wikiPanel = (
     <WikiPanel
       state={wiki}
@@ -478,6 +500,7 @@ export function CharacterNewRoute({
       onSelect={noopSelect}
       query={wikiQuery}
       onQuery={setWikiQuery}
+      {...(stepContext !== undefined ? { stepContext } : {})}
     />
   )
 

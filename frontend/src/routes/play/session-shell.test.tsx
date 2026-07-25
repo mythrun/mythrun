@@ -339,6 +339,61 @@ describe('SessionShell — session lifecycle + composer gating (myth-lhp99 / myt
     expect(screen.getByTestId('session-input-busy').textContent).toBe(i18n.t('play.input.dmBusy'))
   })
 
+  it('myth-xxyo9: the inline confirm borders BOTH affordances and discloses the credit AT the decision', () => {
+    renderShellSession(makeSession([DM_PROSE]))
+    fireEvent.click(screen.getByTestId('end-session-open'))
+    // "Keep playing" is a real bordered button beside "End session" — two square
+    // outline buttons, never a bare mono label next to a bordered one.
+    expect(screen.getByTestId('end-session-cancel').className).toContain('border-border-strong')
+    expect(screen.getByTestId('end-session-do').className).toContain('border-border-strong')
+    // The cost statement sits IN the confirm state, before commitment.
+    expect(screen.getByTestId('end-session-credit').textContent).toBe(i18n.t('play.end.credit'))
+  })
+
+  it('myth-0q8jm: with a check unrolled the caption says the game waits on the PLAYER, never "the DM is writing"', () => {
+    // The gated post-check prose is still streaming (invisible) — the run-2 lie.
+    const gatedStreaming: SessionView['items'][number] = { ...DM_PROSE, key: 'dm-s', streaming: true }
+    renderShellSession(makeSession([SKILL_CHECK, gatedStreaming]))
+    expect(screen.getByTestId('session-input-busy').textContent).toBe(i18n.t('play.input.pendingRoll'))
+    expect(screen.getByRole('button', { name: i18n.t('play.input.send') }).hasAttribute('disabled')).toBe(true)
+  })
+
+  it('myth-0q8jm: once the die is revealed the caption names the real pending act (Continue)', () => {
+    vi.useFakeTimers()
+    renderShellSession(makeSession([SKILL_CHECK, DM_PROSE]))
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('play.roll.roll') }))
+    act(() => {
+      vi.advanceTimersByTime(SPIN_STEPS * STEP_MS)
+    })
+    expect(screen.getByTestId('session-input-busy').textContent).toBe(i18n.t('play.input.pendingContinue'))
+    // Continue lifts the gate: no caption, Send live — three components, one state.
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('play.roll.continue') }))
+    expect(screen.getByTestId('session-input-busy').textContent).toBe('')
+    expect(screen.getByRole('button', { name: i18n.t('play.input.send') }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it('myth-svmer: a processed message below an armed card demotes it — no live Continue above newer turns', () => {
+    const laterPlayer: SessionView['items'][number] = {
+      kind: 'player',
+      key: 'p-after',
+      turnId: null,
+      seq: 9,
+      userId: 'u-2',
+      displayName: 'Ada',
+      characterName: 'Sable',
+      text: 'I hold the sliver up to the light.',
+      pending: false,
+    }
+    renderShellSession(makeSession([SKILL_CHECK, DM_PROSE, laterPlayer]))
+    // The card renders as a historical record: readout shown, no Roll/Continue.
+    expect(screen.queryByRole('button', { name: i18n.t('play.roll.roll') })).toBeNull()
+    expect(screen.queryByRole('button', { name: i18n.t('play.roll.continue') })).toBeNull()
+    expect(screen.getByText('14 + 2 = 16')).toBeDefined()
+    // Its gate lifted in the same paint: the prose shows and the composer is live.
+    expect(screen.getByText(DM_TEXT)).toBeDefined()
+    expect(screen.getByRole('button', { name: i18n.t('play.input.send') }).hasAttribute('disabled')).toBe(false)
+  })
+
   it('gates Send while a live DM turn is still streaming', () => {
     const streamingDm: SessionView['items'][number] = { ...DM_PROSE, key: 'dm-s', streaming: true }
     renderShellSession(makeSession([streamingDm]))

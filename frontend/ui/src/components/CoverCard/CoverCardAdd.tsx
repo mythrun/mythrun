@@ -4,10 +4,12 @@ import { cn } from '../../lib/cn.ts'
 import { Icon } from '../Icon/Icon.tsx'
 import { Text } from '../Text/Text.tsx'
 
-// CoverCardAdd — the dashed "＋ New campaign" CREATE tile that leads the campaign-hub
-// grid (MYT-3jb55). It shares CoverCard's 3:2 portrait footprint so it sits as a peer
-// FIRST cell that teaches the grid model ("cards live here; start one here"), but it
-// is a single centered action, not a cover object: a plus glyph over a terse label.
+// CoverCardAdd — the dashed "＋ New campaign" CREATE tile that TRAILS the campaign-hub
+// grid (MYT-3jb55, moved to the last cell by myth-z9eiq — the premier top-left slot
+// belongs to the player's most-recent campaign). It shares CoverCard's 3:2 portrait
+// footprint so it sits as a peer cell that terminates the grid as a natural "+ one
+// more", but it is a single centered action, not a cover object: a plus glyph over
+// a terse label.
 // Dashed --border-strong edge reads as "an outline waiting to be filled" (the same
 // language as the empty shelf's dashed frame); square, paper, 1-bit register.
 //

@@ -12,6 +12,7 @@ import { WikiScrollFrame } from './WikiScrollFrame.tsx'
 import { RelatedFooter } from './RelatedFooter.tsx'
 import { filterWikiModel } from './filter-model.ts'
 import { resolveKindLabel } from './kind-label.ts'
+import { smartQuotes } from './smart-quotes.ts'
 
 // WikiHome (MYT-89 D4; intro-as-home myth-b9bap; MYT-100 tabbed IA) — the wiki's
 // landing, restructured into two PEER VIEWS instead of one long scroll. When the
@@ -145,6 +146,74 @@ function BrowseGroups({
   )
 }
 
+/** Cap on step-relevant rows per surface (glossary / entities) — the strip is a
+ *  grounding hint, never a second index. */
+const MAX_STEP_HITS = 3
+
+interface StepContextSectionProps {
+  model: WikiViewModel
+  /** The active creation step's topic — the eyebrow AND the match needle. */
+  stepContext: string
+  onOpen: (entityId: string) => void
+  groupLabels?: WorldWikiProps['groupLabels']
+}
+
+/** The step-relevant landing strip (ux-run2 myth-ehcf4) — what turns the panel
+ *  from a static poster into a participant. The consumer passes the step's
+ *  topic (or the selected card's name) as `stepContext`; it renders as the
+ *  quiet eyebrow and runs through the SAME filter the search field uses
+ *  (mechanical name/term match — no semantic mapping lives here). Matching
+ *  glossary terms surface with their definitions OPEN — the world's voice,
+ *  no tap required — and matching entities as openable rows. No hits →
+ *  nothing renders and the home is exactly the step-less panel. */
+function StepContextSection({
+  model,
+  stepContext,
+  onOpen,
+  groupLabels,
+}: StepContextSectionProps): React.JSX.Element | null {
+  const hits = filterWikiModel(model, stepContext)
+  const glossary = hits.glossary.slice(0, MAX_STEP_HITS)
+  const entities = hits.groups
+    .flatMap((group) => group.entities.map((entity) => ({ entity, kind: group.kind })))
+    .slice(0, MAX_STEP_HITS)
+  if (glossary.length === 0 && entities.length === 0) return null
+  return (
+    <section className="flex min-w-0 flex-col gap-[var(--space-2)] pb-[var(--space-2)]">
+      <p className={cn(INDEX_LABEL_CLASS, 'px-[var(--space-3)]')}>{stepContext}</p>
+      {glossary.map((entry) => (
+        <div key={entry.term} className="min-w-0 px-[var(--space-3)]">
+          <p className="font-ui text-sm text-ink">{entry.term}</p>
+          <Text role="prose-body" as="p">
+            {smartQuotes(entry.definition)}
+          </Text>
+        </div>
+      ))}
+      {entities.length > 0 && (
+        <ul className="min-w-0">
+          {entities.map(({ entity, kind }) => (
+            <li key={entity.id}>
+              <button
+                type="button"
+                onClick={() => {
+                  onOpen(entity.id)
+                }}
+                className={cn(ITEM_CLASS, 'justify-between gap-[var(--space-3)]')}
+              >
+                <Text role="prose-body" truncate>
+                  {entity.name}
+                </Text>
+                <span className={INDEX_LABEL_CLASS}>{resolveKindLabel(kind, groupLabels)}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Divider tone="border" />
+    </section>
+  )
+}
+
 interface IntroductionArticleProps {
   introduction: WikiIntroduction
   onOpen: (entityId: string) => void
@@ -152,9 +221,11 @@ interface IntroductionArticleProps {
   groupLabels?: WorldWikiProps['groupLabels']
 }
 
-/** The introduction as a PAGE: the world-name title moment, the prose as
- *  paragraphs, the dig-deeper references (each annotated with its target's
- *  kind through the same `groupLabels` map every other kind surface speaks). */
+/** The introduction as a PAGE: the grounding prose as paragraphs, then the
+ *  dig-deeper references (each annotated with its target's kind through the
+ *  same `groupLabels` map every other kind surface speaks). The world-name
+ *  TITLE is not here anymore — it lives in the persistent panel header above
+ *  the view switch (ux-run2 myth-o9iuh), so it never repeats. */
 function IntroductionArticle({
   introduction,
   onOpen,
@@ -167,12 +238,7 @@ function IntroductionArticle({
     label: resolveKindLabel(ref.kind, groupLabels),
   }))
   return (
-    <article className="min-w-0 px-[var(--space-3)]">
-      <header className="pb-[var(--space-4)] pt-[var(--space-2)]">
-        <Heading level={2} role="display">
-          {introduction.title}
-        </Heading>
-      </header>
+    <article className="min-w-0 px-[var(--space-3)] pt-[var(--space-2)]">
       <div className="flex flex-col gap-[var(--space-3)]">
         {introduction.paragraphs.map((paragraph, index) => (
           // Index keys are safe here (the list is static per render) and, unlike
@@ -202,12 +268,16 @@ interface IndexViewProps {
   /** Whether the persistent switch already names this view — when it does, the
    *  in-body INDEX eyebrow is redundant and suppressed. */
   hasSwitch: boolean
+  /** The active creation step's topic (ux-run2 myth-ehcf4) — surfaces the
+   *  step-relevant strip at the top of the view. Absent/empty → no strip. */
+  stepContext?: string
 }
 
-/** The INDEX view: the world's introduction (its front door, when present) over
- *  the search field + browse-by-kind groups. The INDEX eyebrow separates the
- *  intro from the browse section only when the switch isn't there to name the
- *  view. */
+/** The INDEX view: the step-relevant strip (when a `stepContext` is set and the
+ *  reader isn't mid-search), then the world's introduction (its front door,
+ *  when present) over the search field + browse-by-kind groups. The INDEX
+ *  eyebrow separates the intro from the browse section only when the switch
+ *  isn't there to name the view. */
 function IndexView({
   model,
   selectedId,
@@ -221,8 +291,21 @@ function IndexView({
   referencesLabel,
   indexLabel,
   hasSwitch,
+  stepContext,
 }: IndexViewProps): React.JSX.Element {
   const introduction = model.introduction
+  // The step strip stands down while the reader is actively searching — the
+  // query owns the surface (its hits already ARE the relevant content).
+  const stepTopic = stepContext?.trim() ?? ''
+  const step =
+    stepTopic !== '' && query.trim() === '' ? (
+      <StepContextSection
+        model={model}
+        stepContext={stepTopic}
+        onOpen={onOpen}
+        {...(groupLabels !== undefined ? { groupLabels } : {})}
+      />
+    ) : null
   const browse = (
     <>
       <WikiSearch label={searchLabel} value={query} onChange={onQuery} placeholder={searchPlaceholder} />
@@ -240,11 +323,17 @@ function IndexView({
   if (introduction === undefined) {
     // No front door (a pre-migration world, or a snapshot without one): the
     // search over the browse groups alone.
-    return <div className="flex min-w-0 flex-col gap-[var(--space-2)]">{browse}</div>
+    return (
+      <div className="flex min-w-0 flex-col gap-[var(--space-2)]">
+        {step}
+        {browse}
+      </div>
+    )
   }
 
   return (
     <>
+      {step}
       <IntroductionArticle
         introduction={introduction}
         onOpen={onOpen}
@@ -283,6 +372,9 @@ export interface WikiHomeProps {
   indexLabel: string
   /** Segment label for the glossary view + eyebrow (MYT-102). */
   glossaryLabel: string
+  /** The active creation step's topic (ux-run2 myth-ehcf4) — a short display
+   *  string that is ALSO the match needle for the step-relevant strip. */
+  stepContext?: string
   /** The retained scroll offset (px) to seat the reader at on mount — the
    *  shell's home scroll memory. */
   scroll?: number
@@ -306,6 +398,7 @@ export function WikiHome({
   referencesLabel,
   indexLabel,
   glossaryLabel,
+  stepContext,
   scroll = 0,
   scrollRef,
 }: WikiHomeProps): React.JSX.Element {
@@ -328,6 +421,19 @@ export function WikiHome({
 
   return (
     <div className="flex max-h-full min-h-0 min-w-0 flex-col">
+      {/* The world's NAME as the panel's persistent identity (ux-run2 myth-o9iuh):
+          ABOVE the Index/Glossary strip — the tabs switch the reading matter, not
+          the world — and one full role step below `display`, so it anchors the
+          panel without out-shouting the page's own task heading (the char-fork /
+          builder "two competing H1s" critique). Data, not chrome: the name comes
+          off the model; a world without an introduction has no title to show. */}
+      {model.introduction !== undefined && (
+        <header className="px-[var(--space-3)] pb-[var(--space-2)]">
+          <Heading level={2} role="heading">
+            {model.introduction.title}
+          </Heading>
+        </header>
+      )}
       {hasGlossary && (
         <div className="px-[var(--space-3)] pb-[var(--space-3)]">
           <WikiViewSwitch value={activeView} onChange={onViewChange} indexLabel={indexLabel} glossaryLabel={glossaryLabel} />
@@ -349,6 +455,7 @@ export function WikiHome({
             referencesLabel={referencesLabel}
             indexLabel={indexLabel}
             hasSwitch={hasGlossary}
+            {...(stepContext !== undefined ? { stepContext } : {})}
             {...(groupLabels !== undefined ? { groupLabels } : {})}
           />
         )}

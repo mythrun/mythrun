@@ -60,6 +60,14 @@ export interface TextAreaProps extends BaseProps {
   minRows?: number
   /** Auto-grow cap: rows shown before the textarea scrolls when `autoSize`. Default `8`. */
   maxRows?: number
+  /**
+   * Quiet the field's chrome — hairline muted edge on the page ground with
+   * secondary ink — while it stays FULLY interactive. The visual mute for a
+   * gated-but-not-disabled control (the play composer between turns): unlike
+   * `disabled` it blocks nothing and sets no aria state; it only lowers the
+   * field's voice. Default `false`.
+   */
+  subdued?: boolean
   /** Invalid state: sets `aria-invalid` + the danger border/focus tokens. */
   invalid?: boolean
   /** Disabled state: the native `disabled` attribute + muted token styling. */

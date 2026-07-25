@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react'
-import { Stack, Heading, Text, CoverDither } from '@mythrun/ui'
+import { Stack, Heading, Text, CoverDither, Link } from '@mythrun/ui'
 import {
   getMyCampaigns,
+  getSessionRecap,
   useApiContext,
   type ApiContext,
   type CampaignSummary,
+  type SessionRecap,
+  type SessionRecapResponse,
 } from '@mythrun/client-core'
 import { useTranslation } from 'react-i18next'
 import { CharacterSurface, type CharacterSurfaceDeps } from './character-new/character-surface.tsx'
+import { ThreadIndexList } from './recap.tsx'
 import type { InvitePanelDeps } from './campaign-invite-panel.tsx'
 
 // The CAMPAIGN PAGE (MYT-89 Phase D, D5 → MYT-90 D8 → MYT-91) — where a player
@@ -31,6 +35,13 @@ type FetchCampaigns = (ctx: ApiContext) => Promise<readonly CampaignSummary[]>
 
 const defaultFetchCampaigns: FetchCampaigns = (ctx) =>
   getMyCampaigns(undefined, ctx).then((r) => r.campaigns)
+
+/** The last-session recap source (ux-run2 myth-8x3uh) — the same SECRET-FREE
+ *  endpoint the recap page polls; fetched once here (no polling: the hub block
+ *  is an enhancement, absent while the analysis is pending). Tests substitute it. */
+type FetchRecap = (campaignId: string, ctx: ApiContext) => Promise<SessionRecapResponse>
+
+const defaultFetchRecap: FetchRecap = (campaignId, ctx) => getSessionRecap({ campaignId }, ctx)
 
 // The header cover chip — a COMPACT version of the home-hub card's dithered `band`
 // cover (myth-ij1gq). The tiny `swatch` size renders a real world-colour pair as a
@@ -97,11 +108,41 @@ function WorldIdentity({
   )
 }
 
+/** The re-entry block for a played campaign (ux-run2 myth-8x3uh): the last
+ *  session's open threads — the recap's referable numbered index, shared
+ *  verbatim — plus a quiet link to the full recap, so the hub says "continue
+ *  where you left off" instead of reading as a generic setup page. Absent
+ *  unless a ready recap with threads exists (never a fake or empty block). */
+function LastSessionThreads({
+  campaignId,
+  recap,
+}: {
+  campaignId: string
+  recap: SessionRecap
+}): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const threads = recap.emergingThreads ?? []
+  if (recap.status !== 'ready' || threads.length === 0) return null
+  return (
+    <Stack gap={2} data-testid="campaign-last-session">
+      <Text role="ui-label">{t('campaign.lastSession')}</Text>
+      <ThreadIndexList threads={threads} />
+      <Stack direction="row">
+        <Link href={`/campaigns/${campaignId}/recap`} data-testid="campaign-read-recap">
+          {t('campaign.readRecap')}
+        </Link>
+      </Stack>
+    </Stack>
+  )
+}
+
 export interface CampaignPageProps {
   /** The campaign whose world identity + setup seams are shown. */
   campaignId: string
   /** The campaigns source — defaults to the real endpoint; tests substitute it. */
   fetchCampaigns?: FetchCampaigns
+  /** The last-session recap source — defaults to the real endpoint; tests substitute it. */
+  fetchRecap?: FetchRecap
   /** Injected character-surface seams (endpoints + child-surface deps) — defaults to
    *  the real endpoints; tests + stories substitute them so the mounted surface
    *  routes without a live SSE/endpoint. */
@@ -114,12 +155,14 @@ export interface CampaignPageProps {
 export function CampaignPage({
   campaignId,
   fetchCampaigns = defaultFetchCampaigns,
+  fetchRecap = defaultFetchRecap,
   characterDeps,
   inviteDeps,
 }: CampaignPageProps): React.JSX.Element {
   const ctx = useApiContext()
   const [campaign, setCampaign] = useState<CampaignSummary | null>(null)
   const [loading, setLoading] = useState(true)
+  const [recap, setRecap] = useState<SessionRecap | null>(null)
 
   useEffect(() => {
     let active = true
@@ -140,6 +183,23 @@ export function CampaignPage({
     }
   }, [ctx, campaignId, fetchCampaigns])
 
+  // The last-session read fires only once a PLAYED campaign is identified
+  // (lastPlayedAt set) — an unplayed hub never asks. Any failure settles to no
+  // block; the recap page, not the hub, owns the pending/polling story.
+  const played = campaign !== null && campaign.lastPlayedAt !== null
+  useEffect(() => {
+    if (!played) return
+    let active = true
+    fetchRecap(campaignId, ctx)
+      .then((r) => {
+        if (active) setRecap(r.recap)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [played, campaignId, ctx, fetchRecap])
+
   return (
     <Stack gap={5} data-testid="route-campaign-detail">
       <WorldIdentity campaign={campaign} loading={loading} />
@@ -153,6 +213,7 @@ export function CampaignPage({
         {...(characterDeps !== undefined && { deps: characterDeps })}
         {...(inviteDeps !== undefined && { inviteDeps })}
       />
+      {recap !== null && <LastSessionThreads campaignId={campaignId} recap={recap} />}
     </Stack>
   )
 }

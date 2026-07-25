@@ -4,11 +4,18 @@ import { useTranslation } from 'react-i18next'
 
 // The campaign-create FORK (spec §2) — the flow's first moment. A quiet eyebrow,
 // the serif question-that-frames-the-choice, an italic lede, then the two paths as
-// a borderless `GhostChoiceList`: "Start from an idea" (→ the freeform screen) and
+// a carded `GhostChoiceList`: "Start from an idea" (→ the freeform screen) and
 // "Build from what you love" (→ the guided screen). Pure presentation — it fires
 // two neutral intents and knows nothing of the state machine; the controller maps
 // each to a `screen`. Composes @mythrun/ui only (no ad-hoc UI); every string is an
 // i18n key (R5).
+//
+// GEOMETRY (ux-run2 myth-ma8yv, critique 002): a full-page moment with exactly
+// one job must not huddle in the upper half above ~300px of dead paper — the
+// block seats optically above center (minHeight="page" + 1:2 grow spacers, the
+// dead space framing the choice instead of trailing it). The spacers collapse
+// on short viewports where the content already fills the region. Width stays
+// the funnel column's (`maxWidth="form"` on the campaign-new spine).
 export interface ForkScreenProps {
   /** Chose "Start from an idea" → the controller advances to `freeform`. */
   onFreeform: () => void
@@ -33,19 +40,26 @@ export function ForkScreen({ onFreeform, onGuided }: ForkScreenProps): React.JSX
     },
   ]
   return (
-    <Stack gap={6} data-testid="screen-fork">
-      <Stack gap={2}>
-        <Text role="ui-label" data-testid="fork-eyebrow">
-          {t('campaignNew.fork.eyebrow')}
-        </Text>
-        <Heading level={1} role="title" data-testid="fork-question">
-          {t('campaignNew.fork.question')}
-        </Heading>
-        <Text role="subtitle" as="p" data-testid="fork-lede">
-          {t('campaignNew.fork.lede')}
-        </Text>
+    <Stack minHeight="page" data-testid="screen-fork">
+      <Stack grow={1} />
+      <Stack gap={6}>
+        <Stack gap={2}>
+          <Text role="ui-label" data-testid="fork-eyebrow">
+            {t('campaignNew.fork.eyebrow')}
+          </Text>
+          {/* The page's ONE question earns the headline step (ux-run2
+              myth-aynpf: a 3px gap between the question and its answer cards
+              is no hierarchy at all); card titles stay at 18px below it. */}
+          <Heading level={1} role="headline" data-testid="fork-question">
+            {t('campaignNew.fork.question')}
+          </Heading>
+          <Text role="subtitle" as="p" data-testid="fork-lede">
+            {t('campaignNew.fork.lede')}
+          </Text>
+        </Stack>
+        <GhostChoiceList items={choices} data-testid="fork-choices" />
       </Stack>
-      <GhostChoiceList items={choices} data-testid="fork-choices" />
+      <Stack grow={2} />
     </Stack>
   )
 }

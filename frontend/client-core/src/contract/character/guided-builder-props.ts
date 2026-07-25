@@ -22,6 +22,9 @@ export interface GuidedBuilderProps {
   labels: GuidedBuilderLabels
   /** The progress rail (one rung per step, with its state + chosen value). */
   rail: RailStep[]
+  /** Optional resolved step counter (e.g. "Step 1 of 5"), forwarded to the rail
+   *  (ux-run2 myth-udhp3). */
+  counter?: string
   /** The current step's resolved question. */
   question: string
   /** The current step's selectable option cards. */

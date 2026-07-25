@@ -38,7 +38,11 @@ import type { SessionMessage } from '../repo/types.js'
 import { isSeqUniqueViolation } from '../repo/session-messages.js'
 import type { SessionState } from '../redis/session-state.js'
 import { assistantToRows, rowsToConversation } from './transcript-codec.js'
-import { enqueueScribe, type ScribeQueueLike } from './scribe-queue.js'
+import {
+  enqueueScribe,
+  type ResolvedSkillCheckOutcome,
+  type ScribeQueueLike,
+} from './scribe-queue.js'
 import type { WorkingSetProposal } from './working-set/types.js'
 import type {
   AssistantMessage,
@@ -275,6 +279,9 @@ export class SessionController {
       prose,
       worldDelta: this.assistant.worldDelta ?? null,
       injections: this.deps.injections,
+      // myth-g4hf3 — the turn's resolved skill-check outcomes, for the
+      // tripwire's dice grounding floor + dice_outcome provenance stamping.
+      skillChecks: extractResolvedSkillChecks(this.assistant.parts),
     })
   }
 
@@ -363,6 +370,12 @@ export class SessionController {
       // player-less correction delivery, so `render` discards any machinery
       // preamble it streams before the issue_correction tool call.
       ...(this.deps.triggerKind === 'correction' ? { correctionTurn: true } : {}),
+      // myth-aiiao — a player-less turn (correction / farewell) renders through
+      // the audit gate's BUFFERED emitter, released only after the audit picks
+      // the winning render (no latency pressure without a waiting player).
+      ...(this.deps.triggerKind === 'correction' || this.deps.triggerKind === 'farewell'
+        ? { playerlessTurn: true }
+        : {}),
       // §7 party ledger snapshot: public-by-construction, rides the FT-facing
       // context. exactOptionalPropertyTypes — conditionally spread so the key is
       // ABSENT when no snapshot was resolved (no joined characters), never
@@ -409,4 +422,74 @@ export function fuseDirectionIntoLastUserMessage(
 function addUsage(total: TokenUsage, delta: TokenUsage | undefined): TokenUsage {
   if (delta === undefined) return total
   return { input: total.input + delta.input, output: total.output + delta.output }
+}
+
+/** The three MYT-72 lookup tools whose result may carry a resolved skill gate
+ *  (an already-camelCase SkillCheckFramePayload). Mirrors the FT consume loop's
+ *  LOOKUP_TOOL_NAMES. */
+const LOOKUP_TOOLS_WITH_GATE: ReadonlySet<string> = new Set([
+  'search_lore',
+  'characters_known_to',
+  'faction_tree',
+])
+
+const OUTCOME_TIERS: ReadonlySet<string> = new Set(['fail', 'success', 'great_success'])
+
+function asOutcomeRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null
+}
+
+/** Coerce one candidate outcome (snake_case roll_skill_check output OR camelCase
+ *  lookup skill_gate) onto a ResolvedSkillCheckOutcome; null when out of shape. */
+function toResolvedOutcome(o: Record<string, unknown>): ResolvedSkillCheckOutcome | null {
+  const characterName = o.character_name ?? o.characterName
+  const tier = o.outcome_tier ?? o.outcomeTier
+  if (
+    typeof characterName !== 'string' ||
+    typeof o.skill !== 'string' ||
+    typeof o.dc !== 'number' ||
+    typeof tier !== 'string' ||
+    !OUTCOME_TIERS.has(tier) ||
+    typeof o.constraint !== 'string'
+  ) {
+    return null
+  }
+  return {
+    characterName,
+    skill: o.skill,
+    dc: o.dc,
+    outcomeTier: tier as ResolvedSkillCheckOutcome['outcomeTier'],
+    constraint: o.constraint,
+  }
+}
+
+/**
+ * myth-g4hf3 — extract the turn's RESOLVED skill-check outcomes from the
+ * rendered assistant parts, for the Scribe job payload. Two sources:
+ * `roll_skill_check` tool results (snake_case output; an `error` output means
+ * no roll happened → skipped) and the world-lookup tools' `skill_gate` (an
+ * already-camelCase frame payload; null on auto-success → skipped). Pure
+ * structural coercion (ZFC-legal); exported for tests.
+ */
+export function extractResolvedSkillChecks(
+  parts: readonly ContentPart[],
+): ResolvedSkillCheckOutcome[] {
+  const out: ResolvedSkillCheckOutcome[] = []
+  for (const part of parts) {
+    if (part.kind !== 'tool_result') continue
+    const output = asOutcomeRecord(part.output)
+    if (output === null || 'error' in output) continue
+    if (part.toolName === 'roll_skill_check') {
+      const resolved = toResolvedOutcome(output)
+      if (resolved !== null) out.push(resolved)
+      continue
+    }
+    if (LOOKUP_TOOLS_WITH_GATE.has(part.toolName)) {
+      const gate = asOutcomeRecord(output.skill_gate)
+      if (gate === null) continue
+      const resolved = toResolvedOutcome(gate)
+      if (resolved !== null) out.push(resolved)
+    }
+  }
+  return out
 }

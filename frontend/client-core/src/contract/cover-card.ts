@@ -29,6 +29,14 @@ export interface CoverCardProps extends BaseProps {
    */
   foot?: ReactNode
   /**
+   * Optional call-to-action line — the card's single action cue, rendered as
+   * the LAST line of the body in the accent action register (mono caption,
+   * accent ink), e.g. the hub premier card's "Continue session →". The card
+   * stays presentational: the consumer's wrapping link is the actual target;
+   * this line only names it. State-as-prose — never a chip/badge.
+   */
+  cta?: string
+  /**
    * Fixed card width in px (the made-object's set size — e.g. the width the hub
    * grid auto-fills to). Omit to fill the container width; either way the 3:2
    * (h:w) portrait aspect drives the height.

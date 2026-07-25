@@ -32,6 +32,15 @@ export interface RollCardLabels {
   readonly disadvantage: string
   /** SR label naming the die's stamped result (motion is never the only signal). */
   readonly dieResult: string
+  /** The newcomer framing line under the pre-roll header (myth-3dufc) — resolves
+   *  the skill NAME + the SIGNED modifier (both DATA, card-formatted) into one
+   *  quiet sentence ("Roll a d20 · Investigation +0 is your bonus"), so "+0"
+   *  never reads as a rendering bug. A label FUNCTION (the highlightLabels
+   *  precedent) because the copy interpolates per-card data. */
+  readonly explainerFor: (skill: string, modifier: string) => string
+  /** The quiet post-roll DC explainer under the comparison line (myth-3dufc) —
+   *  names what the revealed DC was ("The DC is the mark to meet"). */
+  readonly dcExplainer: string
 }
 
 /** Props for one in-stream dice-moment card. */

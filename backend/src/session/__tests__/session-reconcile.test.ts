@@ -653,6 +653,19 @@ describe('renderWorkingSet (pure)', () => {
     expect(out).toContain('parent=the city')
     expect(out).toContain('subject="the gate"')
   })
+
+  it('renders dice-earned provenance with its outcome tier (myth-g4hf3 canon-on-grant reaches the reconciler)', () => {
+    const out = renderWorkingSet([
+      wsItem({
+        subjectName: 'the sliver',
+        content: 'Sable holds a stone sliver.',
+        provenance: { kind: 'dice_outcome', outcomeTier: 'great_success' },
+      }),
+    ])
+    expect(out).toContain(
+      'dice-earned (great_success on a resolved roll — canon-on-grant; the world conforms to it)',
+    )
+  })
 })
 
 describe('renderCandidates (pure)', () => {

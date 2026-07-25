@@ -103,11 +103,13 @@ describe('shared data + view-model shapes', () => {
     >()
   })
 
-  it('AbilityTile pairs a score with its derived modifier', () => {
+  it('AbilityTile pairs a score with its derived modifier (+ the caster mark)', () => {
     expectTypeOf<AbilityTile>().toEqualTypeOf<{
       abbrev: AbilityAbbrev
       score: number
       modifier: number
+      // ux-run2 myth-8ps4n: the caster's spellcasting ability, marked.
+      casting?: boolean
     }>()
   })
 
@@ -184,6 +186,13 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
     expectTypeOf<FreeformPromptProps>().toEqualTypeOf<{
       // MYT-100: the resolved submit-control label (shell-owned i18n).
       submitLabel: string
+      // ux-run2 myth-80an1: the optional quiet action-row Back.
+      onBack?: () => void
+      backLabel?: string
+      // ux-run2 myth-z45sb: the ~3-line detail floor for the notes field.
+      compact?: boolean
+      // ux-run2 myth-4gnrp: the whisper register — form hint vs the DM's voice.
+      whisperVoice?: 'hint' | 'dm'
       // MYT-102: the optional resolved step signpost ("1 of 2") shown quietly
       // above the prompt so the player knows a second question follows.
       stepIndicator?: string
@@ -201,6 +210,8 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
       // MYT-100: the resolved nav control labels (shell-owned i18n).
       labels: GuidedBuilderLabels
       rail: RailStep[]
+      // ux-run2 myth-udhp3: the optional resolved step counter ("Step 1 of 5").
+      counter?: string
       question: string
       options: GuidedOption[]
       selectedId: string | null
@@ -222,6 +233,8 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
   it('GuidedRailProps — pure rail data, no callbacks (a status display, never interactive)', () => {
     expectTypeOf<GuidedRailProps>().toEqualTypeOf<{
       rail: RailStep[]
+      // ux-run2 myth-udhp3: the optional resolved step counter ("Step 2 of 5").
+      counter?: string
       'data-testid'?: string
     }>()
   })
@@ -261,6 +274,10 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
       expanded: boolean
       onToggleExpand: () => void
       onConfirm: () => void
+      // ux-run2 myth-fca4y: the two-step start-over confirm (parent-controlled).
+      startOverConfirming: boolean
+      onRequestStartOver: () => void
+      onCancelStartOver: () => void
       onStartOver: () => void
     }>()
   })
@@ -271,6 +288,9 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
       seeFull: string
       hideFull: string
       startOver: string
+      startOverPrompt: string
+      startOverConfirm: string
+      startOverKeep: string
       panelFeatures: string
       panelEquipment: string
       panelSpells: string
@@ -284,6 +304,10 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
       members: RosterMember[]
       viewerIsOwner: boolean
       canBegin: boolean
+      // ux-run2 myth-wfgfi: the partial-begin confirm (parent-controlled).
+      beginConfirming: boolean
+      onRequestBegin: () => void
+      onCancelBegin: () => void
       onBegin: () => void
       onInvite: () => void
       // MYT-99g03: the inline invite disclosure (the staging single entry point).
@@ -300,6 +324,10 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
       waiting: string
       beginSolo: string
       beginParty: string
+      beginPartial: string
+      beginConfirmPrompt: string
+      beginConfirmYes: string
+      beginConfirmNo: string
     }>()
   })
 })

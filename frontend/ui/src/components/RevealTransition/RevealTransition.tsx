@@ -227,9 +227,13 @@ export function RevealTransition({
 // it (WorldWiki's own max-h-full stack) and scrolls internally, so a long wiki
 // page can never stretch the row. The height lives HERE, not on the graph
 // pane, because a flex row's auto height is content-circular: a definite row
-// height is the only way one half can cap while the other fills. The chrome
-// allowance (18rem) is the reveal page's fixed dressing — header + title +
-// explore prompt + Continue + the page paddings — eye-tuned at 1280×800; the
+// height is the only way one half can cap while the other fills. Since ux-run2
+// myth-ma8yv the stage cell is a flex COLUMN and the consumer composes the
+// whole left column inside it (title over graph over the Continue row), so the
+// two panes share both alignment edges — the wiki's top lands on the title's
+// line and its bottom on the Continue row's line (the "spread in a book"
+// rhythm, critique 018). The chrome allowance (8.5rem) is therefore only the
+// app frame's fixed dressing — header + hairline + the page paddings; the
 // floor keeps short windows usable (the page scrolls instead of crushing the
 // graph), the ceiling keeps giant monitors landscape-shaped.
 
@@ -237,7 +241,7 @@ export function RevealTransition({
 const PANEL_FINAL_WIDTH = 'calc(50cqi - calc(var(--space-4) / 2))'
 
 /** The row's viewport-derived height (see "THE ROW OWNS THE VERTICAL SPACE"). */
-const ROW_HEIGHT_CLASS = 'h-[clamp(20rem,calc(100dvh-18rem),64rem)]'
+const ROW_HEIGHT_CLASS = 'h-[clamp(24rem,calc(100dvh-8.5rem),72rem)]'
 
 export function RevealPanes({ moment, stage, panel, 'data-testid': dataTestId }: RevealPanesProps) {
   const arrived = revealPhaseAtLeast(moment.phase, 'resolve')
@@ -257,7 +261,10 @@ export function RevealPanes({ moment, stage, panel, 'data-testid': dataTestId }:
       className={cn('flex min-w-0 [container-type:inline-size]', ROW_HEIGHT_CLASS)}
       style={{ columnGap: arrived ? 'var(--space-4)' : '0px' }}
     >
-      <div className="min-w-0 grow basis-0">{stage}</div>
+      {/* A flex COLUMN cell (definite height via the row's stretch), so the
+          consumer's stage — a grow Stack composing title / graph / Continue —
+          fills the full pane height and the graph's h-full fill resolves. */}
+      <div className="flex min-w-0 grow basis-0 flex-col">{stage}</div>
       <div className="min-w-0 basis-0 overflow-hidden" style={{ flexGrow: arrived ? 1 : 0 }}>
         {/* h-full in EVERY phase: the wiki's max-h-full must bind mid-slide too. */}
         <div className="h-full" style={slideStyle}>{panel}</div>

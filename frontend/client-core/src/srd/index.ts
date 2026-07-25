@@ -7,10 +7,11 @@
 // `/worldgen` subpath. This is presentational input data only; NO mechanics live here
 // (the backend LLM owns hit dice, saves, spell slots, proficiencies).
 
-export { CLASSES, CLASS_OPTIONS } from './classes.ts'
+export { CLASSES, CLASS_OPTIONS, resolveClassName } from './classes.ts'
 export type { ClassName, ClassOption } from './classes.ts'
 export { SPECIES } from './species.ts'
 export { BACKGROUNDS } from './backgrounds.ts'
 export { SUBCLASS_LEVEL, subclassOfferedAt } from './subclass-level.ts'
 export { CLASS_SAVES } from './class-saves.ts'
 export type { Ability } from './class-saves.ts'
+export { CASTING_ABILITY } from './casting-ability.ts'

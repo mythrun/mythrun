@@ -7,9 +7,9 @@ import { Icon } from '../Icon/Icon.tsx'
 // Button — the text/label action control. A REAL <button> (native keyboard
 // activation + a11y), flat 1-bit (0px radius), with TOKEN-SWAP states (no
 // shadows/transforms): hover/active shift the fill token; the theme-aware focus
-// ring (tab to it to see the 2px accent outline) is a11y-critical; disabled
-// swaps to muted tokens; loading shows a Spinner beside the still-visible label
-// and sets aria-busy.
+// ring (tab to it to see the 2px accent outline) is a11y-critical; busy shows a
+// Spinner beside the label (swapped to `busyLabel` when given) and sets
+// aria-busy (`loading` is the legacy alias).
 //
 // Variants: primary (accent fill — the page's main action), secondary (bordered
 // neutral), ghost (low-emphasis text). Sizes: sm/md/lg — distinct on three axes:
@@ -17,9 +17,15 @@ import { Icon } from '../Icon/Icon.tsx'
 // (touch) pointer the interactive target floors at ≥44px (WCAG 2.5.5); a fine
 // (mouse) pointer keeps the distinct visual heights.
 //
+// Non-interactive invariant (myth-skbzw): a disabled OR busy button never
+// carries the accent — every variant mutes to ~45% ink (tertiary-ink token)
+// keeping only its geometry, and an enabled primary SNAPS to the full accent
+// fill. "Accent" and "pressable now" are synonymous, by construction.
+//
 // State matrix (§6): default · hover (doc) · active (doc) · focus (tab to it) ·
-// disabled · loading. hover/active are pointer states — see the Variants matrix
-// note; the rest have dedicated stories below.
+// disabled · busy. hover/active are pointer states — see the Variants matrix
+// note; the rest have dedicated stories below (incl. the full variant × state
+// grid).
 // Content/i18n: children + any accessible name are i18n-resolved by the consumer.
 
 const meta: Meta<typeof Button> = {
@@ -29,7 +35,8 @@ const meta: Meta<typeof Button> = {
   argTypes: {
     variant: { control: 'inline-radio', options: ['primary', 'secondary', 'ghost'] },
     size: { control: 'inline-radio', options: ['sm', 'md', 'lg'] },
-    loading: { control: 'boolean' },
+    busy: { control: 'boolean' },
+    busyLabel: { control: 'text' },
     disabled: { control: 'boolean' },
     onPress: { action: 'pressed' },
   },
@@ -90,17 +97,18 @@ export const HoverAndActive: Story = {
   ),
 }
 
-// Disabled — a PER-VARIANT muted treatment (a11y-exempt for contrast), NOT one
-// blanket grey (MYT-0xao0). A disabled PRIMARY stays THE primary as a muted ember
-// GHOST (edge + label, unfilled), so an awaiting-input CTA reads as "not yet
-// available", never broken — it fills solid the moment it's enabled (compare the
-// top pair). secondary/ghost mute to a tertiary-ink neutral. Non-interactive across
-// all variants.
+// Disabled — ONE muted stood-down family with per-variant geometry (a11y-exempt
+// for contrast), and NO accent anywhere (myth-skbzw — run 2 found the old
+// accent-carrying disabled primary indistinguishable from enabled: "a player who
+// has waited ten minutes will click it and get nothing"). The accent fill is the
+// exclusive mark of an enabled primary; it SNAPS in the moment the control
+// becomes available (compare the top pair). Non-interactive across all variants,
+// plain default cursor.
 export const Disabled: Story = {
   render: () => (
     <Stack gap={4}>
-      {/* The primary progression the fix is about: awaiting (ghost ember) →
-          available (solid ember fill). The disabled one still reads as the primary. */}
+      {/* The primary progression the fix is about: not yet available (muted ink
+          on paper) → available (solid accent fill, the reward for having decided). */}
       <div className="flex items-center gap-[var(--space-4)]">
         <Button variant="primary" disabled>
           Begin
@@ -122,21 +130,47 @@ export const Disabled: Story = {
   ),
 }
 
-// Loading — a Spinner sits beside the still-visible label (width never
-// collapses), aria-busy is set, and the control is non-interactive.
-export const Loading: Story = {
+// Busy — a Spinner beside the label (swapped to `busyLabel` when given, so
+// "Save" reads "Saving" while the system works), aria-busy set, and the SAME
+// muted stood-down treatment as disabled: while working, the accent drops; it
+// snaps back when the control re-enables. `loading` is the legacy alias.
+export const Busy: Story = {
   render: () => (
     <div className="flex items-center gap-[var(--space-4)]">
-      <Button variant="primary" loading>
+      <Button variant="primary" busy busyLabel="Saving">
+        Save
+      </Button>
+      <Button variant="secondary" busy>
         Saving
       </Button>
-      <Button variant="secondary" loading>
-        Saving
-      </Button>
-      <Button variant="ghost" loading>
+      <Button variant="ghost" busy>
         Saving
       </Button>
     </div>
+  ),
+}
+
+// The full variant × state grid — every emphasis tier in every static state
+// (enabled / disabled / busy), side by side. The reading the matrix should give:
+// exactly ONE cell wears the accent fill per row-set (the enabled primary);
+// every non-interactive cell shares the muted ~45%-ink family, differing only
+// in its variant geometry (bordered paper / bordered neutral / bare label).
+export const VariantStateMatrix: Story = {
+  name: 'Variant × state matrix',
+  render: () => (
+    <Stack gap={4}>
+      {(['primary', 'secondary', 'ghost'] as const).map((variant) => (
+        <div key={variant} className="flex items-center gap-[var(--space-4)]">
+          <Button variant={variant}>Enabled</Button>
+          <Button variant={variant} disabled>
+            Disabled
+          </Button>
+          <Button variant={variant} busy busyLabel="Working">
+            Begin
+          </Button>
+        </div>
+      ))}
+    </Stack>
   ),
 }
 

@@ -19,6 +19,9 @@ export type TextRole = 'prose-body' | 'subtitle' | 'ui-label' | 'ui-caption' | '
 export interface TextProps extends BaseProps {
   /** Typographic role. Default `prose-body`. */
   role?: TextRole
+  /** Element id — the anchor for a portable a11y relationship (a field's
+   *  `describedBy` pointing at a visible hint line). Not a styling hook. */
+  id?: string
   /** Semantic element. `span` (inline, default) or `p` (block paragraph). */
   as?: 'span' | 'p'
   /** Truncate to a single line with a trailing ellipsis when the text overflows its container. */

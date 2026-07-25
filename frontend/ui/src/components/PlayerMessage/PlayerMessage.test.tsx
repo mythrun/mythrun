@@ -84,10 +84,31 @@ describe('PlayerMessage', () => {
   })
 
   it('shows only the display name when the character name is empty (unfinalized character)', () => {
-    const { getByText, queryByText } = render(<PlayerMessage {...BASE} characterName="" />)
+    const { getByText, queryByText, container } = render(<PlayerMessage {...BASE} characterName="" />)
     expect(getByText('Miklos')).toBeInTheDocument()
-    // No empty label element leaks in for the absent character.
+    // No empty label element leaks in for the absent character — and no orphaned
+    // separator either.
     expect(queryByText('Kessa Vurm')).not.toBeInTheDocument()
+    expect(container.textContent).not.toContain('·')
+  })
+
+  // ── myth-ydu35: the mono voice stays READABLE typewriting ───────────────────
+  it('caps the mono measure (~75ch) and opens the leading on the message body', () => {
+    const { getByText } = render(<PlayerMessage {...BASE} />)
+    const body = getByText(BASE.text)
+    expect(body).toHaveClass('max-w-[75ch]')
+    expect(body).toHaveClass('leading-[1.7]')
+  })
+
+  it('separates character from account with the label·value interpunct (never one apparent full name)', () => {
+    const { container, getByText } = render(<PlayerMessage {...BASE} />)
+    // "Kessa Vurm · Miklos" — the separator is aria-hidden typographic notation.
+    const sep = container.querySelector('[data-testid="player-attribution-sep"]')
+    expect(sep).not.toBeNull()
+    expect(sep).toHaveTextContent('·')
+    expect(sep).toHaveAttribute('aria-hidden', 'true')
+    expect(getByText('Kessa Vurm')).toBeInTheDocument()
+    expect(getByText('Miklos')).toBeInTheDocument()
   })
 
   it('renders no avatar image and no circle (square register, no bubble-and-avatar idiom)', () => {

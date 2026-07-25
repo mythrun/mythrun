@@ -6,6 +6,10 @@ import { coarseWaitTime } from './wait-format.ts'
 // coarseWaitTime — the localized {{time}} fill for the shared waiting countdowns.
 // Driven against a REAL i18next instance (the catalog is the contract) so a
 // missing/renamed shared.wait.* key fails here, not silently in the UI.
+//
+// ux-run2 (myth-uz1bn): the countdown wrapper is "Ready in {{time}}", so the
+// buckets are deliberately lowercase mid-sentence fragments ("about 2 min",
+// "under a minute") — they never lead a string anymore.
 
 let t: TFunction
 
@@ -25,24 +29,24 @@ beforeAll(async () => {
 })
 
 describe('coarseWaitTime', () => {
-  it('renders whole-minute buckets as "N min" (no ticking seconds)', () => {
-    expect(coarseWaitTime({ kind: 'minutes', count: 1 }, t)).toBe('1 min')
-    expect(coarseWaitTime({ kind: 'minutes', count: 2 }, t)).toBe('2 min')
-    expect(coarseWaitTime({ kind: 'minutes', count: 9 }, t)).toBe('9 min')
+  it('renders whole-minute buckets as "about N min" (no ticking seconds)', () => {
+    expect(coarseWaitTime({ kind: 'minutes', count: 1 }, t)).toBe('about 1 min')
+    expect(coarseWaitTime({ kind: 'minutes', count: 2 }, t)).toBe('about 2 min')
+    expect(coarseWaitTime({ kind: 'minutes', count: 9 }, t)).toBe('about 9 min')
   })
 
-  it('renders the sub-minute bucket sentence-case as "Under a minute" (it leads the string)', () => {
-    expect(coarseWaitTime({ kind: 'under-minute' }, t)).toBe('Under a minute')
+  it('renders the sub-minute bucket as a lowercase mid-sentence fragment', () => {
+    expect(coarseWaitTime({ kind: 'under-minute' }, t)).toBe('under a minute')
   })
 
-  it('drops into the surfaces\' "{{time}} remaining" wrappers coherently (sentence-case / digit-led)', () => {
+  it('drops into the surfaces\' "Ready in {{time}}" wrappers coherently', () => {
     expect(t('worldGen.countdown', { time: coarseWaitTime({ kind: 'minutes', count: 2 }, t) })).toBe(
-      '2 min remaining',
+      'Ready in about 2 min',
     )
     expect(
       t('characterCreate.loading.countdown', {
         time: coarseWaitTime({ kind: 'under-minute' }, t),
       }),
-    ).toBe('Under a minute remaining')
+    ).toBe('Ready in under a minute')
   })
 })

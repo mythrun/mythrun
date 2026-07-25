@@ -156,3 +156,17 @@ export const AutoGrow: Story = {
     </div>
   ),
 }
+
+// Subdued — the gated-composer visual mute: quieter chrome (hairline edge on the
+// page ground, secondary ink) while the field stays fully interactive. The play
+// surface uses it when the composer is gated between turns but never disabled.
+export const Subdued: Story = {
+  render: () => (
+    <div className="flex flex-col gap-[var(--space-1)] w-96 max-w-full">
+      <label htmlFor="subdued-composer" className="font-ui text-xs text-ink-secondary">
+        Message
+      </label>
+      <TextArea id="subdued-composer" subdued autoSize minRows={1} maxRows={6} placeholder="composer.message" />
+    </div>
+  ),
+}

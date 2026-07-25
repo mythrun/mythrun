@@ -10,14 +10,16 @@ import { cn } from '../../lib/cn.ts'
 // content width (~140ch): it read as a magazine table-of-contents, not a set of
 // choices. The fix is a BOUNDED SELECTABLE SURFACE per hook: a real `<button>`
 // that is a whole card — a 1px interactive `--border-strong` edge on `--surface`,
-// comfortable padding, the arrow docked and vertically centred against the full
-// card height, a decisive hover (edge → full ink + surface token-swap), and the
+// comfortable padding, the arrow docked top-right on the title's line (ux-run2
+// myth-ma8yv: with the card capped to the content column, the arrow reads as the
+// card's punctuation beside the head, not a survivor stranded mid-height across
+// empty cream), a decisive hover (edge → full ink + surface token-swap), and the
 // prose capped to a readable measure (~62ch) so the line no longer outruns the
 // return sweep. The whole card is one tab-stop / one focus ring. Static token
 // class strings only (Tailwind v4 scans SOURCE TEXT — a template-built class never
 // generates).
 const CARD_CLASS = cn(
-  'group flex w-full min-w-0 items-center justify-between gap-[var(--space-4)] text-left',
+  'group flex w-full min-w-0 items-start justify-between gap-[var(--space-4)] text-left',
   'rounded-none border border-border-strong bg-surface cursor-pointer select-none',
   'p-[var(--space-5)]',
   'transition-[border-color,background-color] duration-[var(--duration-fast)]',
@@ -32,11 +34,11 @@ const TITLE_CLASS = 'font-body text-lg font-semibold leading-[1.4]'
 const PLACE_CLASS = 'font-body text-sm text-ink-tertiary leading-[1.4]'
 const PROSE_CLASS = 'font-body text-base text-ink-secondary leading-[1.5]'
 // The trailing ember affordance — the card's "enter" cue (decorative; the title is
-// the accessible name). Docked, vertically centred against the full card height,
-// nudging right on hover so the whole card reads as pressable. `shrink-0` so it
-// never squishes beside the wrapping content column.
+// the accessible name). Docked top-right on the title's line (leading matches the
+// title's line box), nudging right on hover so the whole card reads as pressable.
+// `shrink-0` so it never squishes beside the wrapping content column.
 const ARROW_CLASS = cn(
-  'shrink-0 self-center font-ui text-lg text-accent-fg',
+  'shrink-0 font-ui text-xl leading-[1.4] text-accent-fg',
   'transition-transform duration-[var(--duration-fast)] group-hover:translate-x-[2px]',
 )
 

@@ -4,11 +4,13 @@ import type { BaseProps } from './index.ts'
 export type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6
 
 /**
- * The three VISUAL heading roles, decoupled from the semantic level (standard
+ * The VISUAL heading roles, decoupled from the semantic level (standard
  * DS practice — a page may want an `h2` that reads at `display` size, or an
- * `h1` at `title` size). Serif family throughout.
+ * `h1` at `title` size). Serif family throughout. `headline` is the
+ * page-question step between `display` and `heading` — a flow screen's one
+ * framing question (ux-run2 myth-aynpf).
  */
-export type HeadingRole = 'display' | 'heading' | 'title'
+export type HeadingRole = 'display' | 'headline' | 'heading' | 'title'
 
 /**
  * Section heading primitive. `level` selects the semantic element (`h1`..`h6`,

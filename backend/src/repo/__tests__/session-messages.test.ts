@@ -237,6 +237,40 @@ describe('repo.sessionMessages (integration)', () => {
     expect(res.rows.every((r) => r.user_id === null)).toBe(true)
   })
 
+  it('listByTurn returns ONE turn in turn_ordinal order (myth-aiiao replace-push rebuild)', async () => {
+    const repo = createRepo(pool)
+    const turnId = '019dccef-1111-7000-8000-000000000005'
+    const otherTurnId = '019dccef-1111-7000-8000-000000000006'
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        { kind: 'dm_text', content: 'The fingers do not yield.' },
+        { kind: 'skill_check', content: JSON.stringify({ toolCallId: 'c1', input: {}, output: {} }) },
+        { kind: 'dm_text', content: 'The vault light holds steady.' },
+      ],
+      seqs: [30, 31, 32],
+    })
+    // A neighboring turn's rows must not bleed into the rebuild.
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId: otherTurnId,
+      rows: [{ kind: 'dm_text', content: 'other turn' }],
+      seqs: [33],
+    })
+
+    const rows = await repo.sessionMessages.listByTurn(turnId)
+
+    expect(rows.map((r) => r.content)).toEqual([
+      'The fingers do not yield.',
+      JSON.stringify({ toolCallId: 'c1', input: {}, output: {} }),
+      'The vault light holds steady.',
+    ])
+    expect(rows.map((r) => r.turnOrdinal)).toEqual([0, 1, 2])
+    expect(rows.map((r) => r.seq)).toEqual([30, 31, 32])
+    expect(rows.every((r) => r.turnId === turnId)).toBe(true)
+  })
+
   it('appendDmTurn is idempotent on (turn_id, turn_ordinal) — a re-run inserts nothing', async () => {
     const repo = createRepo(pool)
     const turnId = '019dccef-1111-7000-8000-000000000002'

@@ -19,6 +19,7 @@ import { resolveLabelFont } from '../WorldGenGraph/canvas-util.ts'
 import { entityObstacle } from './fog-obstacles.ts'
 import { createFogConvergence, type FogConvergence } from './fog-converge.ts'
 import { paintFog } from './fog-draw.ts'
+import { resolveTerrainInk, TERRAIN_ALPHA } from './terrain-ink.ts'
 
 // The imperative Canvas controller for WorldGenFogField (MYT-89 C3). Owns the fluid sim
 // (a persistent FogSim in the shared PANE-ADAPTIVE virtual space — `virtualDims`, the
@@ -221,6 +222,7 @@ function repaint(
   density: number,
   virtual: VirtualDims,
   camera: CameraPoint,
+  terrainInk: string,
 ): void {
   ctx.save()
   ctx.translate(-camera.x, -camera.y)
@@ -232,8 +234,12 @@ function repaint(
     // The BASE density, pinned (no fade multiply): the clear lives in the sim's
     // spawn drain — the paint draws whatever particle density remains, full-strength.
     density,
-    fogColor: FOG_PARAMS.fogColor,
-    fogAlpha: FOG_PARAMS.fogAlpha,
+    // The terrain re-tune (ux-run2 myth-y7yki): themed ink + the production
+    // alpha, so the dither field the player watches for minutes clears the 3:1
+    // non-text floor (see terrain-ink.ts; the reference FOG_PARAMS values stay
+    // the verbatim record).
+    fogColor: terrainInk,
+    fogAlpha: TERRAIN_ALPHA,
   })
   ctx.restore()
 }
@@ -301,6 +307,10 @@ export function useFogCanvas(params: FogCanvasParams): void {
   const seatRef = useRef<WorldSeat | undefined>(seat)
   // The shared camera source (undefined → the identity camera).
   const cameraRef = useRef<WorldGenCameraSource | undefined>(camera)
+  // The resolved terrain ink (`--worldgen-terrain`, theme-aware — myth-y7yki).
+  // Cached like the graph's inks (never a per-frame getComputedStyle): refreshed
+  // by `applyFogSize` (mount / resize / settle) and the theme observer below.
+  const terrainInkRef = useRef<string>(FOG_PARAMS.fogColor)
   entitiesRef.current = entities
   entitiesSourceRef.current = entitiesSource
   shownRef.current = shownEntities
@@ -367,6 +377,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
   const applyFogSize = useCallback(
     (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void => {
       if (!syncFogDims(canvas, ctx)) sizeFogCanvas(canvas, ctx, viewRef.current)
+      terrainInkRef.current = resolveTerrainInk(canvas)
     },
     [syncFogDims],
   )
@@ -422,7 +433,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
       simTimeRef.current += SUBSTEP_MS / 1000
     }
     sim.settleDensity(obstacles)
-    repaint(ctx, sim, simTimeRef.current, densityRef.current, virtualRef.current, cameraAt(performance.now()))
+    repaint(ctx, sim, simTimeRef.current, densityRef.current, virtualRef.current, cameraAt(performance.now()), terrainInkRef.current)
     convergenceRef.current ??= createFogConvergence({
       stepMs: SUBSTEP_MS,
       budget: SETTLE_BUDGET - SETTLE_STEPS,
@@ -441,7 +452,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
       // texture, current camera/density. The ctx is captured from this settle; the
       // worker is cancelled on unmount, so a stale capture never paints.
       onDone: () => {
-        repaint(ctx, sim, simTimeRef.current, densityRef.current, virtualRef.current, cameraAt(performance.now()))
+        repaint(ctx, sim, simTimeRef.current, densityRef.current, virtualRef.current, cameraAt(performance.now()), terrainInkRef.current)
       },
     })
   }, [canvasRef, applyFogSize, getSim, currentEntities, cameraAt])
@@ -459,7 +470,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
       settleStatic()
       return
     }
-    repaint(ctx, sim, simTimeRef.current, densityRef.current, virtualRef.current, cameraAt(performance.now()))
+    repaint(ctx, sim, simTimeRef.current, densityRef.current, virtualRef.current, cameraAt(performance.now()), terrainInkRef.current)
   }, [canvasRef, settleStatic, cameraAt])
 
   // The dims key: a primitive fingerprint of the growth + seat inputs, so the effects
@@ -524,9 +535,27 @@ export function useFogCanvas(params: FogCanvasParams): void {
       widthCacheRef,
       labelFontRef,
       virtualRef,
+      terrainInkRef,
       cameraAt,
     })
   }, [reducedMotion, canvasRef, applyFogSize, getSim, currentEntities, cameraAt])
+
+  // Re-resolve the terrain ink on a light/dark flip (the `.dark` class toggling
+  // on <html>) — mirrors the graph hook's theme observer. Under motion the loop
+  // reads the refreshed ref next frame; a static (reduced-motion) field needs an
+  // explicit repaint at the new ink.
+  useEffect(() => {
+    if (typeof MutationObserver === 'undefined') return
+    const observer = new MutationObserver(() => {
+      const canvas = canvasRef.current
+      if (canvas !== null) terrainInkRef.current = resolveTerrainInk(canvas)
+      if (reducedMotion) repaintStatic()
+    })
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+    return () => {
+      observer.disconnect()
+    }
+  }, [reducedMotion, canvasRef, repaintStatic])
 
   // WEB-FONT invalidation (mirrors the graph hook): widths memoized before the DS serif
   // loads are fallback-font widths — once fonts are ready, drop the memo so the next
@@ -594,6 +623,9 @@ interface FogLoopDeps {
   labelFontRef: React.RefObject<string>
   /** The CURRENT world dims (the repaint's clear bounds). */
   virtualRef: React.RefObject<VirtualDims>
+  /** The cached theme terrain ink (myth-y7yki) — refreshed by applyFogSize +
+   *  the theme observer, read per frame (never a per-frame style resolve). */
+  terrainInkRef: React.RefObject<string>
   /** The shared camera at a frame timestamp (identity when standalone — T1b). */
   cameraAt: (frameMs: number) => CameraPoint
 }
@@ -603,7 +635,7 @@ interface FogLoopDeps {
  *  is REAL elapsed time (like the reference) so the cloud scrolls at wall-clock speed.
  *  Returns the cancel teardown. Module-scoped so the hook body stays lean. */
 function startFogLoop(ctx: CanvasRenderingContext2D, sim: FogSim, deps: FogLoopDeps): () => void {
-  const { getEntities, shownRef, totalRef, densityRef, prevPosRef, widthCacheRef, labelFontRef, virtualRef, cameraAt } = deps
+  const { getEntities, shownRef, totalRef, densityRef, prevPosRef, widthCacheRef, labelFontRef, virtualRef, terrainInkRef, cameraAt } = deps
   let raf = 0
   let last = 0
   const start = performance.now()
@@ -618,7 +650,7 @@ function startFogLoop(ctx: CanvasRenderingContext2D, sim: FogSim, deps: FogLoopD
     sim.step(dtMs, obstacles, scale)
     // The shared camera at THIS rAF timestamp — the graph loop reads the same source
     // with the same time, so both layers translate identically this frame (C5).
-    repaint(ctx, sim, (now - start) / 1000, densityRef.current, virtualRef.current, cameraAt(now))
+    repaint(ctx, sim, (now - start) / 1000, densityRef.current, virtualRef.current, cameraAt(now), terrainInkRef.current)
     raf = window.requestAnimationFrame(frame)
   }
   raf = window.requestAnimationFrame(frame)

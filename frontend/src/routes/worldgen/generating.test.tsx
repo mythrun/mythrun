@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import type { StageTiming } from '@mythrun/client-core'
 import { MIN_EXPECTED_ENTITIES } from '@mythrun/client-core/worldgen'
-import { WORLD_GEN_STAGES, type WorldGenStage } from '@mythrun/contract/events'
+import { WATCHED_ENTITY_STAGES, WORLD_GEN_STAGES, type WorldGenStage } from '@mythrun/contract/events'
 import type { StageProgress, WorldGenGraphProps } from '@mythrun/ui'
 import { i18n } from '../../i18n/config.ts'
 import { GeneratingView } from './generating.tsx'
@@ -122,6 +122,30 @@ function renderGenerating({
   )
 }
 
+/** Like renderGenerating, but hands back a typed re-render for the tests that
+ *  advance the live stream mid-mount (the monotonic-clamp walk). */
+function renderGeneratingRerenderable(opts: RenderOpts = {}): {
+  rerenderWith: (next: RenderOpts) => void
+} {
+  const tree = (o: RenderOpts): React.JSX.Element => (
+    <I18nextProvider i18n={i18n}>
+      <GeneratingView
+        nodes={o.nodes ?? []}
+        edges={[]}
+        stages={o.stages ?? []}
+        stageTimings={o.stageTimings ?? null}
+        resumedMidGen={o.resumedMidGen ?? false}
+      />
+    </I18nextProvider>
+  )
+  const { rerender } = render(tree(opts))
+  return {
+    rerenderWith: (next: RenderOpts): void => {
+      rerender(tree(next))
+    },
+  }
+}
+
 /** Press the watch button — the only path from act one to the graph. */
 function watch(): void {
   fireEvent.click(screen.getByRole('button', { name: i18n.t('worldGen.watch') }))
@@ -153,10 +177,32 @@ describe('GeneratingView — act one: the prep loading screen', () => {
       stages: [stage('concept_intake', 'completed'), stage('world_color', 'running')],
     })
     expect(screen.getByTestId('worldgen-loading')).toBeDefined()
-    // The DS Spinner carries the busy meaning, with the i18n'd SR label.
+    // The accreting mark carries the busy meaning, with the i18n'd SR label.
     expect(screen.getByRole('status', { name: i18n.t('worldGen.loadingLabel') })).toBeDefined()
     // The graph never mounts during the prep act.
     expect(graphSpy).not.toHaveBeenCalled()
+  })
+
+  it('drives the mark from REAL events — one completed prep stage fills, zero breathes (myth-i2pdo)', () => {
+    mockMatchMedia(false)
+    renderGenerating({ stages: [stage('concept_intake', 'running')] })
+    expect(screen.getByTestId('worldgen-loading-mark').getAttribute('data-beat-mode')).toBe('breathe')
+    cleanup()
+    mockMatchMedia(false)
+    renderGenerating({
+      stages: [stage('concept_intake', 'completed'), stage('world_color', 'running')],
+    })
+    const mark = screen.getByTestId('worldgen-loading-mark')
+    expect(mark.getAttribute('data-beat-mode')).toBe('fill')
+    expect(Number(mark.getAttribute('data-beat-level'))).toBeGreaterThan(0)
+  })
+
+  it('grants permission to leave — the quiet closing line (myth-i2pdo)', () => {
+    mockMatchMedia(false)
+    renderGenerating()
+    expect(screen.getByTestId('worldgen-loading-leave').textContent).toBe(
+      i18n.t('worldGen.safeToLeave'),
+    )
   })
 
   it('shows the loading screen before the first snapshot frame (empty stream)', () => {
@@ -197,7 +243,7 @@ describe('GeneratingView — act one: the prep loading screen', () => {
     renderGenerating({ stages: [stage('concept_intake', 'running')] })
     const seen = new Set<string>()
     const readFlavor = (): void => {
-      const text = screen.getByTestId('worldgen-loading-flavor').textContent
+      const text = screen.getByTestId('whisper-ledger-current').textContent
       expect(allFlavors.has(text)).toBe(true)
       seen.add(text)
     }
@@ -320,23 +366,32 @@ describe('GeneratingView — status card wiring (§3.3)', () => {
     expect((status as Record<string, unknown> | undefined)?.costUsd).toBeUndefined()
   })
 
-  it('supplies a friendly i18n label for EVERY canonical world-gen stage', () => {
+  it('supplies a friendly i18n label for EVERY canonical world-gen stage — watched-entity stages carry their scope', () => {
     mockMatchMedia(false)
     renderWatching()
     const labels = lastGraphProps().status?.stageLabels
     // The production map is built by iterating WORLD_GEN_STAGES, so every canonical
     // stage carries a real label — the card + SR announcer never fall back to the
-    // defensive title. This expected map is Record<WorldGenStage>, so a future
-    // taxonomy addition fails THIS compile in lockstep with the production map's
-    // own compile guard (STAGE_LABEL_KEY).
+    // defensive title. The four WATCHED-ENTITY stages (the card's bars) get their
+    // position composed in ("Stage N of 4 · …", ux-run2 myth-uz1bn) so stage scope
+    // is never conflated with overall time; prep + tail stages stay plain. This
+    // expected map is Record<WorldGenStage>, so a future taxonomy addition fails
+    // THIS compile in lockstep with the production map's own compile guard
+    // (STAGE_LABEL_KEY).
+    const positioned = (current: number, key: string): string =>
+      i18n.t('worldGen.stagePosition', {
+        current,
+        total: WATCHED_ENTITY_STAGES.length,
+        stage: key,
+      })
     const expected: Record<WorldGenStage, string> = {
       concept_intake: i18n.t('worldGen.stage.concept_intake'),
       world_color: i18n.t('worldGen.stage.world_color'),
       vocabulary_intake: i18n.t('worldGen.stage.vocabulary_intake'),
-      world_and_factions: i18n.t('worldGen.stage.world_and_factions'),
-      locations_and_npcs: i18n.t('worldGen.stage.locations_and_npcs'),
-      entity_relationships: i18n.t('worldGen.stage.entity_relationships'),
-      world_introduction: i18n.t('worldGen.stage.world_introduction'),
+      world_and_factions: positioned(1, i18n.t('worldGen.stage.world_and_factions')),
+      locations_and_npcs: positioned(2, i18n.t('worldGen.stage.locations_and_npcs')),
+      entity_relationships: positioned(3, i18n.t('worldGen.stage.entity_relationships')),
+      world_introduction: positioned(4, i18n.t('worldGen.stage.world_introduction')),
       entity_consolidation: i18n.t('worldGen.stage.entity_consolidation'),
       starting_situation: i18n.t('worldGen.stage.starting_situation'),
       random_tables: i18n.t('worldGen.stage.random_tables'),
@@ -406,14 +461,15 @@ describe('GeneratingView — the coarse remaining-wait line (MYT-102 timer revam
     expect(lastGraphProps().status?.countdownLabel).not.toMatch(/\d:\d\d/)
   })
 
-  it('DROPS the line the instant the estimate exhausts — never a dead 0:00 (act two)', () => {
+  it('DEGRADES IN LANGUAGE the instant the estimate exhausts — never a dead floor (act two)', () => {
     mockMatchMedia(false)
     vi.useFakeTimers()
     vi.setSystemTime(T0)
     // Every watched stage done except the final one, which is RUNNING and has
     // overrun its average (90s elapsed vs 30s) → the estimate clamps to 0. The old
-    // countdown sat at "0:00 remaining"; now the line is dropped entirely (the
-    // stage bars carry the wait), so the card shows NO countdown.
+    // countdown sat at "0:00 remaining"; run 2 then sat on a frozen coarse floor
+    // for ~90s. Now the stalled reassurance STANDS IN for the number (ux-run2
+    // myth-uz1bn: frozen numbers degrade in language rather than sit).
     const exhausted = [
       ...ENTITY_UNDERWAY.slice(0, 3),
       stage('world_and_factions', 'completed'),
@@ -422,18 +478,18 @@ describe('GeneratingView — the coarse remaining-wait line (MYT-102 timer revam
     ]
     const stageTimings: StageTiming[] = [{ stage: 'entity_relationships', avgMs: 30_000 }]
     renderWatching({ stages: exhausted, stageTimings })
-    // The card still renders (status is present) — the countdown alone is dropped.
     expect(lastGraphProps().status).toBeDefined()
     expect(lastGraphProps().status?.countdownLabel).toBeUndefined()
+    expect(lastGraphProps().status?.stalledLabel).toBe(i18n.t('shared.wait.stalled'))
   })
 
-  it('DROPS the loading-screen line when the prep estimate exhausts (the flavor cycle carries the wait)', () => {
+  it('shows the stalled line on the LOADING screen too when the aggregate exhausts (one budget, one behavior)', () => {
     mockMatchMedia(false)
     vi.useFakeTimers()
     vi.setSystemTime(T0)
-    // The prep slice is all done except vocabulary_intake, running and overrun
-    // (60s elapsed vs 20s) → estimate 0 → no countdown, but the loading screen
-    // (Spinner + flavor cycle) still renders. No dead 0:00.
+    // The whole timed slice is done except vocabulary_intake, running and overrun
+    // (60s elapsed vs 20s) → estimate 0 → the countdown is replaced by the stalled
+    // reassurance; the loading screen (flavor cycle) still renders around it.
     const exhausted = [
       stage('concept_intake', 'completed'),
       stage('world_color', 'completed'),
@@ -446,6 +502,9 @@ describe('GeneratingView — the coarse remaining-wait line (MYT-102 timer revam
     ]
     renderGenerating({ stages: exhausted, stageTimings })
     expect(screen.queryByTestId('worldgen-loading-countdown')).toBeNull()
+    expect(screen.getByTestId('worldgen-loading-stalled').textContent).toBe(
+      i18n.t('shared.wait.stalled'),
+    )
     expect(screen.getByTestId('worldgen-loading')).toBeDefined()
   })
 
@@ -464,12 +523,12 @@ describe('GeneratingView — the coarse remaining-wait line (MYT-102 timer revam
     expect(lastGraphProps().status?.countdownLabel).toBeUndefined()
   })
 
-  it('act ONE counts down to ARRIVING ON THE GRAPH — the prep slice, NOT the reveal (myth-tudy1)', () => {
-    // The loading countdown must sum ONLY the prep stages (arrive-on-the-graph),
-    // never the entity stages (arrive-at-the-reveal). concept_intake 0s into its
-    // 60s avg + world_color 40s + vocabulary_intake 20s = 120s → "2 min". The huge
-    // world_and_factions timing is an ENTITY stage — it must be ignored here (the
-    // old reveal-target math would have swept it in and read ~10 min).
+  it('act ONE shows the AGGREGATE budget — the whole visible wait, not the prep slice (ux-run2 myth-uz1bn)', () => {
+    // The run-1 "two targets" design (myth-tudy1) made act one count only to
+    // graph arrival, so the act swap reset "Under a minute" up to "8 min" —
+    // run 2's blocker. Both acts now read ONE budget: concept_intake 0s into its
+    // 60s avg + world_color 40s + vocabulary_intake 20s + world_and_factions
+    // (an ENTITY stage) 600s = 720s → "about 12 min", even on act one.
     mockMatchMedia(false)
     vi.useFakeTimers()
     vi.setSystemTime(T0)
@@ -478,16 +537,15 @@ describe('GeneratingView — the coarse remaining-wait line (MYT-102 timer revam
       { stage: 'concept_intake', avgMs: 60_000 },
       { stage: 'world_color', avgMs: 40_000 },
       { stage: 'vocabulary_intake', avgMs: 20_000 },
-      { stage: 'world_and_factions', avgMs: 600_000 }, // entity stage — excluded on act one
+      { stage: 'world_and_factions', avgMs: 600_000 },
     ]
     renderGenerating({ stages, stageTimings })
-    expect(screen.getByTestId('worldgen-loading-countdown').textContent).toBe(mins(2))
+    expect(screen.getByTestId('worldgen-loading-countdown').textContent).toBe(mins(12))
   })
 
-  it('act TWO still counts down to the REVEAL — the watched slice is unchanged', () => {
-    // The status card keeps its reveal-target countdown: entity_relationships is a
-    // WATCHED stage, so its 30s ahead counts (coarse: "under a minute"). Distinct
-    // from act one's prep slice.
+  it('act TWO counts down to the REVEAL — the watched slice', () => {
+    // entity_relationships is a WATCHED stage, so its 30s ahead counts (coarse:
+    // "under a minute"); the silent tail never counts.
     mockMatchMedia(false)
     vi.useFakeTimers()
     vi.setSystemTime(T0)
@@ -500,6 +558,81 @@ describe('GeneratingView — the coarse remaining-wait line (MYT-102 timer revam
     const stageTimings: StageTiming[] = [{ stage: 'entity_relationships', avgMs: 30_000 }]
     renderWatching({ stages, stageTimings })
     expect(lastGraphProps().status?.countdownLabel).toBe(underMinute)
+  })
+
+  it('the countdown SURVIVES the calm-wait → live-map transition unchanged (one budget across acts)', () => {
+    // The player-called blocker: "2 min" → "Under a minute" on the calm screen,
+    // then "8 min remaining" the moment the map opened. Same stream, same
+    // timings, same tick — the number the card shows after the watch press must
+    // BE the number the loading screen showed before it.
+    mockMatchMedia(false)
+    vi.useFakeTimers()
+    vi.setSystemTime(T0)
+    const stages = [
+      ...ENTITY_UNDERWAY.slice(0, 3),
+      stage('world_and_factions', 'running', ago(30_000)),
+    ]
+    const stageTimings: StageTiming[] = [
+      { stage: 'world_and_factions', avgMs: 60_000 },
+      { stage: 'locations_and_npcs', avgMs: 60_000 },
+    ]
+    renderGenerating({ stages, stageTimings })
+    const shownBefore = screen.getByTestId('worldgen-loading-countdown').textContent
+    expect(shownBefore).toBe(mins(2)) // 30s left in the running stage + 60s ahead
+    watch()
+    expect(lastGraphProps().status?.countdownLabel).toBe(shownBefore)
+  })
+
+  it('NEVER moves the countdown up — a rising raw estimate holds at the last shown value (monotonic clamp)', () => {
+    // A real up-jump source: a watched stage fails and re-enters `running`, so
+    // its whole average re-joins the sum. The raw estimate climbs from ~30s to
+    // ~5 min; the shown label must hold at "under a minute", not climb.
+    mockMatchMedia(false)
+    vi.useFakeTimers()
+    vi.setSystemTime(T0)
+    const nearDone = [
+      ...ENTITY_UNDERWAY.slice(0, 3),
+      stage('world_and_factions', 'completed'),
+      stage('locations_and_npcs', 'completed'),
+      stage('entity_relationships', 'running', ago(90_000)),
+    ]
+    const stageTimings: StageTiming[] = [
+      { stage: 'entity_relationships', avgMs: 120_000 },
+      { stage: 'world_introduction', avgMs: 0 },
+    ]
+    const view = renderGeneratingRerenderable({ stages: nearDone, stageTimings })
+    expect(screen.getByTestId('worldgen-loading-countdown').textContent).toBe(underMinute)
+    // The running stage "restarts": startedAt resets to now → its full 120s
+    // average is ahead again + locations_and_npcs regresses to running with a
+    // fresh 180s average. Raw estimate ≈ 5 min; the display must not climb.
+    view.rerenderWith({
+      stages: [
+        ...ENTITY_UNDERWAY.slice(0, 3),
+        stage('world_and_factions', 'completed'),
+        stage('locations_and_npcs', 'running', T0.toISOString()),
+        stage('entity_relationships', 'pending'),
+      ],
+      stageTimings: [
+        { stage: 'locations_and_npcs', avgMs: 180_000 },
+        { stage: 'entity_relationships', avgMs: 120_000 },
+      ],
+    })
+    expect(screen.getByTestId('worldgen-loading-countdown').textContent).toBe(underMinute)
+  })
+})
+
+describe('GeneratingView — the way back from the live map (ux-run2 myth-t11az)', () => {
+  it('wires the status card a return link that lands back on the calm loading screen', () => {
+    mockMatchMedia(false)
+    renderWatching()
+    const { status } = lastGraphProps()
+    expect(status?.returnLabel).toBe(i18n.t('worldGen.waitQuietly'))
+    act(() => {
+      status?.onReturn?.()
+    })
+    expect(screen.getByTestId('worldgen-loading')).toBeDefined()
+    // The watch button is still offered — the door swings both ways.
+    expect(screen.getByRole('button', { name: i18n.t('worldGen.watch') })).toBeDefined()
   })
 })
 

@@ -1,10 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { FullBleedStage, Stack, WorldGenGraph, WorldGenLoading } from '@mythrun/ui'
-import { ENTITY_STAGES, WORLD_GEN_STAGES, type WorldGenStage } from '@mythrun/contract/events'
 import {
-  remainingPrepWaitMs,
+  ENTITY_STAGES,
+  WATCHED_ENTITY_STAGES,
+  WORLD_GEN_STAGES,
+  type WorldGenStage,
+} from '@mythrun/contract/events'
+import {
+  clampEtaMonotonic,
   remainingWaitMs,
   waitDisplay,
+  worldGenAccretion,
   type StageTiming,
   type WorldGenStream,
 } from '@mythrun/client-core'
@@ -55,8 +61,10 @@ import { coarseWaitTime } from '../wait-format.ts'
 // tail stages never render here.
 //
 // Flat 1-bit paper register — no chrome. The route owns the stream + the timings
-// fetch; this view owns the act state (a local, deliberate transition — never
-// automatic), the countdown's 1-second tick, and the `~M:SS` formatting.
+// fetch; this view owns the act state (a deliberate transition, two-way since
+// myth-t11az — the status card's quiet link returns to the calm wait), the
+// countdown's 1-second tick, the ONE aggregate monotonic wait budget both acts
+// read (ux-run2 myth-uz1bn), and the coarse label formatting.
 
 /** The generation graph model + the status/fade inputs (folded by the route's
  *  `useWorldGenStream`) plus the route's historical stage timings (the input to
@@ -91,26 +99,43 @@ function useNowMs(active: boolean): number {
   return nowMs
 }
 
-/** Resolve the remaining wait into the COARSE `{{time}} remaining` label (MYT-102
- *  timer revamp), or `undefined` when there is no usable estimate to show —
- *  cold-start (no history) OR the estimate EXHAUSTED (the final stage overran).
- *  Omitting on exhaustion is the never-dead-zero fix: the surface drops the line
- *  rather than sitting at "0:00 remaining"; the Spinner + flavor cycle (act one)
- *  or the stage bars (act two) already carry the wait, so nothing looks hung.
- *  The label is minute-granular ("2 min remaining"), never a ticking `0:24` —
- *  false precision + the per-second churn were the anti-patterns. World-gen
- *  passes an infinite no-history window (it never needs a stall LINE — its
- *  indeterminate presentation is the flavor cycle / the bars), so `waitDisplay`
- *  only ever yields `estimate` (show) or a non-estimate (omit). */
-function countdownLabelFrom(remainingMs: number | null, t: TFunction): string | undefined {
+/** The wait line both acts render (ux-run2 myth-uz1bn): the COARSE overall
+ *  countdown ("Ready in about 4 min") while the estimate holds, the STALLED
+ *  reassurance the instant it exhausts (a frozen number degrades in language,
+ *  never sits), and neither on cold-start (no history — no fake numbers; the
+ *  flavor cycle / the bars carry the wait). At most one of the two is set.
+ *  The label is minute-granular, never a ticking `0:24` — false precision +
+ *  per-second churn were the anti-patterns. */
+interface WaitLines {
+  readonly countdownLabel?: string
+  readonly stalledLabel?: string
+}
+
+function waitLinesFrom(remainingMs: number | null, t: TFunction): WaitLines {
   const display = waitDisplay({
     remainingMs,
     elapsedMs: 0,
     noHistoryStallMs: Number.POSITIVE_INFINITY,
   })
-  return display.kind === 'estimate'
-    ? t('worldGen.countdown', { time: coarseWaitTime(display.bucket, t) })
-    : undefined
+  if (display.kind === 'estimate') {
+    return { countdownLabel: t('worldGen.countdown', { time: coarseWaitTime(display.bucket, t) }) }
+  }
+  if (display.kind === 'stalled') return { stalledLabel: t('shared.wait.stalled') }
+  return {}
+}
+
+/** The MONOTONIC fold over the raw aggregate estimate (ux-run2 myth-uz1bn): the
+ *  shown remaining wait may hold, never climb — `min(new, lastShown)` per tick,
+ *  with the last-shown value held in a ref for the LIFE of this view. The view
+ *  stays mounted across the act-one → act-two swap, so the countdown survives
+ *  the calm-wait → live-map transition instead of resetting per view. The
+ *  render-time ref write is an idempotent min-fold (safe under StrictMode
+ *  double-invocation). */
+function useMonotonicEtaMs(rawMs: number | null): number | null {
+  const lastShownRef = useRef<number | null>(null)
+  const shown = clampEtaMonotonic(rawMs, lastShownRef.current)
+  lastShownRef.current = shown ?? lastShownRef.current
+  return shown
 }
 
 /** The graph contract requires `onSelect`, but generation is GATED (§3.4) so it
@@ -146,6 +171,65 @@ const STAGE_LABEL_KEY = {
   coherence_pass: 'worldGen.stage.coherence_pass',
   embed_world: 'worldGen.stage.embed_world',
 } as const satisfies Record<WorldGenStage, string>
+
+/** Friendly per-stage labels for the status card (§3.3) + the SR announcer,
+ *  covering ALL canonical stages. Built by iterating WORLD_GEN_STAGES (not a
+ *  hand-listed subset), so the map can never silently omit a stage: any stage
+ *  the stream surfaces resolves to a real label, and a taxonomy addition fails
+ *  loud at the STAGE_LABEL_KEY compile check above. The DS owns no copy, so the
+ *  route resolves each backend stage id → its i18n'd label here; the card's
+ *  own fallback is now defensive only. The WATCHED-ENTITY stages — the card's
+ *  bars — get their scope composed in ("Stage 2 of 4 · …", ux-run2 myth-uz1bn):
+ *  run 2 read a bare stage label + "0%" as overall progress; the explicit
+ *  position makes stage scope and overall time impossible to conflate. */
+function stageLabelsFrom(t: TFunction): Record<string, string> {
+  const position = new Map(WATCHED_ENTITY_STAGES.map((stage, i) => [stage, i + 1]))
+  return Object.fromEntries(
+    WORLD_GEN_STAGES.map((stage) => {
+      const plain = t(STAGE_LABEL_KEY[stage])
+      const current = position.get(stage)
+      return [
+        stage,
+        current === undefined
+          ? plain
+          : t('worldGen.stagePosition', {
+              current,
+              total: WATCHED_ENTITY_STAGES.length,
+              stage: plain,
+            }),
+      ]
+    }),
+  )
+}
+
+/** The act-one flavor lines — cycled by WorldGenLoading every ~10s in RANDOM
+ *  order (twenty slots so the loop never feels short, shuffled so it never
+ *  feels canned), past lines settling into the whisper ledger. Literal keys —
+ *  the typed catalog rejects dynamic ones. */
+function flavorLabelsFrom(t: TFunction): readonly string[] {
+  return [
+    t('worldGen.flavor1'),
+    t('worldGen.flavor2'),
+    t('worldGen.flavor3'),
+    t('worldGen.flavor4'),
+    t('worldGen.flavor5'),
+    t('worldGen.flavor6'),
+    t('worldGen.flavor7'),
+    t('worldGen.flavor8'),
+    t('worldGen.flavor9'),
+    t('worldGen.flavor10'),
+    t('worldGen.flavor11'),
+    t('worldGen.flavor12'),
+    t('worldGen.flavor13'),
+    t('worldGen.flavor14'),
+    t('worldGen.flavor15'),
+    t('worldGen.flavor16'),
+    t('worldGen.flavor17'),
+    t('worldGen.flavor18'),
+    t('worldGen.flavor19'),
+    t('worldGen.flavor20'),
+  ]
+}
 
 /** Whether entities have started appearing — the act-one → watch-beat trigger.
  *  TRUE when the stream reports an ENTITY_STAGES stage underway
@@ -184,69 +268,30 @@ export function GeneratingView({
   // preference here (web layer — DOM `matchMedia`) and hand the graph the boolean.
   const prefersReducedMotion = usePrefersReducedMotion()
 
-  // Friendly per-stage labels for the status card (§3.3) + the SR announcer,
-  // covering ALL canonical stages. Built by iterating WORLD_GEN_STAGES (not a
-  // hand-listed subset), so the map can never silently omit a stage: any stage
-  // the stream surfaces resolves to a real label, and a taxonomy addition fails
-  // loud at the STAGE_LABEL_KEY compile check above. The DS owns no copy, so the
-  // route resolves each backend stage id → its i18n'd label here; the card's
-  // own fallback is now defensive only.
-  const stageLabels = useMemo<Record<string, string>>(
-    () => Object.fromEntries(WORLD_GEN_STAGES.map((stage) => [stage, t(STAGE_LABEL_KEY[stage])])),
-    [t],
-  )
+  // The resolved label maps (module-level builders — the DS owns no copy).
+  const stageLabels = useMemo<Record<string, string>>(() => stageLabelsFrom(t), [t])
+  const flavorLabels = useMemo<readonly string[]>(() => flavorLabelsFrom(t), [t])
 
-  // The act-one flavor lines — cycled by WorldGenLoading every ~3s in RANDOM
-  // order (twenty slots so the loop never feels short, shuffled so it never feels
-  // canned).
-  const flavorLabels = useMemo<readonly string[]>(
-    () => [
-      t('worldGen.flavor1'),
-      t('worldGen.flavor2'),
-      t('worldGen.flavor3'),
-      t('worldGen.flavor4'),
-      t('worldGen.flavor5'),
-      t('worldGen.flavor6'),
-      t('worldGen.flavor7'),
-      t('worldGen.flavor8'),
-      t('worldGen.flavor9'),
-      t('worldGen.flavor10'),
-      t('worldGen.flavor11'),
-      t('worldGen.flavor12'),
-      t('worldGen.flavor13'),
-      t('worldGen.flavor14'),
-      t('worldGen.flavor15'),
-      t('worldGen.flavor16'),
-      t('worldGen.flavor17'),
-      t('worldGen.flavor18'),
-      t('worldGen.flavor19'),
-      t('worldGen.flavor20'),
-    ],
-    [t],
-  )
-
-  // The COARSE remaining-wait line (MYT-102 timer revamp): the remaining visible
-  // wait — historical stage averages ∩ live statuses, minus elapsed-in-the-
-  // running-stage — re-derived every tick and shown minute-granular ("2 min
-  // remaining"), never a ticking `0:24`. The 1s tick only runs when there IS a
-  // usable history; `null`/cold-start → undefined → no line. It JUMPS coarsely at
-  // stage events (an honest walk beats a smooth lie) and, the instant the
-  // estimate EXHAUSTS (a stage overran to 0), the line is dropped entirely rather
-  // than sitting at a dead 0:00 — the Spinner + flavor cycle (act one) / the
-  // stage bars (act two) carry the wait.
+  // The COARSE remaining-wait line (MYT-102 timer revamp + ux-run2 myth-uz1bn):
+  // ONE AGGREGATE budget for the WHOLE visible wait — `remainingWaitMs` sums the
+  // full WATCHED slice (prep through the wiki reveal), so act one and act two
+  // read the SAME number and the calm-wait → live-map transition cannot reset
+  // the countdown upward. (This retires the myth-tudy1 two-target design: run 2
+  // proved a per-view target reads as a lie the moment the view changes —
+  // "Under a minute" → "8 min remaining".) The raw estimate is re-derived every
+  // tick from historical stage averages ∩ live statuses, then folded through the
+  // MONOTONIC clamp: shown = min(new, lastShown) — it may hold at a floor when a
+  // stage overruns, never climb. The instant it EXHAUSTS, the line degrades in
+  // language (the shared stalled reassurance) rather than sitting at a dead
+  // floor; `null`/cold-start → no line at all (no fake numbers).
   const hasTimings = stageTimings !== null && stageTimings.length > 0
   const nowMs = useNowMs(hasTimings)
-  // TWO targets (myth-tudy1): act one counts down to ARRIVING ON THE GRAPH (the
-  // PREP slice — the watch-button beat); act two's status card keeps counting to
-  // the wiki REVEAL (the WATCHED slice). Same tick, same `~M:SS` formatting.
-  const prepCountdownLabel = useMemo(
-    () => countdownLabelFrom(remainingPrepWaitMs(stageTimings, stages, nowMs), t),
-    [stageTimings, stages, nowMs, t],
+  const rawRemainingMs = useMemo(
+    () => remainingWaitMs(stageTimings, stages, nowMs),
+    [stageTimings, stages, nowMs],
   )
-  const revealCountdownLabel = useMemo(
-    () => countdownLabelFrom(remainingWaitMs(stageTimings, stages, nowMs), t),
-    [stageTimings, stages, nowMs, t],
-  )
+  const remainingMs = useMonotonicEtaMs(rawRemainingMs)
+  const { countdownLabel, stalledLabel } = useMemo(() => waitLinesFrom(remainingMs, t), [remainingMs, t])
 
   // E1 (MYT-89 Phase E) — the SR announcer's PHASE signal: the running watched-entity
   // stage's friendly label (a change flushes the live region at once); before or between
@@ -267,10 +312,18 @@ export function GeneratingView({
           data-testid="worldgen-loading"
           flavorLabels={flavorLabels}
           spinnerLabel={t('worldGen.loadingLabel')}
-          // The countdown to ARRIVING ON THE GRAPH (the prep slice). Omit the key
-          // when there's no estimate — exactOptionalPropertyTypes forbids an
-          // explicit `undefined`.
-          {...(prepCountdownLabel !== undefined ? { countdownLabel: prepCountdownLabel } : {})}
+          // The mark accretes on REAL pipeline events (completed stages +
+          // arrived entities — myth-i2pdo): stillness means stillness, motion
+          // means work.
+          accretion={worldGenAccretion(stages, nodes.length)}
+          // Permission to leave — re-entry lands back here with progress intact
+          // (the stream re-snapshots; a populated world resumes on the graph).
+          leaveLabel={t('worldGen.safeToLeave')}
+          // The SAME aggregate countdown act two shows (one budget, monotonic).
+          // Omit absent keys — exactOptionalPropertyTypes forbids an explicit
+          // `undefined`.
+          {...(countdownLabel !== undefined ? { countdownLabel } : {})}
+          {...(stalledLabel !== undefined ? { stalledLabel } : {})}
           watchReady={entitiesStarted(stages, nodes)}
           watchLabel={t('worldGen.watch')}
           onWatch={() => {
@@ -301,11 +354,18 @@ export function GeneratingView({
           titleLabel: t('worldGen.statusTitle'),
           doneLabel: t('worldGen.statusDone'),
           progressLabel: t('worldGen.statusProgress'),
-          // The status card keeps its countdown to the wiki REVEAL. Omit the key
-          // entirely when there's no estimate (exactOptionalPropertyTypes forbids
-          // an explicit `undefined` on an optional prop) → the card shows no
-          // countdown.
-          ...(revealCountdownLabel !== undefined ? { countdownLabel: revealCountdownLabel } : {}),
+          // The SAME aggregate wait line act one showed (one monotonic budget —
+          // the transition into this view can never move the number up). Omit
+          // absent keys (exactOptionalPropertyTypes forbids an explicit
+          // `undefined` on an optional prop).
+          ...(countdownLabel !== undefined ? { countdownLabel } : {}),
+          ...(stalledLabel !== undefined ? { stalledLabel } : {}),
+          // The way back to the calm wait (ux-run2 myth-t11az) — watching is a
+          // choice, not a one-way door.
+          returnLabel: t('worldGen.waitQuietly'),
+          onReturn: () => {
+            setAct('loading')
+          },
         }}
         // Fog DRAIN keyed off the ENTITY COUNT (MYT-89 spawn-drain): every arrived
         // node ramps the fog's respawn flux down by 1/MIN_EXPECTED_ENTITIES — the

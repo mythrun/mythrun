@@ -10,6 +10,7 @@
 // module's job); this module owns the VIEW logic (identity line, tiles, curated /
 // full split, caster gating).
 
+import { CASTING_ABILITY, resolveClassName, type Ability } from '../srd/index.ts'
 import type {
   AbilityAbbrev,
   AbilityTile,
@@ -75,11 +76,23 @@ function abilityModifier(score: number): number {
   return Math.floor((score - 10) / 2)
 }
 
-function buildAbilityTiles(abilities: SheetAbilityScores): AbilityTile[] {
+/** The tiles, with the caster's spellcasting ability marked (ux-run2
+ *  myth-8ps4n) — the quiet answer to "why do my spells work?". */
+function buildAbilityTiles(abilities: SheetAbilityScores, casting?: Ability): AbilityTile[] {
   return ABILITY_TILES.map(([abbrev, key]) => {
     const score = abilities[key]
-    return { abbrev, score, modifier: abilityModifier(score) }
+    const tile: AbilityTile = { abbrev, score, modifier: abilityModifier(score) }
+    return key === casting ? { ...tile, casting: true } : tile
   })
+}
+
+/** The class's spellcasting ability — marked only when the sheet actually HAS
+ *  spells (the SRD map alone would tag a spell-less paladin at level 1). An
+ *  unresolvable freeform class degrades to no mark. */
+function castingAbilityFor(source: CharacterSheetSource): Ability | undefined {
+  if (source.spells.length === 0) return undefined
+  const className = resolveClassName(source.class)
+  return className !== undefined ? (CASTING_ABILITY[className] ?? undefined) : undefined
 }
 
 /** "Level N · <species> <class> · <subclass> · <background>" — the subclass segment
@@ -91,11 +104,19 @@ function buildIdentityLine(source: CharacterSheetSource): string {
   return segments.join(' · ')
 }
 
-/** The AC / HP / Proficiency stripe, with Hit Die + Speed appended when present. */
+/** The AC / HP / Proficiency stripe, with Hit Die + Speed appended when present.
+ *  At FULL health the HP cell reads as the single number ("25", not "25 / 25") —
+ *  current-slash-max is mid-combat state; the slash earns its place once damage
+ *  exists (ux-run2 myth-8ps4n). The in-session sheet overlays the live value by
+ *  the 'HP' label, so this only styles the at-rest read. */
 function buildStats(source: CharacterSheetSource): SheetStat[] {
+  const hp =
+    source.hitPoints === source.maxHitPoints
+      ? String(source.maxHitPoints)
+      : `${String(source.hitPoints)} / ${String(source.maxHitPoints)}`
   const stats: SheetStat[] = [
     { label: 'AC', value: String(source.armorClass) },
-    { label: 'HP', value: `${String(source.hitPoints)} / ${String(source.maxHitPoints)}` },
+    { label: 'HP', value: hp },
     { label: 'Proficiency', value: `+${String(source.proficiencyBonus)}` },
   ]
   if (source.hitDie !== undefined) stats.push({ label: 'Hit Die', value: `d${String(source.hitDie)}` })
@@ -103,8 +124,24 @@ function buildStats(source: CharacterSheetSource): SheetStat[] {
   return stats
 }
 
-function toSpellEntry(spell: SheetSpell): SheetEntry {
-  return { name: spell.name, gloss: spell.level === 0 ? 'Cantrip' : `Level ${String(spell.level)}` }
+/** Group the spell list by slot level into label·value prose lines — "Level 1 ·
+ *  Cure Wounds, Detect Magic…" with one label per group (levels ascending,
+ *  in-level order preserved). A reveal wants the SHAPE of the caster, not a
+ *  scrollable per-spell receipt (ux-run2 myth-wbd89); this also matches the house
+ *  state-as-prose register. Deterministic grouping — mechanical computation. */
+function buildSpellLines(spells: readonly SheetSpell[]): SheetEntry[] {
+  const byLevel = new Map<number, string[]>()
+  for (const spell of spells) {
+    const names = byLevel.get(spell.level) ?? []
+    names.push(spell.name)
+    byLevel.set(spell.level, names)
+  }
+  return [...byLevel.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([level, names]) => ({
+      name: level === 0 ? 'Cantrips' : `Level ${String(level)}`,
+      gloss: names.join(' · '),
+    }))
 }
 
 function buildCurated(source: CharacterSheetSource): CuratedSheet {
@@ -112,13 +149,13 @@ function buildCurated(source: CharacterSheetSource): CuratedSheet {
     name: source.name,
     identityLine: buildIdentityLine(source),
     stats: buildStats(source),
-    abilities: buildAbilityTiles(source.abilities),
+    abilities: buildAbilityTiles(source.abilities, castingAbilityFor(source)),
     prose: [...source.prose],
     features: [...source.features],
     equipment: [...source.equipment],
   }
   // Caster-only: the curated spells panel appears only when the sheet has spells.
-  return source.spells.length > 0 ? { ...base, spells: source.spells.map(toSpellEntry) } : base
+  return source.spells.length > 0 ? { ...base, spells: buildSpellLines(source.spells) } : base
 }
 
 function buildFull(source: CharacterSheetSource): FullSheet {
@@ -126,7 +163,7 @@ function buildFull(source: CharacterSheetSource): FullSheet {
     skills: [...source.skills],
     savingThrows: [...source.savingThrows],
     equipment: [...source.equipment],
-    spells: source.spells.map(toSpellEntry),
+    spells: buildSpellLines(source.spells),
   }
 }
 

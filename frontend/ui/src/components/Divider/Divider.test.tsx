@@ -43,6 +43,17 @@ describe('Divider', () => {
     expect(el.classList.contains('bg-border-strong')).toBe(false)
   })
 
+  it('uses the interactive-grade border token for tone="strong" (the mid step)', () => {
+    const { getByRole } = render(<Divider tone="strong" />)
+    const el = getByRole('separator')
+    // Between the decorative hairline and the full ink seam: a segment that must
+    // read as PRESENT (a stepper's pending tick — ux-run2 myth-tf60g) without
+    // claiming the completed-ink weight.
+    expect(el.classList.contains('bg-border-strong')).toBe(true)
+    expect(el.classList.contains('bg-border')).toBe(false)
+    expect(el.classList.contains('bg-paper-900')).toBe(false)
+  })
+
   it('uses the ink pigment (paper-900) for tone="ink", not the decorative border', () => {
     const { getByRole } = render(<Divider tone="ink" />)
     const el = getByRole('separator')

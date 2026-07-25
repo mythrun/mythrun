@@ -12,7 +12,7 @@ const meta: Meta<typeof Divider> = {
   tags: ['autodocs'],
   argTypes: {
     orientation: { control: 'inline-radio', options: ['horizontal', 'vertical'] },
-    tone: { control: 'inline-radio', options: ['border', 'ink'] },
+    tone: { control: 'inline-radio', options: ['border', 'strong', 'ink'] },
   },
 }
 
@@ -43,6 +43,13 @@ export const Vertical: Story = {
       <span className="font-ui text-sm text-ink">Right</span>
     </div>
   ),
+}
+
+// tone="strong" — the interactive-grade mid step: a rule that reads as PRESENT
+// (a stepper's pending segment) without the completed-ink weight.
+export const Strong: Story = {
+  name: 'Tone · strong (pending segment)',
+  args: { orientation: 'horizontal', tone: 'strong' },
 }
 
 // tone="ink" — the structural INK seam (dark paper-900 pigment), for a deliberate

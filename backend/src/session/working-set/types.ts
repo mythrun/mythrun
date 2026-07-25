@@ -6,10 +6,16 @@ import type { AccessLevel } from '../../repo/facts.js' // 'known' | 'discoverabl
  * - `objective`: stated by the narration itself (true in-world).
  * - `attributed`: spoken/claimed by an NPC — may be a lie, rumor, or mistake.
  *   Carries the NPC's entity id + name so the reconciler can track who said it.
+ * - `dice_outcome`: asserted on a turn whose resolved skill check LICENSED the
+ *   content (myth-g4hf3 canonize-on-grant). A reward the system's own outcome
+ *   table granted under a success/great_success is canon the moment it lands —
+ *   the world conforms to play; a collision with scripted prep material steers
+ *   FUTURE turns (ST soft path), it never erases the grant.
  */
 export type WorkingSetProvenance =
   | { readonly kind: 'objective' }
   | { readonly kind: 'attributed'; readonly npcEntityId: string; readonly npcName: string }
+  | { readonly kind: 'dice_outcome'; readonly outcomeTier: 'success' | 'great_success' }
 
 /** A pre-embed proposal (FT delta / ST injection / retcon produce these). */
 export interface WorkingSetProposal {

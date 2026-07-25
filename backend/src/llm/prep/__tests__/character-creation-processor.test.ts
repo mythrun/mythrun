@@ -109,9 +109,11 @@ const VALID_SHEET = {
   hit_die: 8,
   spellcasting_progression: 'full',
   skills: [{ name: 'Insight', proficient: true, expertise: false }],
+  // myth-4jhrk: the feature NAMES the full SRD subclass ("Life Domain") — the
+  // sheet stage's subclass allowlist requires it for a cleric at L1+.
   features: [
     {
-      name: 'Divine Domain: Life',
+      name: 'Divine Domain: Life Domain',
       description: 'extra healing for allies',
       max_uses: null,
       recharge: 'none',

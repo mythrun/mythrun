@@ -236,4 +236,29 @@ describe('DieSpin — per-shape outlines (myth-0qvay)', () => {
     )
     expect(getByTestId('die-spin-result')).toHaveTextContent('8')
   })
+
+  // ── myth-ydu35: the d20 reads as an icosahedron, at rest AND at result ──────
+  it('the d20 glyph carries the interior facet fan: a central triangular face inside the hexagon', () => {
+    const d20 = DIE_PATHS[20] ?? ''
+    // The hexagonal silhouette…
+    expect(d20.startsWith('M12 2 L21 7 L21 17 L12 22 L3 17 L3 7 Z')).toBe(true)
+    // …plus a closed central face (a second Z-terminated triangle subpath).
+    expect(d20.match(/Z/g)?.length).toBe(2)
+    // …and the fan: every hexagon vertex is connected inward (12 interior edges
+    // → the path has more than the old 6 subpaths).
+    expect((d20.match(/M/g)?.length ?? 0)).toBeGreaterThanOrEqual(10)
+  })
+
+  it('the d20 numeral stamps INSIDE the central face (smaller, nudged to its centroid); open shapes keep the large stamp', () => {
+    const d20 = render(
+      <DieSpin spinning={false} result={20} reducedMotion={false} onSpinComplete={vi.fn()} sides={20} />,
+    )
+    const d20Numeral = d20.container.querySelector('[data-testid="die-spin-result"]')
+    expect(d20Numeral).toHaveClass('text-base', 'leading-none')
+    expect(d20Numeral).not.toHaveClass('text-lg')
+    const d6 = render(
+      <DieSpin spinning={false} result={6} reducedMotion={false} onSpinComplete={vi.fn()} sides={6} />,
+    )
+    expect(d6.container.querySelector('[data-testid="die-spin-result"]')).toHaveClass('text-lg', 'leading-none')
+  })
 })

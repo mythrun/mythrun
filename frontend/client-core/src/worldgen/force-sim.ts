@@ -171,7 +171,12 @@ export const FORCE_PARAMS: ForceParams = {
   chargeDistanceMax: 720,
   centerStrength: 0,
   boundaryStrength: 0.01,
-  collisionPadding: 3,
+  // 3 → 8 (ux-run2 myth-uis1p): at 3px air a settled label's text END sits
+  // visually WELDED to its neighbour's icon ("'Mara Sol' welded to a node") and
+  // icon-only pairs pack to ~27px centres. 8px air keeps the ~24px icon
+  // separation floor comfortable and gives every text→icon adjacency visible
+  // daylight, without loosening the layout enough to spill the dense fixture.
+  collisionPadding: 8,
   seedJitter: 250,
   margin: 15,
   linkStrength: 0.3,
@@ -321,6 +326,10 @@ export interface ForceSim {
   reheat(): void
   /** Advance the simulation one step. Driven by the render loop (C4). */
   tick(): void
+  /** The simulation's CURRENT alpha (d3's cooling energy) — the settle signal.
+   *  The ui's pin-on-settle (ux-run2 myth-uis1p) reads it to freeze labeled
+   *  nodes only once the field has cooled, never mid-flight. */
+  alpha(): number
   /** displayId → current position. */
   positions(): Map<string, { x: number; y: number }>
   /** Fix a node at (x, y) — drag-to-pin (C4). */
@@ -777,6 +786,7 @@ export function create(opts: {
     setKeepOuts,
     reheat,
     tick,
+    alpha: () => simulation.alpha(),
     positions: () => readPositions(byKey),
     pin,
     unpin,

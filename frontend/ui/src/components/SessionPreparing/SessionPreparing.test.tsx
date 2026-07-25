@@ -20,16 +20,28 @@ function renderPreparing(
     detail?: string
     countdownLabel?: string
     stalledLabel?: string
+    whisperLabels?: readonly string[]
+    leaveLabel?: string
     reducedMotion?: boolean
   } = {},
 ) {
-  const { label = LABEL, detail, countdownLabel, stalledLabel, reducedMotion = false } = overrides
+  const {
+    label = LABEL,
+    detail,
+    countdownLabel,
+    stalledLabel,
+    whisperLabels,
+    leaveLabel,
+    reducedMotion = false,
+  } = overrides
   return render(
     <SessionPreparing
       label={label}
       {...(detail !== undefined ? { detail } : {})}
       {...(countdownLabel !== undefined ? { countdownLabel } : {})}
       {...(stalledLabel !== undefined ? { stalledLabel } : {})}
+      {...(whisperLabels !== undefined ? { whisperLabels } : {})}
+      {...(leaveLabel !== undefined ? { leaveLabel } : {})}
       reducedMotion={reducedMotion}
     />,
   )
@@ -109,6 +121,27 @@ describe('SessionPreparing', () => {
   it('is square register — no circles', () => {
     const { container } = renderPreparing()
     expect(container.querySelector('.rounded-full')).toBeNull()
+  })
+
+  it('renders the rotating whisper column (sub size) when whisper lines are supplied (ux-run2 myth-i2pdo)', () => {
+    const whispers = ['The locals take their seats.', 'The map is unrolled.'] as const
+    renderPreparing({ whisperLabels: whispers })
+    const current = screen.getByTestId('whisper-ledger-current')
+    expect(whispers).toContain(current.textContent)
+    // Decorative texture — hidden from AT (the live region stays the truth).
+    expect(screen.getByTestId('session-preparing-whispers')).toHaveAttribute('aria-hidden', 'true')
+  })
+
+  it('renders no whisper column when none are supplied (the pre-run-2 anatomy holds)', () => {
+    renderPreparing()
+    expect(screen.queryByTestId('session-preparing-whispers')).toBeNull()
+  })
+
+  it('grants permission to leave as real (non-hidden) closing content (ux-run2 myth-i2pdo)', () => {
+    renderPreparing({ leaveLabel: 'Safe to leave. The table will be set when you return.' })
+    const leave = screen.getByTestId('session-preparing-leave')
+    expect(leave.textContent).toBe('Safe to leave. The table will be set when you return.')
+    expect(leave).not.toHaveAttribute('aria-hidden')
   })
 
   it('wraps a long detail line inside a narrow column (break-words) — no ~375px spill', () => {

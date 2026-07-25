@@ -97,6 +97,21 @@ export function PreparingHold({
   const { t } = useTranslation()
   const prep = usePrep(ctx, campaignId)
 
+  // The rotating whispers (ux-run2 myth-i2pdo) — six public-tier table-setting
+  // lines, cycled by the DS beat every ~25s with past lines settling into the
+  // faint ledger. Literal keys for the typed catalog.
+  const whisperLabels = useMemo<readonly string[]>(
+    () => [
+      t('play.preparing.flavor1'),
+      t('play.preparing.flavor2'),
+      t('play.preparing.flavor3'),
+      t('play.preparing.flavor4'),
+      t('play.preparing.flavor5'),
+      t('play.preparing.flavor6'),
+    ],
+    [t],
+  )
+
   // Latch a TERMINAL prep failure → the calm dead-end. Once seen it never reverts to
   // the beat (a post-failure reconnect re-snapshots `generating`, which must NOT
   // re-arm the wait).
@@ -155,6 +170,13 @@ export function PreparingHold({
       <SessionPreparing
         label={label ?? t('play.preparing.label')}
         detail={t('play.preparing.detail')}
+        // The rotating table-setting whispers + their ledger (ux-run2
+        // myth-i2pdo) — PUBLIC-TIER flavor only; prep content never reaches
+        // this surface (enforced ignorance).
+        whisperLabels={whisperLabels}
+        // Permission to leave — the start-flow hook re-polls on return, so
+        // stepping away costs nothing.
+        leaveLabel={t('play.preparing.safeToLeave')}
         reducedMotion={reducedMotion}
         // At most one wait line (exactOptionalPropertyTypes; the beat renders the
         // estimate, else the stalled line, else the calm detail fallback).

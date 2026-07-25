@@ -131,6 +131,29 @@ export const ReadingColumn: Story = {
   ),
 }
 
+// The card-row content column (ux-run2 myth-ma8yv): `maxWidth="content"` (~720px)
+// is the measure for option lists / rosters — wide enough for a card row, narrow
+// enough that the row and its confirm affordance share edges instead of running
+// full-bleed. Paired with grow-weighted spacers inside a `minHeight="page"`
+// column (the in-frame content region), a short flow screen seats its block
+// optically above center instead of pooling at the top of the page.
+export const ContentColumnSeated: Story = {
+  name: 'maxWidth content · page-seated block',
+  render: () => (
+    <div className="w-full bg-surface-hover">
+      <Stack minHeight="page">
+        <Stack grow={1} />
+        <Stack maxWidth="content" gap={3}>
+          <Cell label="A ~720px content column" />
+          <Cell label="Card rows and their confirm button share these edges" />
+          <Cell label="Seated optically above center by 1:2 grow spacers" />
+        </Stack>
+        <Stack grow={2} />
+      </Stack>
+    </div>
+  ),
+}
+
 // The full-screen genesis-screen shape (MYT-84): a `minHeight="screen"` column
 // with a fixed-height top band (the crown slot) and a `grow` body that centers
 // its content in the remaining space. `min-h-dvh` floors the column at the

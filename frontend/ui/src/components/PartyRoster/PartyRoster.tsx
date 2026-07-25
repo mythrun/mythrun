@@ -54,11 +54,12 @@ const STATUS_MARK: Record<MemberStatus, string> = {
   creating: 'creating…',
   gathering: 'gathering…',
 }
-// Marker emphasis is COLOR on the text itself (never a filled/bordered pill):
-// ready settles to quiet secondary ink; creating draws the eye in ember; gathering
-// (just joined, not yet building) sits quietest in tertiary ink.
+// Marker emphasis is COLOR + weight on the text itself (never a filled/bordered
+// pill): READY is solid ink — a state that is true, not furniture (ux-run2
+// myth-5dobj); creating draws the eye in ember; gathering (just joined, not yet
+// building) sits quietest in halftone tertiary ink.
 const STATUS_TONE: Record<MemberStatus, string> = {
-  ready: 'text-ink-secondary',
+  ready: 'font-semibold text-ink',
   creating: 'text-accent-fg',
   gathering: 'text-ink-tertiary',
 }
@@ -88,9 +89,11 @@ const NAME_CLASS = 'truncate font-body text-base font-semibold leading-tight tex
 const YOU_CLASS = 'font-ui text-xs uppercase tracking-wide text-accent-fg'
 const SUB_CLASS = 'truncate font-ui text-xs tracking-wide text-ink-tertiary'
 const STATUS_CLASS = 'shrink-0 font-ui text-xs uppercase tracking-wide'
-// The invite slot — the same row, dashed and interactive (a real button).
+// The invite slot — the same row anatomy, dashed and interactive (a real button).
+// TRANSPARENT ground (ux-run2 myth-5dobj): the placeholder recedes, the person
+// holds the ink — the ghost must never sit heavier than the real member.
 const INVITE_CLASS = cn(
-  'flex w-full items-center gap-[var(--space-3)] rounded-none border border-dashed border-border bg-bg',
+  'flex w-full items-center gap-[var(--space-3)] rounded-none border border-dashed border-border bg-transparent',
   'cursor-pointer p-[var(--space-3)] text-left',
   'hover:bg-surface-hover active:bg-surface-active',
   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
@@ -99,41 +102,60 @@ const INVITE_MARK_CLASS = 'shrink-0 font-ui text-xs uppercase tracking-wide text
 // The actions region — a column so a single Begin button stretches full-width.
 const ACTIONS_CLASS = 'flex flex-col gap-[var(--space-2)]'
 const WAITING_CLASS = 'font-ui text-xs uppercase tracking-wide text-ink-tertiary'
+// The partial-begin inline confirm: the prompt over its two verbs (ux-run2
+// myth-wfgfi — a single honest confirm; the host keeps agency, the button never
+// lies about what it will do).
+const BEGIN_CONFIRM_PROMPT = 'font-body text-sm text-ink'
 
-// The sub-line under a member's name: a made character shows its name; a still-
-// creating member shows the "choosing…" stand-in; a just-joined (gathering) member
-// shows the joined-not-started stand-in; a ready member with no name yet shows none.
-function memberSubline(member: RosterMember, labels: PartyRosterLabels): string | undefined {
-  if (member.characterName !== undefined) return member.characterName
-  if (member.status === 'creating') return labels.creating
-  if (member.status === 'gathering') return labels.gathering
-  return undefined
+// The account line's "· you" marker — rides whichever line carries the account.
+function YouMark(): React.JSX.Element {
+  return (
+    <>
+      {/* eslint-disable-next-line mythrun-ui/no-untranslated-jsx-text -- interpunct separator notation, not translatable copy */}
+      {' · '}
+      <span data-testid="party-roster-you" className={YOU_CLASS}>
+        {YOU_MARK}
+      </span>
+    </>
+  )
 }
 
 // One real-member (creating/ready/gathering) row. The `empty` invite slot renders
 // through InviteRow, never here.
+//
+// The FICTION leads (ux-run2 myth-wfgfi): once a member's character exists, the
+// character's name is the serif primary line and the account ("Dev User 1 · you")
+// demotes to the mono secondary line beneath it — the lobby shows who is about to
+// walk in, not who logged in. Until then the account stays primary over the
+// creating/gathering stand-in prose.
 function MemberRow({ member, labels }: { member: RosterMember; labels: PartyRosterLabels }): React.JSX.Element {
   // The invite slot is excluded upstream, so any non-`empty` status maps to its own
   // marker; a stray `empty` (defensive) settles to the quiet `ready` marker.
   const status: MemberStatus = member.status === 'empty' ? 'ready' : member.status
-  const sub = memberSubline(member, labels)
+  const standIn =
+    member.status === 'creating' ? labels.creating : member.status === 'gathering' ? labels.gathering : undefined
   return (
     <li data-testid="party-roster-member" data-status={member.status} className={MEMBER_CLASS}>
+      {/* The hatched square is the character portrait slot. */}
       <span aria-hidden="true" className={TILE_CLASS} style={{ backgroundImage: TILE_HATCH }} />
       <span className={WHO_CLASS}>
-        <span className={NAME_CLASS}>
-          {member.displayName}
-          {member.isViewer && (
-            <>
-              {/* eslint-disable-next-line mythrun-ui/no-untranslated-jsx-text -- interpunct separator notation, not translatable copy */}
-              {' · '}
-              <span data-testid="party-roster-you" className={YOU_CLASS}>
-                {YOU_MARK}
-              </span>
-            </>
-          )}
-        </span>
-        {sub !== undefined && <span className={SUB_CLASS}>{sub}</span>}
+        {member.characterName !== undefined ? (
+          <>
+            <span className={NAME_CLASS}>{member.characterName}</span>
+            <span className={SUB_CLASS}>
+              {member.displayName}
+              {member.isViewer && <YouMark />}
+            </span>
+          </>
+        ) : (
+          <>
+            <span className={NAME_CLASS}>
+              {member.displayName}
+              {member.isViewer && <YouMark />}
+            </span>
+            {standIn !== undefined && <span className={SUB_CLASS}>{standIn}</span>}
+          </>
+        )}
       </span>
       <span data-testid="party-roster-status" className={cn(STATUS_CLASS, STATUS_TONE[status])}>
         {STATUS_MARK[status]}
@@ -159,13 +181,29 @@ function InviteRow({ onInvite, inviteSub }: { onInvite: () => void; inviteSub: s
 }
 
 export const PartyRoster = forwardRef<HTMLDivElement, PartyRosterProps>(function PartyRoster(
-  { labels, members, viewerIsOwner, canBegin, onBegin, onInvite, inviteExpansion },
+  {
+    labels,
+    members,
+    viewerIsOwner,
+    canBegin,
+    beginConfirming,
+    onRequestBegin,
+    onCancelBegin,
+    onBegin,
+    onInvite,
+    inviteExpansion,
+  },
   ref,
 ) {
   // The invite slot is chrome, not a player — exclude it from the count + label
   // solo/party choice so an injected invite row never reads as a second member.
   const realCount = members.filter((m) => m.status !== 'empty').length
-  const beginLabel = realCount <= 1 ? labels.beginSolo : labels.beginParty
+  const readyCount = members.filter((m) => m.status === 'ready').length
+  // Not everyone is ready but the owner may still begin: the label carries the
+  // truth ("Begin with N of M ready →") and the press only ARMS the inline
+  // confirm — never a silent gray-out, never a blind start (ux-run2 myth-wfgfi).
+  const partial = canBegin && readyCount < realCount
+  const beginLabel = partial ? labels.beginPartial : realCount <= 1 ? labels.beginSolo : labels.beginParty
 
   return (
     <div ref={ref} data-testid="party-roster" className={ROOT_CLASS}>
@@ -190,9 +228,30 @@ export const PartyRoster = forwardRef<HTMLDivElement, PartyRosterProps>(function
       )}
       <div className={ACTIONS_CLASS}>
         {viewerIsOwner ? (
-          <Button variant="primary" size="lg" disabled={!canBegin} onPress={onBegin}>
-            {beginLabel}
-          </Button>
+          beginConfirming ? (
+            <div data-testid="party-roster-begin-confirm" className={ACTIONS_CLASS}>
+              <p className={BEGIN_CONFIRM_PROMPT}>{labels.beginConfirmPrompt}</p>
+              <div className="flex flex-wrap items-center gap-[var(--space-2)]">
+                <Button variant="secondary" size="md" onPress={onBegin}>
+                  {labels.beginConfirmYes}
+                </Button>
+                <Button variant="ghost" size="md" onPress={onCancelBegin}>
+                  {labels.beginConfirmNo}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button
+              variant="primary"
+              size="lg"
+              disabled={!canBegin}
+              onPress={partial ? onRequestBegin : onBegin}
+            >
+              {/* The one moment that earns the book voice: the ceremonial begin
+                  reads in serif, not the system mono (ux-run2 myth-5dobj). */}
+              <span className="font-body">{beginLabel}</span>
+            </Button>
+          )
         ) : (
           <p data-testid="party-roster-waiting" className={WAITING_CLASS}>
             {labels.waiting}

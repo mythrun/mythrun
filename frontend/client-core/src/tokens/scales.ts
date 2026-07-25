@@ -74,6 +74,10 @@ export const MOTION = {
  */
 export const TYPE_ROLES = {
   display: { font: 'serif', size: '2.25rem', weight: 600, lineHeight: 1.2 },
+  // The page-question step between display and heading: the one serif moment a
+  // flow screen's framing question earns (ux-run2 myth-aynpf) — big enough to
+  // out-rank 18px option-card titles, quieter than a display headline.
+  headline: { font: 'serif', size: '1.75rem', weight: 600, lineHeight: 1.25 },
   heading: { font: 'serif', size: '1.25rem', weight: 600, lineHeight: 1.3 },
   title: { font: 'serif', size: '1.125rem', weight: 600, lineHeight: 1.4 },
   'prose-body': { font: 'serif', size: '1rem', weight: 400, lineHeight: 1.6 },

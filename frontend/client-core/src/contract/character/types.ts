@@ -58,11 +58,15 @@ export interface LoadingBeat {
 export type AbilityAbbrev = 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA'
 
 /** One ability tile on the sheet — the rolled score and its derived modifier
- *  (both computed in deterministic code; the LLM never rolls). */
+ *  (both computed in deterministic code; the LLM never rolls). `casting` marks a
+ *  caster's spellcasting ability (the SRD `CASTING_ABILITY` map, present only
+ *  when the sheet actually has spells) — the quiet answer to "why do my spells
+ *  work?" (ux-run2 myth-8ps4n). */
 export interface AbilityTile {
   abbrev: AbilityAbbrev
   score: number
   modifier: number
+  casting?: boolean
 }
 
 /** One cell of the AC / HP / Proficiency / Hit Die / Speed stripe — a resolved

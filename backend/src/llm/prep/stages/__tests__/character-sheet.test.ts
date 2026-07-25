@@ -104,9 +104,12 @@ const SHEET: CharacterSheetOutput = {
   // cleric: a full caster — L1 cleric has a single level-1 slot row [{1,2}].
   spellcasting_progression: 'full',
   skills: [{ name: 'Insight', proficient: true, expertise: false }],
+  // myth-4jhrk: the feature NAMES the full SRD subclass ("Life Domain", not
+  // "Life") — the subclass allowlist requires the verbatim name for a cleric
+  // at L1, and the prompt instructs the model to emit it this way.
   features: [
     {
-      name: 'Divine Domain: Life',
+      name: 'Divine Domain: Life Domain',
       description: 'extra healing for allies',
       max_uses: null,
       recharge: 'none',
@@ -288,7 +291,7 @@ describe('runCharacterSheetStage', () => {
     )
     expect(features.rowCount).toBe(1)
     expect(features.rows[0]).toMatchObject({
-      feature_name: 'Divine Domain: Life',
+      feature_name: 'Divine Domain: Life Domain',
       feature_source: 'cleric',
       description: 'extra healing for allies',
       // §3.2: untracked feature — both NULL (max IS NULL ⟺ uses_remaining IS NULL).
@@ -458,6 +461,12 @@ describe('runCharacterSheetStage', () => {
     expect(spells.rowCount).toBe(1)
   })
 
+  // myth-4jhrk: the dedupe + tracked-feature tests exercise concerns
+  // orthogonal to the subclass gate, and their feature fixtures deliberately
+  // don't name a subclass — a flavored (non-SRD) class name routes them
+  // through the gate's skip path.
+  const NARRATIVE_FLAVORED = { ...NARRATIVE, class: 'Tide-Warden' }
+
   it('dedupe-merges equipment (SUM qty) + features/spells (keep-first) before the write', async () => {
     const { userId, worldId, campaignId } = await seedMember()
 
@@ -491,7 +500,7 @@ describe('runCharacterSheetStage', () => {
       campaignId,
       userId,
       worldId,
-      narrative: NARRATIVE,
+      narrative: NARRATIVE_FLAVORED,
       worldTone: 't',
       worldEra: 'e',
     })
@@ -543,7 +552,7 @@ describe('runCharacterSheetStage', () => {
       campaignId,
       userId,
       worldId,
-      narrative: NARRATIVE,
+      narrative: NARRATIVE_FLAVORED,
       worldTone: 't',
       worldEra: 'e',
     })
@@ -601,6 +610,84 @@ describe('runCharacterSheetStage', () => {
       [result.characterId],
     )
     expect(spells.rows[0]).toMatchObject({ spell_name: 'Cure Wounds' })
+  })
+
+  // myth-4jhrk: the guided pick's last mile — the pin renders as a hard
+  // constraint, a wrong-subclass kit is discarded and regenerated, and the
+  // persisted sheet carries the player's subclass.
+  it('renders a pinned subclass as a FIXED line and regenerates until the pin is honored', async () => {
+    const { userId, worldId, campaignId } = await seedMember()
+
+    // Attempt 1 is the run-2 failure shape: the model built Grave Domain
+    // (never naming Life Domain anywhere). Attempt 2 honors the pin.
+    const GRAVE: CharacterSheetOutput = {
+      ...SHEET,
+      features: [
+        {
+          name: 'Divine Domain: Grave Domain',
+          description: 'keeps watch on the line between life and death',
+          max_uses: null,
+          recharge: 'none',
+        },
+      ],
+    }
+    mockGenerateText
+      .mockResolvedValueOnce({
+        output: GRAVE,
+        finishReason: 'stop',
+        usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+      } as never)
+      .mockResolvedValueOnce({
+        output: SHEET,
+        finishReason: 'stop',
+        usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+      } as never)
+
+    const result = await runCharacterSheetStage(createRepo(pool), {
+      campaignId,
+      userId,
+      worldId,
+      narrative: { ...NARRATIVE, subclass: 'Life Domain' },
+      worldTone: 't',
+      worldEra: 'e',
+    })
+
+    const prompt = mockGenerateText.mock.calls[0]?.[0]?.prompt as string | undefined
+    expect(prompt).toContain('Subclass (FIXED, do not change): Life Domain')
+    // The SRD table renders from the shared const; no placeholder leaks.
+    expect(prompt).toContain('Cleric — Life Domain')
+    expect(prompt).not.toContain('{{subclassLine}}')
+    expect(prompt).not.toContain('{{srdSubclassTable}}')
+
+    // The Grave Domain attempt was discarded; the persisted sheet is the pin.
+    expect(mockGenerateText).toHaveBeenCalledTimes(2)
+    const features = await pool.query(
+      `SELECT feature_name FROM character_features WHERE character_id = $1`,
+      [result.characterId],
+    )
+    expect(features.rows[0]).toMatchObject({ feature_name: 'Divine Domain: Life Domain' })
+  })
+
+  it('renders no FIXED line without a pin (the SRD-default prompt rule governs)', async () => {
+    const { userId, worldId, campaignId } = await seedMember()
+    mockGenerateText.mockResolvedValueOnce({
+      output: SHEET,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+    await runCharacterSheetStage(createRepo(pool), {
+      campaignId,
+      userId,
+      worldId,
+      narrative: NARRATIVE,
+      worldTone: 't',
+      worldEra: 'e',
+    })
+    const prompt = mockGenerateText.mock.calls[0]?.[0]?.prompt as string | undefined
+    // The rules text mentions the "Subclass (FIXED, do not change)" MARKER (in
+    // quotes, no trailing colon); only a rendered pin adds the `: <value>` form.
+    expect(prompt).not.toContain('Subclass (FIXED, do not change): ')
+    expect(prompt).not.toContain('{{subclassLine}}')
   })
 
   it('terminal-fails LOUD after the coherence-retry budget is exhausted', async () => {
@@ -830,6 +917,98 @@ describe('character-sheet pure helpers', () => {
           3,
         ); },
       ).not.toThrow()
+    })
+
+    // myth-4jhrk invariant 5: the SRD-subclass allowlist. The 2-arg calls
+    // above double as the no-subclassCheck skip pin.
+    describe('subclass allowlist (myth-4jhrk)', () => {
+      const CLERIC = { className: 'cleric' }
+
+      function domainFeature(name: string, description = 'a domain gift') {
+        return { name, description, max_uses: null, recharge: 'none' as const }
+      }
+
+      it('passes when a feature NAME carries the expected SRD subclass', () => {
+        // The base SHEET fixture names "Divine Domain: Life Domain".
+        expect(() => { validateCoherence(SHEET, 1, CLERIC); }).not.toThrow()
+      })
+
+      it('throws when no feature names the SRD subclass (the Grave Domain failure shape)', () => {
+        const sheet = sheetWith({
+          features: [
+            domainFeature('Divine Domain: Grave Domain'),
+            domainFeature('Circle of Mortality', 'maximized healing on the dying'),
+          ],
+        })
+        expect(() => { validateCoherence(sheet, 1, CLERIC); }).toThrow(/Life Domain/)
+        expect(() => { validateCoherence(sheet, 1, CLERIC); }).toThrow(
+          CharacterSheetCoherenceError,
+        )
+      })
+
+      it('passes when the subclass is named only in a description', () => {
+        const sheet = sheetWith({
+          features: [
+            domainFeature('Disciple of Life', 'the Life Domain bonus to healing spells'),
+          ],
+        })
+        expect(() => { validateCoherence(sheet, 1, CLERIC); }).not.toThrow()
+      })
+
+      it('matches the name case-insensitively', () => {
+        const sheet = sheetWith({
+          features: [domainFeature('divine domain: LIFE DOMAIN')],
+        })
+        expect(() => { validateCoherence(sheet, 1, CLERIC); }).not.toThrow()
+      })
+
+      it('a pinned subclass replaces the SRD default as the requirement', () => {
+        const pinned = { className: 'cleric', pinnedSubclass: 'Grave Domain' }
+        // The player explicitly asked for Grave Domain (freeform) — honored.
+        const grave = sheetWith({ features: [domainFeature('Divine Domain: Grave Domain')] })
+        expect(() => { validateCoherence(grave, 1, pinned); }).not.toThrow()
+        // And an SRD-default kit no longer satisfies the pin.
+        expect(() => { validateCoherence(SHEET, 1, pinned); }).toThrow(/Grave Domain/)
+      })
+
+      it('skips below the subclass-granting level (fighter L1) and applies at it (fighter L3)', () => {
+        // Fighter: subclass at 3. L1 martial sheet with no Champion named — pass.
+        const l1 = sheetWith({
+          hit_die: 10,
+          max_hit_points: 12,
+          spellcasting_progression: 'none',
+          spells: [],
+          features: [domainFeature('Second Wind', 'recover hit points')],
+        })
+        expect(() => { validateCoherence(l1, 1, { className: 'fighter' }); }).not.toThrow()
+
+        // L3 (pb 2, HP band [18,39]) without Champion — fail; with it — pass.
+        const l3 = sheetWith({
+          hit_die: 10,
+          max_hit_points: 28,
+          spellcasting_progression: 'none',
+          spells: [],
+          features: [domainFeature('Second Wind', 'recover hit points')],
+        })
+        expect(() => { validateCoherence(l3, 3, { className: 'fighter' }); }).toThrow(/Champion/)
+        const l3Champion = sheetWith({
+          hit_die: 10,
+          max_hit_points: 28,
+          spellcasting_progression: 'none',
+          spells: [],
+          features: [domainFeature('Martial Archetype: Champion', 'improved critical')],
+        })
+        expect(() => { validateCoherence(l3Champion, 3, { className: 'fighter' }); }).not.toThrow()
+      })
+
+      it('skips flavored non-SRD class names (no allowlist entry to enforce)', () => {
+        const sheet = sheetWith({
+          features: [domainFeature('Storm Sight', 'reads the weather three days out')],
+        })
+        expect(() =>
+          { validateCoherence(sheet, 1, { className: 'Storm-Touched Sorcerer' }); },
+        ).not.toThrow()
+      })
     })
   })
 })

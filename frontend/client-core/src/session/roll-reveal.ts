@@ -69,13 +69,42 @@ export interface RollRevealView {
 
 export function buildRevealView(items: readonly TranscriptItem[], state: RollRevealState): RollRevealView {
   const phaseByKey: Record<string, RollPhase> = {}
-  const gated = new Set<string>()
-  for (const it of items) {
+  const cards: { key: string; kind: CardItem['kind']; turnId: string; index: number }[] = []
+  for (const [index, it] of items.entries()) {
     if (it.kind !== 'skill_check' && it.kind !== 'dice_roll') continue
-    const phase = cardPhase(it, state)
-    phaseByKey[it.key] = phase
-    // dice_roll is the flavor variant — it never gates prose (spec §5).
-    if (it.kind === 'skill_check' && phase !== 'released') gated.add(it.turnId)
+    phaseByKey[it.key] = cardPhase(it, state)
+    cards.push({ key: it.key, kind: it.kind, turnId: it.turnId, index })
+  }
+  // dice_roll is the flavor variant — it never gates prose (spec §5).
+  const gated = new Set<string>()
+  const regate = (): void => {
+    gated.clear()
+    for (const c of cards) if (c.kind === 'skill_check' && phaseByKey[c.key] !== 'released') gated.add(c.turnId)
+  }
+  regate()
+  // Moved-on demotion (myth-svmer): nothing may render below a card still claiming
+  // to be unresolved. When a VISIBLE item of a DIFFERENT turn (a player message, a
+  // correction, un-gated dm prose, another turn's card/mechanical line) sits after
+  // an un-released card, that card demotes to a historical record ('released') and
+  // its gate lifts in the same paint. Same-turn items never demote — the card's own
+  // gated prose (invisible) and mechanical lines are the normal mid-turn flow.
+  // Reverse walk: demoting a later card un-gates its prose, which the earlier
+  // cards' visibility probes must see (regate between steps).
+  for (let ci = cards.length - 1; ci >= 0; ci -= 1) {
+    const card = cards[ci]
+    if (card === undefined || phaseByKey[card.key] === 'released') continue
+    let movedOn = false
+    for (let j = card.index + 1; j < items.length; j += 1) {
+      const it = items[j]
+      if (it === undefined || it.turnId === card.turnId) continue
+      if (it.kind === 'dm' && gated.has(it.turnId)) continue // buffered — invisible
+      movedOn = true
+      break
+    }
+    if (movedOn) {
+      phaseByKey[card.key] = 'released'
+      regate()
+    }
   }
   return { phaseByKey, gatedTurnIds: gated }
 }

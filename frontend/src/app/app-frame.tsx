@@ -1,5 +1,5 @@
 import { Outlet, useMatches, useNavigate } from 'react-router-dom'
-import { Box, Stack, Divider, Button, Icon, IconButton, HorizontalLockup, Link, Show } from '@mythrun/ui'
+import { Box, Stack, Divider, Button, IconButton, HorizontalLockup, Link, Show } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import { HeaderCredits } from './header-credits.tsx'
 import { HeaderIdentity } from './header-identity.tsx'
@@ -29,10 +29,11 @@ import { HeaderIdentity } from './header-identity.tsx'
 //
 // <HeaderIdentity/> and <HeaderCredits/> each own their OWN Suspense + error boundary
 // (see header-slot.tsx), so a slow/failed `/me` or balance fetch degrades only that
-// slot, never the whole frame. The "+" (buy) and gear (settings) affordances route to
-// interim targets (no dead clicks): the buy flow is MYT-95's, so both point at
-// `/settings` (where account / billing lives) until it ships. The "+" sits OUTSIDE
-// HeaderCredits' boundary so it stays actionable even if the balance fetch fails.
+// slot, never the whole frame. The "Add credits" (buy) and gear (settings)
+// affordances route to interim targets (no dead clicks): the buy flow is MYT-95's,
+// so both point at `/settings` (where account / billing lives) until it ships. The
+// buy action sits OUTSIDE HeaderCredits' boundary so it stays actionable even if
+// the balance fetch fails.
 
 // The interim navigation target for the header affordances (both the "Add credits"
 // action and the settings gear) until MYT-95 ships the dedicated buy flow. Hoisted
@@ -107,17 +108,26 @@ export function AppFrame(): React.JSX.Element {
                   gear off-screen (the MYT-83 failure this frame guards against). No
                   ambiguity is reintroduced: with the button hidden there is no header
                   "+" on phones, and the page body's "New campaign" button owns create. */}
-              <Show above="sm">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={<Icon name="plus" decorative />}
-                  onPress={goToSettings}
-                  data-testid="frame-buy-credits"
-                >
-                  {t('frame.buyCredits')}
-                </Button>
-              </Show>
+              {/* No leading glyph (myth-rhvkt): three plus-prefixed controls
+                  diluted the +. A top-up is not "creating an object" — the plus
+                  is reserved for campaign creation; the label carries this one.
+                  On the immersive full-bleed stage (live play + its waits) the
+                  buy action stands down entirely (myth-u5qro — "the usher
+                  hawking concessions during the overture"): the balance readout
+                  stays, and the purchase action retreats behind the settings
+                  gear, the same arrangement phones always use. */}
+              {!fullBleed && (
+                <Show above="sm">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onPress={goToSettings}
+                    data-testid="frame-buy-credits"
+                  >
+                    {t('frame.buyCredits')}
+                  </Button>
+                </Show>
+              )}
             </Stack>
             <IconButton
               icon="settings"

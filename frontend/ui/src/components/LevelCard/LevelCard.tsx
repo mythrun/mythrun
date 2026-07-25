@@ -45,8 +45,13 @@ const CARD_CLASS = cn(
   'data-[state=selected]:shadow-[inset_0_0_0_2px_var(--accent)]',
 )
 
-// The mono uppercase ember eyebrow (the machine-register label over the number).
-const EYEBROW_CLASS = 'font-ui text-xs font-medium uppercase tracking-wide text-accent-fg'
+// The mono uppercase eyebrow (the machine-register label over the number).
+// Muted ink at rest; ember ONLY on the selected card (ux-run2 myth-nyjtl) — with
+// the confirm button, accent then means exactly two things: "chosen" and "act".
+const EYEBROW_CLASS = cn(
+  'font-ui text-xs font-medium uppercase tracking-wide text-ink-tertiary',
+  'group-data-[state=selected]:text-accent-fg',
+)
 // The hero number — big serif, tight leading so it sits close under the eyebrow.
 const NUMBER_CLASS = 'font-body text-3xl font-semibold leading-[1]'
 // The plain-D&D grant gloss — quiet secondary-ink serif over a hairline top rule.

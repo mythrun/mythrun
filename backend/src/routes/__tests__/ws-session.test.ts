@@ -1973,6 +1973,7 @@ function makeStubTurnPublisher(): WsSessionDeps['turnPublisher'] {
     combatResolved: vi.fn().mockResolvedValue(undefined),
     dmCorrection: vi.fn().mockResolvedValue(undefined),
     turnEnd: vi.fn().mockResolvedValue(undefined),
+    turnReplace: vi.fn().mockResolvedValue(undefined),
     turnError: vi.fn().mockResolvedValue(undefined),
     emitFor: vi.fn().mockReturnValue({
       emitText: () => Promise.resolve(undefined),

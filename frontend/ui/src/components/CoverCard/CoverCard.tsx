@@ -24,8 +24,13 @@ import { Divider } from '../Divider/Divider.tsx'
 const CARD =
   'flex flex-col overflow-hidden rounded-none border border-border-strong bg-surface aspect-[2/3]'
 
+// The cta line's accent action register — mono caption, accent ink (the DS
+// action-label treatment, cf. PartyRoster/InvitePanel panel labels). State as
+// prose: a line of text, never a chip.
+const CTA_CLASS = 'font-ui text-xs font-medium uppercase tracking-wide text-accent-fg'
+
 export const CoverCard = forwardRef<HTMLDivElement, CoverCardProps>(function CoverCard(
-  { cover, foot, width, children, 'data-testid': dataTestId },
+  { cover, foot, cta, width, children, 'data-testid': dataTestId },
   ref,
 ) {
   const style: CSSProperties | undefined = width !== undefined ? { width } : undefined
@@ -41,16 +46,26 @@ export const CoverCard = forwardRef<HTMLDivElement, CoverCardProps>(function Cov
       <div className="shrink-0">{cover}</div>
       {/* Ink seam — a deliberate structural cut, dark in both themes. */}
       <Divider tone="ink" />
-      {/* Body — the narrative content and the foot imprint as ONE top-aligned unit
-          (title → subtitle → seals → record line), a fixed gap between, any slack
-          collecting BELOW as trailing margin. The earlier `justify-between` pinned
-          the foot to the card's bottom, which on a sparse card (no logline/party)
-          opened a ~90px void mid-card that read as "missing content, not breathing
-          room" (MYT-bapkt run-1 critique). Top-aligning keeps the imprint reading as
-          part of the card instead of floating at the opposite pole. Token-padded. */}
+      {/* Body — narrative at the TOP, the imprint (foot + cta) anchored to the
+          card BASE like a paperback colophon: the children wrapper GROWS, so the
+          slack sits between narrative and imprint. This is the second swing of a
+          real tension — run 1 (MYT-bapkt) called a bottom-pinned foot's mid-card
+          gap on a sparse card "missing content, not breathing room" and we
+          top-aligned; run 2 (myth-rhvkt) found the resulting DEAD BOTTOMS worse:
+          equal-height cards ended at ragged text heights with empty air below.
+          Base-anchoring wins because the grid reads bottom edges as a shared
+          baseline, and today's cards always carry a foot (state line, seals), so
+          the between-air reads as book-cover breathing room, not absence. If a
+          truly bare card returns, revisit the CARD's content, not this anchor. */}
       <div className="flex grow flex-col justify-start gap-[var(--space-4)] p-[var(--space-3)]">
-        <div>{children}</div>
+        <div className="grow">{children}</div>
         {foot !== undefined ? <div>{foot}</div> : null}
+        {/* The cta cue — the body's last line, in the accent action register. */}
+        {cta !== undefined ? (
+          <div className={CTA_CLASS} data-testid="cover-card-cta">
+            {cta}
+          </div>
+        ) : null}
       </div>
     </div>
   )

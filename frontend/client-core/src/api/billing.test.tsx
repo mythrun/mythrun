@@ -11,6 +11,7 @@ import { isContractValidationError, isHttpError, HttpError } from './errors.ts'
 import {
   getBalance,
   useBalance,
+  useInvalidateBalance,
   useLowSessionCredits,
   getSkus,
   useSkus,
@@ -345,6 +346,34 @@ describe('upgradeTier', () => {
 })
 
 // ── useLowSessionCredits (MYT-95 T13) — the FAIL-OPEN decorative signal ─────
+describe('useInvalidateBalance', () => {
+  it('marks the shared balance cache stale and refetches it in the background (myth-bsyu9)', async () => {
+    // The header readout persists across routes (no remount), so a balance
+    // spent mid-route (ending a session) stayed cached until the next natural
+    // refetch — the hub header briefly showed the pre-end number. Invalidating
+    // re-runs the ACTIVE suspense query in the background (stale-while-
+    // revalidate; suspense only gates the first load).
+    let served = 0
+    server.use(
+      http.get(`${BASE_URL}/api/billing/balance`, () => {
+        served += 1
+        return HttpResponse.json({ session: served, world_gen: 0, active_subscription: null })
+      }),
+    )
+    const { result } = renderHook(
+      () => ({ balance: useBalance(), invalidate: useInvalidateBalance() }),
+      { wrapper: makeWrapper() },
+    )
+    await waitFor(() => {
+      expect(result.current.balance.data.session).toBe(1)
+    })
+    result.current.invalidate()
+    await waitFor(() => {
+      expect(result.current.balance.data.session).toBe(2)
+    })
+  })
+})
+
 describe('useLowSessionCredits', () => {
   it('true when the session bucket is at the threshold', async () => {
     server.use(

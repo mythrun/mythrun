@@ -6,15 +6,20 @@ import { SessionPreparing } from './SessionPreparing.tsx'
 // play route sits here while the start-flow hook backoff-polls in the background.
 // An unhurried atmospheric line over an AMBIENT breathing square, plus a coarse
 // wait line so the player knows roughly how long and that nothing has broken.
+// ux-run2 myth-i2pdo adds the long-wait texture: rotating public-tier WHISPERS
+// (~25s cadence) whose past lines settle into a faint ledger, and one quiet
+// permission-to-leave line.
 //
 // Do: keep it quiet and unhurried; the breathing SQUARE reads as ambient texture,
-//   not a progress bar; show a COARSE estimate ("2 min remaining") when a baseline
-//   holds, and the "still working…" line once it exhausts.
+//   not a progress bar; show a COARSE estimate ("Ready in about 2 min") when a
+//   baseline holds, and the "still working…" line once it exhausts; keep the
+//   whispers public-tier table-setting flavor (prep content is spoiler surface).
 // Don't: reshape the figure back into a full-width band (it reads as an unfilled
 //   progress bar — the confusion this revamp fixed); add a ticking M:SS or a
 //   "retry now" button — the hook owns the cadence.
-// Content/i18n: `label` / `detail` / `countdownLabel` / `stalledLabel` are resolved
-//   chrome the consumer passes (the route owns the timing).
+// Content/i18n: `label` / `detail` / `countdownLabel` / `stalledLabel` /
+//   `whisperLabels` / `leaveLabel` are resolved chrome the consumer passes (the
+//   route owns the timing).
 
 const meta: Meta<typeof SessionPreparing> = {
   title: 'Session/SessionPreparing',
@@ -33,10 +38,35 @@ type Story = StoryObj<typeof SessionPreparing>
 // Test-double copy (stories are i18n-exempt; the real i18n bundle resolves route-side).
 const LABEL = 'The DM is preparing the next session…'
 const DETAIL = 'This can take a moment.'
+// The real route copy (play.preparing.flavor1–6 / play.preparing.safeToLeave).
+const WHISPERS = [
+  'The DM reads back through the notes.',
+  'The locals take their seats.',
+  'Rumors make their rounds.',
+  'The map is unrolled.',
+  'Weather is decided.',
+  'Lanterns are trimmed and lit.',
+]
+const LEAVE = 'Safe to leave. The table will be set when you return.'
 
 export const Default: Story = {
   name: 'Preparing (cold-start — detail fallback)',
   args: { label: LABEL, detail: DETAIL, reducedMotion: false },
+}
+
+// The full run-2 anatomy (myth-i2pdo): whispers rotating every ~25s (sped to 4s
+// here so the ledger visibly accrues), the coarse estimate, permission to leave.
+export const WithWhispers: Story = {
+  name: 'With whispers + leave line (run-2 anatomy)',
+  args: {
+    label: LABEL,
+    detail: DETAIL,
+    countdownLabel: 'Ready in about 2 min',
+    whisperLabels: WHISPERS,
+    whisperIntervalMs: 4000,
+    leaveLabel: LEAVE,
+    reducedMotion: false,
+  },
 }
 
 // With a coarse estimate — a prep-duration baseline exists, so the beat shows how
@@ -44,7 +74,7 @@ export const Default: Story = {
 // calm detail fallback.
 export const WithCountdown: Story = {
   name: 'With estimate (coarse)',
-  args: { label: LABEL, detail: DETAIL, countdownLabel: '2 min remaining', reducedMotion: false },
+  args: { label: LABEL, detail: DETAIL, countdownLabel: 'Ready in about 2 min', reducedMotion: false },
 }
 
 // Stalled — the estimate exhausted (or the wait ran long with no baseline): the

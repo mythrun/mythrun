@@ -91,6 +91,48 @@ describe('CoverCard', () => {
     expect(noFoot.getByTestId('nofoot').children[2]?.children).toHaveLength(1)
   })
 
+  it('anchors the foot to the card BASE — the narrative block absorbs the slack (myth-rhvkt)', () => {
+    // Run 2: with the body top-aligned, equal-height cards ended at different
+    // text heights ("bottoms don't share a baseline") over dead bottom air. The
+    // children wrapper GROWS so the imprint (foot + cta) sits on the card's
+    // base like a paperback colophon; the air lives between narrative and
+    // imprint as breathing room.
+    const { getByTestId } = render(
+      <CoverCard data-testid="cc" cover={<span />} foot={<span />}>
+        <span />
+      </CoverCard>,
+    )
+    const body = getByTestId('cc').children[2]
+    expect(body?.children[0]?.classList.contains('grow')).toBe(true)
+  })
+
+  it('renders an optional cta line as the LAST body line, in the accent action register', () => {
+    const { getByTestId } = render(
+      <CoverCard data-testid="cc" cover={<span />} foot={<span data-testid="foot" />} cta="Continue session →">
+        <span />
+      </CoverCard>,
+    )
+    const cta = getByTestId('cover-card-cta')
+    expect(cta.textContent).toBe('Continue session →')
+    // The accent action register — mono caption, accent ink (the DS action-label
+    // treatment, cf. PartyRoster/InvitePanel panel labels).
+    expect(cta.classList.contains('text-accent-fg')).toBe(true)
+    expect(cta.classList.contains('font-ui')).toBe(true)
+    expect(cta.classList.contains('uppercase')).toBe(true)
+    // It sits BELOW the foot — the last line of the body region.
+    const body = getByTestId('cc').children[2]
+    expect(body?.lastElementChild).toBe(cta)
+  })
+
+  it('omits the cta line when none is given', () => {
+    const { queryByTestId } = render(
+      <CoverCard cover={<span />}>
+        b
+      </CoverCard>,
+    )
+    expect(queryByTestId('cover-card-cta')).toBeNull()
+  })
+
   it('forwards its ref to the underlying div', () => {
     const ref = createRef<HTMLDivElement>()
     render(

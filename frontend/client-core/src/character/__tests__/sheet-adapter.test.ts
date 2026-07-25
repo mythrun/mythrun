@@ -101,7 +101,7 @@ describe('toRevealViewModel — the curated field-guide view', () => {
     const { curated } = toRevealViewModel(makeRaw())
     expect(curated.stats).toEqual([
       { label: 'AC', value: '16' },
-      { label: 'HP', value: '28 / 28' },
+      { label: 'HP', value: '28' },
       { label: 'Proficiency', value: '+2' },
       { label: 'Hit Die', value: 'd10' },
       { label: 'Speed', value: '30 ft' },
@@ -123,13 +123,13 @@ describe('toRevealViewModel — the curated field-guide view', () => {
     expect(curated.spells).toBeUndefined()
   })
 
-  it('shows the curated spell panel with derived slot glosses for a caster', () => {
+  it('shows the curated spell panel as level-grouped prose lines for a caster', () => {
     const { curated } = toRevealViewModel(
       makeRaw({ character: { class: 'Wizard', int: 17 }, spells: CASTER_SPELLS }),
     )
     expect(curated.spells).toEqual([
-      { name: 'Fire Bolt', gloss: 'Cantrip' },
-      { name: 'Magic Missile', gloss: 'Level 1' },
+      { name: 'Cantrips', gloss: 'Fire Bolt' },
+      { name: 'Level 1', gloss: 'Magic Missile' },
     ])
   })
 

@@ -84,4 +84,14 @@ export interface WorldWikiProps extends Omit<BaseProps, 'children'> {
    *  a resolved i18n string the consumer passes (migrated into the contract by
    *  MYT-100). */
   glossaryLabel: string
+  /** The active creation step's topic (ux-run2 myth-ehcf4) — what makes the
+   *  panel STEP-AWARE instead of a static poster. A SHORT display string (the
+   *  step's topic word or the selected card's name — e.g. "Cleric"), owned and
+   *  resolved by the consumer. The panel renders it verbatim as a quiet eyebrow
+   *  AND runs it through the same mechanical name/term filter the search field
+   *  uses, surfacing matching glossary definitions (open, in the world's voice)
+   *  and entity rows at the top of the index view. No matches → the strip
+   *  renders nothing and the home is exactly the step-less panel; a non-empty
+   *  user search also stands the strip down. Absent → the pre-step behaviour. */
+  stepContext?: string
 }

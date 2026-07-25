@@ -43,6 +43,7 @@ import {
 } from '../../schemas/character-sheet.js'
 import type { CharacterConceptOutput } from '../../schemas/character-concept.js'
 import { spellSlotsFor, maxSlotLevel } from '../../../session/srd/spell-slots.js'
+import { SRD_SUBCLASSES, srdSubclassFor } from '../../../session/srd/subclasses.js'
 
 const PROMPT_TEMPLATE = readFileSync(
   resolve(
@@ -131,7 +132,10 @@ export async function runCharacterSheetStage(
     /* c8 ignore stop */
 
     try {
-      validateCoherence(result.output, args.narrative.level)
+      validateCoherence(result.output, args.narrative.level, {
+        className: args.narrative.class,
+        pinnedSubclass: args.narrative.subclass,
+      })
       sheet = result.output
       break
     } catch (err) {
@@ -217,17 +221,36 @@ function keepFirstByName<T extends { readonly name: string }>(items: readonly T[
 //   1. every leveled spell's level ≤ maxSlotLevel(progression, level);
 //   2. leveled spells present ⟹ progression ≠ 'none';
 //   3. (MYT-90 A5) proficiency_bonus matches the level (1–4 → +2, 5 → +3);
-//   4. (MYT-90 A5) max_hit_points sits inside a hit_die/CON/level HP band.
+//   4. (MYT-90 A5) max_hit_points sits inside a hit_die/CON/level HP band;
+//   5. (myth-4jhrk) SRD-subclass allowlist: an SRD class at a subclass-granting
+//      level must NAME its expected subclass (the player's pinned choice when
+//      one exists, else the class's single SRD 2014 subclass) in at least one
+//      feature name or description. Run-2 forensics: a guided "Life Domain"
+//      pick silently became a full Grave Domain kit (non-SRD — licensing
+//      exposure) because nothing gated the model's free choice. The check is a
+//      12-entry lookup + case-insensitive containment — structural validation,
+//      not semantic pattern-matching (ZFC-legal); flavored non-SRD class names
+//      skip it.
 // Cantrip-only lists (every spell level 0) with progression 'none' are LEGAL.
 //
-// NOT gated here: ASI/feat and subclass-feature presence at level N. There is
-// no pre-ASI baseline to diff the final ability scores against, and detecting a
-// feat would mean string-matching free prose — a ZFC violation. Those ride on
-// prompt quality + the guided builder, not on this deterministic shell.
+// NOT gated here: ASI/feat presence at level N. There is no pre-ASI baseline
+// to diff the final ability scores against, and detecting a feat would mean
+// string-matching free prose — a ZFC violation. Those ride on prompt quality
+// + the guided builder, not on this deterministic shell.
 
 // Per-level HP slack for racial bonuses (e.g. Hill Dwarf +1/level) so a legal
 // sheet never false terminal-fails on the ceiling. See `validateCoherence`.
 const HP_SLACK_PER_LEVEL = 1
+
+/** myth-4jhrk: the subclass gate's inputs — the narrative class (decides
+ *  whether and at what level the allowlist applies) and the player's pinned
+ *  subclass when one exists (guided pick or concept-derived). Optional third
+ *  argument to `validateCoherence` so the pure mechanical checks stay callable
+ *  without it; the stage always passes it. */
+export interface SubclassCheck {
+  readonly className: string
+  readonly pinnedSubclass?: string | undefined
+}
 
 /**
  * MYT-70 §3.2 / MYT-90 A5 — throws `CharacterSheetCoherenceError` when the
@@ -236,8 +259,15 @@ const HP_SLACK_PER_LEVEL = 1
  * max_hit_points outside the level's HP band. Pure; exported for unit tests.
  * Cantrips (level 0) never need a slot, so a cantrip-only list with 'none'
  * progression passes the spell checks.
+ *
+ * myth-4jhrk: with `subclassCheck` present, also enforces the SRD-subclass
+ * allowlist (invariant 5 in the section header above).
  */
-export function validateCoherence(sheet: CharacterSheetOutput, level: number): void {
+export function validateCoherence(
+  sheet: CharacterSheetOutput,
+  level: number,
+  subclassCheck?: SubclassCheck,
+): void {
   const leveledSpells = sheet.spells.filter((s) => s.level > 0)
   if (leveledSpells.length > 0) {
     if (sheet.spellcasting_progression === 'none') {
@@ -279,15 +309,67 @@ export function validateCoherence(sheet: CharacterSheetOutput, level: number): v
       `character-sheet: max_hit_points ${String(sheet.max_hit_points)} outside [${String(hpFloor)}, ${String(hpCeil)}] for L${String(level)}`,
     )
   }
+
+  if (subclassCheck !== undefined) validateSubclass(sheet, level, subclassCheck)
+}
+
+// myth-4jhrk invariant 5. An SRD class at a subclass-granting level must NAME
+// its expected subclass — the player's pinned choice when one exists (a
+// non-SRD pin is the PLAYER's explicit ask and is honored), else the class's
+// single SRD subclass — in at least one feature name or description. The
+// prompt instructs the model to carry the name in a feature name ("Divine
+// Domain: Life Domain"); descriptions also count so a differently-shaped but
+// correct kit doesn't false-fail. A miss means the model built some OTHER
+// subclass (the Grave Domain failure) → coherence retry, terminal when the
+// budget exhausts.
+function validateSubclass(
+  sheet: CharacterSheetOutput,
+  level: number,
+  check: SubclassCheck,
+): void {
+  const entry = srdSubclassFor(check.className)
+  if (entry === null || level < entry.subclassLevel) return
+
+  const expected = check.pinnedSubclass ?? entry.subclass
+  const needle = expected.trim().toLowerCase()
+  const named = sheet.features.some(
+    (f) =>
+      f.name.toLowerCase().includes(needle) ||
+      f.description.toLowerCase().includes(needle),
+  )
+  if (!named) {
+    throw new CharacterSheetCoherenceError(
+      `character-sheet: no feature names the expected subclass '${expected}' for ${check.className} at L${String(level)} (pinned: ${check.pinnedSubclass !== undefined ? 'yes' : 'no'})`,
+    )
+  }
+}
+
+// myth-4jhrk: the prompt's SRD-subclass table, rendered from the SAME const
+// the validateCoherence allowlist reads — the prompt and the gate cannot
+// drift. "Barbarian — Berserker; Bard — College of Lore; …" (title-cased
+// class, canonical subclass).
+function renderSrdSubclassTable(): string {
+  return SRD_SUBCLASSES.map(
+    (e) => `${e.className.charAt(0).toUpperCase()}${e.className.slice(1)} — ${e.subclass}`,
+  ).join('; ')
 }
 
 function renderPrompt(args: CharacterSheetArgs): string {
+  // myth-4jhrk: a pinned subclass (guided pick or concept-derived) renders as
+  // a hard constraint line under Class; without one the line collapses to
+  // empty and the prompt's SRD-default rule governs.
+  const subclassLine =
+    args.narrative.subclass !== undefined
+      ? `Subclass (FIXED, do not change): ${args.narrative.subclass}`
+      : ''
   // Function replacers for the narrative/world fields: each is user/LLM-derived,
   // so a `$&`/`$'`-style sequence must splice in literally rather than being read
   // as a special replacement pattern.
   return PROMPT_TEMPLATE.replace('{{name}}', () => args.narrative.name)
     .replace('{{race}}', () => args.narrative.race)
     .replace('{{class}}', () => args.narrative.class)
+    .replace('{{subclassLine}}', () => subclassLine)
+    .replace('{{srdSubclassTable}}', () => renderSrdSubclassTable())
     .replace('{{background}}', () => args.narrative.background)
     .replace('{{alignment}}', () => args.narrative.alignment)
     .replace('{{physicalDescription}}', () => args.narrative.physical_description)

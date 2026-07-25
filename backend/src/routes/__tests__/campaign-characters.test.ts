@@ -614,6 +614,71 @@ describe('campaignCharactersPlugin (MYT-53 T12/T14 + myth-nmg9)', () => {
       expect(seedRow.rows[0]?.status).toBe('pending')
     })
 
+    it('200 — guided submission persists guidedChoices into character_concepts.guided_choices (myth-4jhrk)', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignWithSituation(owner)
+      const guidedChoices = {
+        class: 'Cleric',
+        subclass: 'Life Domain',
+        species: 'Human',
+        background: 'Hermit',
+      }
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: {
+          conceptText: longConcept,
+          situationGroundingText: longGrounding,
+          guidedChoices,
+        },
+      })
+      expect(res.statusCode).toBe(200)
+
+      const row = await pool.query<{ guided_choices: Record<string, unknown> }>(
+        `SELECT guided_choices FROM character_concepts
+         WHERE campaign_id = $1 AND user_id = $2`,
+        [seed.campaignId, owner.userId],
+      )
+      expect(row.rows[0]?.guided_choices).toEqual(guidedChoices)
+    })
+
+    it('200 — freeform submission (no guidedChoices) persists an empty guided_choices object (backward compat)', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignWithSituation(owner)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: { conceptText: longConcept, situationGroundingText: longGrounding },
+      })
+      expect(res.statusCode).toBe(200)
+
+      const row = await pool.query<{ guided_choices: Record<string, unknown> }>(
+        `SELECT guided_choices FROM character_concepts
+         WHERE campaign_id = $1 AND user_id = $2`,
+        [seed.campaignId, owner.userId],
+      )
+      expect(row.rows[0]?.guided_choices).toEqual({})
+    })
+
+    it('400 bad_body when guidedChoices carries a non-string pick', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignWithSituation(owner)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: {
+          conceptText: longConcept,
+          situationGroundingText: longGrounding,
+          guidedChoices: { class: 42 },
+        },
+      })
+      expect(res.statusCode).toBe(400)
+      expect(res.json<{ code: string }>().code).toBe('bad_body')
+    })
+
     it('200 — player (non-owner) submits successfully', async () => {
       const owner = await seedUser(pool, scope, 0)
       const player = await seedUser(pool, scope, 1)

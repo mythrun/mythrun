@@ -5,10 +5,12 @@ import { GhostChoiceList } from './GhostChoiceList.tsx'
 // brought up to the LevelCard standard (ux-run1 myth-occld). Each item is a REAL
 // <button> (native keyboard activation + a11y) that is a whole SELECTABLE CARD: a
 // 1px interactive border on the surface fill, comfortable padding, a serif title
-// over a quiet tertiary-ink sub-line, a docked ember "enter" arrow vertically
-// centred against the card, and a decisive hover (edge → full ink + surface
-// token-swap). The ENTIRE card is the click target; cards are separated by a gap
-// (not hairline rules). Single column at every width; flat (0px radius).
+// over a quiet tertiary-ink sub-line, a docked ember "enter" arrow on the title's
+// line, and a decisive hover (edge → full ink + surface token-swap). The ENTIRE
+// card is the click target; cards are separated by a gap (not hairline rules).
+// Default is the stacked strip list; `columns={2}` seats a binary fork as two
+// taller side-by-side cards (ux-run2 myth-ma8yv), restacking below `sm`. Flat
+// (0px radius).
 //
 // The canonical use is the creation forks: the campaign-create fork (two paths
 // into world creation) and the character-create path chooser. Content/i18n:
@@ -77,6 +79,34 @@ export const CharacterCreateChooser: Story = {
             subtitle: 'Pick from options, question by question.',
             onSelect: noop,
             testId: 'chooser-guided',
+          },
+        ]}
+      />
+    </div>
+  ),
+}
+
+// The side-by-side fork (ux-run2 myth-ma8yv, critique 024): a true binary choice
+// reads as two doors, not a stack of bars — two taller cards sharing a row at
+// comfortable widths, restacking to one column below `sm`.
+export const SideBySideFork: Story = {
+  name: 'Side-by-side fork (columns=2)',
+  render: () => (
+    <div className="max-w-[840px] bg-bg p-[var(--space-6)]">
+      <GhostChoiceList
+        columns={2}
+        items={[
+          {
+            id: 'freeform',
+            title: 'Simply describe your character',
+            subtitle: "Write what's important to you and Mythrun will fill in the rest.",
+            onSelect: noop,
+          },
+          {
+            id: 'guided',
+            title: 'Build step by step',
+            subtitle: 'Pick from options, question by question.',
+            onSelect: noop,
           },
         ]}
       />

@@ -47,6 +47,7 @@ import {
 } from './turn-queue.js'
 import {
   QUEUE_SCRIBE,
+  type ResolvedSkillCheckOutcome,
   type ScribeJobPayload,
 } from './scribe-queue.js'
 import {
@@ -56,6 +57,7 @@ import {
   type StEvalQueueLike,
 } from './st-eval-queue.js'
 import { WORKING_SET_CAP } from './scribe-config.js'
+import { isKnownSecretHandle, normalizeHandle, splitPlaybook } from './playbook-split.js'
 import type { WorkingSetItem, WorkingSetProposal } from './working-set/types.js'
 
 /** BullMQ lock/stalled config. The retcon-author (Opus) runs up to ~45s, so the
@@ -89,6 +91,19 @@ interface ScribeRepo {
   readonly sessions: {
     getActiveByCampaign(campaignId: string): Promise<{ sessionNumber: number } | null>
   }
+  /** myth-g4hf3 — per-turn verdict persistence (severity/confidence/handle;
+   *  HANDLE-only by design, never secret content). The run-2 forensics had to
+   *  reconstruct a firing breach from two incidental log lines. */
+  readonly tripwireVerdicts: {
+    insert(v: {
+      campaignId: string
+      sessionId: string
+      turnId: string
+      severity: 'none' | 'soft_consistency' | 'hard_reveal'
+      confidence: number
+      secretRef: string | null
+    }): Promise<void>
+  }
 }
 
 /** The watermark surface: the current responded-seq (the correction turn's
@@ -120,16 +135,35 @@ export interface ScribeProcessorDeps {
   readonly logger: MinimalLogger
 }
 
+/** myth-g4hf3 — the dice provenance for a turn's ft_delta proposals: when the
+ *  turn resolved a passing skill check, its asserted facts were (at least
+ *  partly) LICENSED by the system's own outcome table — canonize-on-grant. The
+ *  highest passing tier wins (`great_success` > `success`); a turn with only
+ *  failed checks (or none) stays `objective`. Deterministic and coarse by
+ *  design: deciding WHICH fact the dice earned would be local intelligence
+ *  (ZFC); the reconciler sees the provenance and judges. */
+function diceProvenance(
+  skillChecks: readonly ResolvedSkillCheckOutcome[] | undefined,
+): WorkingSetProposal['provenance'] {
+  const tiers = (skillChecks ?? []).map((c) => c.outcomeTier)
+  if (tiers.includes('great_success')) return { kind: 'dice_outcome', outcomeTier: 'great_success' }
+  if (tiers.includes('success')) return { kind: 'dice_outcome', outcomeTier: 'success' }
+  return { kind: 'objective' }
+}
+
 /** Map the turn's FT delta facts + ST injections into pre-embed proposals.
- *  Delta facts are objective public assertions (`ft_delta` / `known` /
- *  objective); ST injections ride through verbatim (already-vetted relay text). */
+ *  Delta facts are objective public assertions (`ft_delta` / `known`), stamped
+ *  with `dice_outcome` provenance when the turn resolved a passing check
+ *  (myth-g4hf3 canonize-on-grant); ST injections ride through verbatim
+ *  (already-vetted relay text). */
 function toProposals(payload: ScribeJobPayload): WorkingSetProposal[] {
+  const provenance = diceProvenance(payload.skillChecks)
   const deltas: WorkingSetProposal[] = (payload.worldDelta?.facts ?? []).map((f) => ({
     kind: f.kind,
     content: f.content,
     subjectName: f.subject,
     tier: 'known',
-    provenance: { kind: 'objective' },
+    provenance,
     source: 'ft_delta',
   }))
   return [...payload.injections, ...deltas]
@@ -177,11 +211,29 @@ async function resolvePrep(
   return { sdPlaybook, ftContext: prep?.ftContext ?? '' }
 }
 
-/** Format the playbook as the tripwire's handle-annotated `secrets` block. v1:
- *  the whole sd_playbook under a single `[SECRET-1]` handle (the prompt keys off
- *  handles; a richer per-secret split is a documented follow-up). */
-function formatSecrets(sdPlaybook: string): string {
-  return `[SECRET-1] ${sdPlaybook}`
+/** Sanitize a verdict's secretRef for DURABLE persistence: only a recognized
+ *  [SECRET-n] handle or the [CONSISTENCY] token is stored verbatim; anything
+ *  else collapses to '[UNRECOGNIZED]'. Defense-in-depth against a model that
+ *  echoes secret content into the free-string secretRef field — the schema is
+ *  handle-only by contract, but a durable row must not depend on the model
+ *  honoring it (cf. the never-persist-corrected-field rule). */
+function sanitizeRefForPersist(handles: readonly string[], ref: string | null): string | null {
+  if (ref === null) return null
+  if (isKnownSecretHandle(handles, ref)) return ref
+  if (normalizeHandle(ref) === 'CONSISTENCY') return '[CONSISTENCY]'
+  return '[UNRECOGNIZED]'
+}
+
+/** Format the turn's resolved skill checks for the tripwire's dice grounding
+ *  floor. Empty input → '' (the wrapper renders its own "(none)" default). */
+function formatDiceOutcomes(skillChecks: readonly ResolvedSkillCheckOutcome[]): string {
+  return skillChecks
+    .map(
+      (c) =>
+        `- ${c.characterName} · ${c.skill} vs DC ${String(c.dc)} → ${c.outcomeTier}. ` +
+        `Licensed outcome constraint: "${c.constraint}"`,
+    )
+    .join('\n')
 }
 
 /** Build the retcon working-set item. The breach `secretRef` is stored in
@@ -331,15 +383,27 @@ export async function processScribeJob(
   }
   const { sdPlaybook, ftContext } = prep
 
-  // 4. Run the tripwire over the FT's player-facing prose. Pass the PUBLIC
-  // ft_context so a detail the FT was licensed to write is grounded → not a
-  // breach (the grounding floor).
+  // 4. Run the tripwire over the FT's player-facing prose. myth-g4hf3: the
+  // playbook is SPLIT — only actual secret material rides the handle-annotated
+  // `secrets` input; encounter scripts / pacing ride the consistency input
+  // (soft-path only). The grounding floor is the PUBLIC ft_context PLUS the
+  // turn's resolved skill-check outcome constraints — content the system
+  // licensed via a roll is definitionally not a breach.
+  const split = splitPlaybook(sdPlaybook)
+  if (split.fallback) {
+    deps.logger.warn(
+      { campaignId },
+      'scribe: sd_playbook has no recognizable secret sections; falling back to the whole-playbook [SECRET-1] lump',
+    )
+  }
   let tripwire: Awaited<ReturnType<typeof runSecretTripwire>>
   try {
     tripwire = await deps.runTripwire({
       prose,
-      secrets: formatSecrets(sdPlaybook),
+      secrets: split.secrets,
       publicContext: ftContext,
+      consistencyContext: split.consistency,
+      diceOutcomes: formatDiceOutcomes(job.data.skillChecks ?? []),
     })
   } catch (err) {
     deps.logger.warn({ err, campaignId }, 'scribe: tripwire failed; no breach check this turn')
@@ -347,17 +411,50 @@ export async function processScribeJob(
   }
 
   const { severity, confidence, secretRef } = tripwire.result
+  // myth-g4hf3 — persist the verdict (handle + numbers only; never secret
+  // content). Own try/catch: verdict persistence is observability, and this job
+  // is TOTAL — a PG hiccup must not skip the routing below.
+  try {
+    await deps.repo.tripwireVerdicts.insert({
+      campaignId,
+      sessionId: job.data.sessionId,
+      turnId,
+      severity,
+      confidence,
+      secretRef: sanitizeRefForPersist(split.handles, secretRef),
+    })
+  } catch (err) {
+    deps.logger.warn({ err, campaignId, turnId }, 'scribe: tripwire verdict persist failed')
+  }
+
   // myth-retprop — route by SEVERITY, not a numeric confidence floor. `none`
-  // is clean; `soft_consistency` (in-character NPC behavior) gets the SILENT ST
-  // steer; only `hard_reveal` (the secret stated / necessarily implied) fires
-  // the disruptive open, player-facing retcon. Recall bias lives in the severity
-  // call itself — ANY hard_reveal fires the retcon regardless of confidence.
+  // is clean; `soft_consistency` (in-character NPC behavior, or a consistency-
+  // notes contradiction) gets the SILENT ST steer; only `hard_reveal` (a listed
+  // core secret stated / necessarily implied) fires the disruptive open,
+  // player-facing retcon. Recall bias lives in the severity call itself — ANY
+  // hard_reveal with a recognized handle fires regardless of confidence.
   if (severity === 'none') {
     deps.logger.info({ campaignId, confidence }, 'scribe: tripwire clean; no retcon')
     return
   }
   if (severity === 'soft_consistency') {
-    await handleSoftConsistency(deps, job.data, secretRef ?? '[SECRET-1]', confidence)
+    await handleSoftConsistency(deps, job.data, secretRef ?? '[CONSISTENCY]', confidence)
+    return
+  }
+
+  // myth-g4hf3 — the hard-reveal HANDLE GATE: an open retcon is licensed ONLY
+  // when the tripwire cited one of the emitted [SECRET-n] handles (structural
+  // validation of the opaque control signal). A hard verdict with no recognized
+  // handle — null, "[CONSISTENCY]", or a hallucinated ref — means no listed
+  // core secret was named, so the remedy routes to the SILENT ST steer instead.
+  // This is the dice-earned-grant protection's backstop: a scripted-canon
+  // collision (the run-2 crit-sliver retcon) can no longer reach the open path.
+  if (!isKnownSecretHandle(split.handles, secretRef)) {
+    deps.logger.warn(
+      { campaignId, secretRef, confidence },
+      'scribe: hard_reveal without a recognized secret handle — routing to the soft ST steer, no open retcon',
+    )
+    await handleSoftConsistency(deps, job.data, secretRef ?? '[CONSISTENCY]', confidence)
     return
   }
 
@@ -370,7 +467,12 @@ export async function processScribeJob(
     'scribe: hard_reveal breach → authoring open retcon',
   )
   const liveWorkingSet = await deps.workingSet.load(campaignId)
+  /* c8 ignore start — `secretRef` is non-null here by construction: the handle
+   * gate above routes every null/unrecognized ref to the soft path
+   * (`isKnownSecretHandle(handles, null)` is false), but the verdict type stays
+   * `string | null`, so the coalesce is TS-required. */
   await handleBreach(deps, job.data, sdPlaybook, secretRef ?? '[SECRET-1]', liveWorkingSet)
+  /* c8 ignore stop */
 }
 
 export function buildScribeWorker(

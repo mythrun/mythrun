@@ -80,6 +80,19 @@ describe('PostSessionAnalysisSchema', () => {
     expect(r.success).toBe(false)
   })
 
+  it('accepts a multi-paragraph summary (blank-line beat breaks) verbatim', () => {
+    // ux-run2 myth-3lgh5: the writer emits 1-4 short paragraphs separated by
+    // blank lines when the session had multiple movements; the schema must pass
+    // the breaks through untouched (the recap surface renders them as paragraphs).
+    const multi = [
+      'The party crossed the causeway at low tide and found the middle gate unbarred.',
+      'Inside, Sister Halix named her price and the party refused it.',
+      'They climbed back to the tide-stair as the water rose, carrying the sealed ledger.',
+    ].join('\n\n')
+    const parsed = PostSessionAnalysisSchema.parse({ ...validAnalysis, summary: multi })
+    expect(parsed.summary).toBe(multi)
+  })
+
   it('accepts a 4000-char summary (no string .max)', () => {
     const longSummary = 'a'.repeat(4000)
     const r = PostSessionAnalysisSchema.safeParse({ ...validAnalysis, summary: longSummary })

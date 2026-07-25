@@ -20,11 +20,12 @@ import { cn } from '../../lib/cn.ts'
 // as the graph's own ink; the labels sit a step quieter (--ink-secondary). No
 // chips, no circles, no bullets — a spaced row of shape·word pairs.
 
-/** The glyph vocabulary order — factions and locations first (the shapes the
- *  critique singled out), then people and items; the anchor kinds (pc/world) last
+/** The glyph vocabulary order — most-common kinds first (ux-run2 myth-asd9d: a
+ *  real gen is ~22 places / ~15 people / ~9 factions, so the key leads with what
+ *  the eye meets most, not the rarest type); the anchor kinds (pc/world) last
  *  when a world carries them. Only kinds present in `nodes` AND carrying a label
  *  render. */
-const KIND_ORDER: readonly string[] = ['faction', 'location', 'npc', 'item', 'pc', 'world']
+const KIND_ORDER: readonly string[] = ['location', 'npc', 'faction', 'item', 'pc', 'world']
 
 /** Each kind's swatch, a 14×14 hard-edged shape mirroring `drawGlyph`. `fill`/`stroke`
  *  are `currentColor` so the swatch inherits the ink the row sets — strictly two-tone
@@ -41,17 +42,20 @@ function KindSwatch({ kind }: { kind: string }): React.JSX.Element {
       {kind === 'faction' && <path d="M7 1 L13 7 L7 13 L1 7 Z" />}
       {kind === 'location' && <rect x="2" y="2" width="10" height="10" />}
       {kind === 'item' && <rect x="4" y="4" width="6" height="6" />}
+      {/* People stacks carry DAYLIGHT between head and body (ux-run2 myth-asd9d):
+          fused, the pair read as one square — indistinguishable from Places at
+          legend size. The gap is what makes the figure silhouette legible. */}
       {kind === 'npc' && (
         <>
-          <rect x="4.2" y="1.5" width="5.6" height="5.6" />
-          <rect x="1.5" y="6.5" width="11" height="6" />
+          <rect x="4.2" y="0.8" width="5.6" height="4.7" />
+          <rect x="1.5" y="7" width="11" height="5.5" />
         </>
       )}
       {kind === 'pc' && (
         <>
           <rect x="0.75" y="0.75" width="12.5" height="12.5" fill="none" strokeWidth="1" />
-          <rect x="4.2" y="3" width="5.6" height="4.6" />
-          <rect x="2.5" y="7.3" width="9" height="4.7" />
+          <rect x="4.5" y="2.6" width="5" height="3.9" />
+          <rect x="2.5" y="7.5" width="9" height="4.5" />
         </>
       )}
       {kind === 'world' && (

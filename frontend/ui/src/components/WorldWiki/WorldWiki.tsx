@@ -35,6 +35,20 @@ import { resolveKindLabel } from './kind-label.ts'
 // falls back to rendering home — pure render fallback, no state surgery; the
 // stack self-heals on the next navigation.
 
+/** id → entity + kind, nested children included — the page lookup. A nested
+ *  location shares its group's kind. */
+function indexPages(model: WorldWikiProps['model']): Map<string, { entity: WikiEntity; kind: EntityKind }> {
+  const byId = new Map<string, { entity: WikiEntity; kind: EntityKind }>()
+  const visit = (entity: WikiEntity, kind: EntityKind): void => {
+    byId.set(entity.id, { entity, kind })
+    for (const child of entity.children ?? []) visit(child, kind)
+  }
+  for (const group of model.groups) {
+    for (const entity of group.entities) visit(entity, group.kind)
+  }
+  return byId
+}
+
 export const WorldWiki = forwardRef<HTMLDivElement, WorldWikiProps>(function WorldWiki(
   {
     model,
@@ -52,6 +66,7 @@ export const WorldWiki = forwardRef<HTMLDivElement, WorldWikiProps>(function Wor
     referencesLabel,
     indexLabel,
     glossaryLabel,
+    stepContext,
     'data-testid': dataTestId,
   },
   ref,
@@ -65,19 +80,8 @@ export const WorldWiki = forwardRef<HTMLDivElement, WorldWikiProps>(function Wor
   // not a reset. Ignored by WikiHome when the world carries no glossary.
   const [view, setView] = useState<WikiView>('index')
 
-  // id → entity + kind, nested children included — the page lookup. A nested
-  // location shares its group's kind.
-  const pages = useMemo(() => {
-    const byId = new Map<string, { entity: WikiEntity; kind: EntityKind }>()
-    const visit = (entity: WikiEntity, kind: EntityKind): void => {
-      byId.set(entity.id, { entity, kind })
-      for (const child of entity.children ?? []) visit(child, kind)
-    }
-    for (const group of model.groups) {
-      for (const entity of group.entities) visit(entity, group.kind)
-    }
-    return byId
-  }, [model])
+  // The page lookup (module-scope `indexPages`), memoized per model.
+  const pages = useMemo(() => indexPages(model), [model])
 
   const page = current.type === 'entity' ? pages.get(current.entityId) : undefined
 
@@ -153,6 +157,7 @@ export const WorldWiki = forwardRef<HTMLDivElement, WorldWikiProps>(function Wor
           referencesLabel={referencesLabel}
           indexLabel={indexLabel}
           glossaryLabel={glossaryLabel}
+          {...(stepContext !== undefined ? { stepContext } : {})}
           scroll={homeScroll.current}
           scrollRef={scrollRef}
         />

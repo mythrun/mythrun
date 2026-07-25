@@ -46,24 +46,28 @@ const ICON_GAP = 'gap-[var(--space-2)]'
 // secondary/ghost swap the neutral surface (surface-hover → surface-active),
 // one paper step per state.
 //
-// DISABLED is PER-VARIANT (MYT-0xao0), not one blanket grey. The old shared
-// `disabled:bg-surface + ink-tertiary` painted EVERY disabled button the same dead
-// grey — so an awaiting-input primary CTA (an empty-form "Begin") read as BROKEN
-// rather than "the primary, not yet available." Each variant now keeps its identity
-// while muted:
-//   • primary  → a muted EMBER GHOST: the loud fill drops but the accent survives as
-//     an edge + label (theme-aware --accent-fg), so it still reads as THE primary,
-//     just unfilled/awaiting; it fills solid the moment it becomes available. The
-//     primary carries a transparent border at rest so toggling disabled adds no 1px
-//     reflow.
-//   • secondary → the same bordered neutral, softened (decorative --border edge,
+// NON-INTERACTIVE (disabled OR busy) is ONE muted family with per-variant
+// geometry (myth-skbzw, superseding MYT-0xao0's ember ghost). Run 2 found the
+// accent-carrying disabled primary "visually indistinguishable from enabled —
+// a player who has waited ten minutes will click it and get nothing" (the
+// world-reveal settling Continue; same finding on the wizard/builder Next).
+// So the invariant flipped: the accent is the EXCLUSIVE mark of an enabled
+// primary. While non-interactive, every variant mutes to ~45% ink (the
+// tertiary-ink token) with NO accent anywhere, keeping only its geometry:
+//   • primary  → paper fill + muted --border edge + tertiary-ink label. It
+//     SNAPS to the full accent fill the moment it becomes available — "the
+//     accent fill is the reward for having decided." The rest-state transparent
+//     border reserves the 1px edge so the toggle adds no reflow.
+//   • secondary → its bordered neutral, softened (decorative --border edge,
 //     tertiary-ink label).
 //   • ghost    → a quiet tertiary-ink label on the bare page.
+// Busy rides these same `disabled:` arms (a busy control is natively disabled),
+// so "working" and "not yet available" share one legible stood-down look.
 // Disabled is a11y-exempt for contrast (§4).
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
   primary: cn(
     'bg-accent text-paper-50 border border-transparent hover:bg-accent-hover active:bg-accent-active',
-    'disabled:bg-transparent disabled:border-accent-fg disabled:text-accent-fg',
+    'disabled:bg-surface disabled:border-border disabled:text-ink-tertiary',
   ),
   secondary: cn(
     'bg-surface text-ink border border-border-strong hover:bg-surface-hover active:bg-surface-active',
@@ -110,10 +114,11 @@ const button = cva(
     'pointer-coarse:min-h-[44px]',
     // Theme-aware focus ring (== --focus-ring-color in both themes).
     'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
-    // Disabled (incl. loading): non-interactive cursor. The muted VISUAL treatment is
-    // PER-VARIANT (see VARIANT_CLASS) so a disabled primary keeps its ember identity
-    // instead of collapsing to a dead grey.
-    'disabled:cursor-not-allowed',
+    // Disabled (incl. busy): a plain default cursor — the critique's prescription
+    // for the settling Continue, and the not-allowed glyph is a slashed CIRCLE,
+    // which the register bans anyway. The muted VISUAL treatment is per-variant
+    // geometry over one shared stood-down family (see VARIANT_CLASS).
+    'disabled:cursor-default',
   ),
   {
     variants: {
@@ -135,6 +140,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   {
     variant = 'primary',
     size = 'md',
+    busy = false,
+    busyLabel,
     loading = false,
     disabled = false,
     onPress,
@@ -145,17 +152,20 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   },
   ref,
 ) {
-  // Loading is a non-interactive busy state: disable the control AND swallow the
-  // press (the native `disabled` already blocks click/keyboard, but we gate
-  // onPress too so a future non-disabled busy treatment can't leak a press).
-  const isInactive = disabled || loading
+  // `loading` is the legacy alias of `busy` (pre-myth-skbzw call sites) — one
+  // merged flag drives the whole busy arm.
+  const isBusy = busy || loading
+  // Busy is a non-interactive state: disable the control AND swallow the press
+  // (the native `disabled` already blocks click/keyboard, but we gate onPress
+  // too so a future non-disabled busy treatment can't leak a press).
+  const isInactive = disabled || isBusy
   return (
     <button
       ref={ref}
       type={type}
       onClick={isInactive ? undefined : onPress}
       disabled={isInactive}
-      aria-busy={loading || undefined}
+      aria-busy={isBusy || undefined}
       className={cn(button({ variant, size }), icon !== undefined && ICON_GAP)}
       {...rest}
     >
@@ -167,11 +177,13 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
           {icon}
         </span>
       )}
-      {/* tone="inherit": the spinner pixels take the button's text color (paper on
-          the ember primary, ink on secondary/ghost) over a transparent ground — so
-          it reads against the fill instead of vanishing ember-on-ember. */}
-      {loading && <Spinner size={SPINNER_SIZE[size]} tone="inherit" />}
-      {children}
+      {/* tone="inherit": the spinner pixels take the button's text color (the
+          muted tertiary ink of the stood-down busy arm) over a transparent
+          ground — so it reads against the fill, never a frozen brand color. */}
+      {isBusy && <Spinner size={SPINNER_SIZE[size]} tone="inherit" />}
+      {/* While busy the label swaps to `busyLabel` when given ("Save" → "Saving");
+          the control never goes label-less, so its width holds. */}
+      {isBusy && busyLabel !== undefined ? busyLabel : children}
     </button>
   )
 })

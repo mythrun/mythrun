@@ -7,6 +7,7 @@ import { sessionParticipantsNs } from './session-participants.js'
 import { sessionMessagesNs } from './session-messages.js'
 import { transcriptSearchNs } from './transcript-search.js'
 import { sessionPrepsNs } from './session-preps.js'
+import { tripwireVerdictsNs } from './tripwire-verdicts.js'
 import { creditsNs, selfManagingCredits } from './credits.js'
 import { invitesNs, selfManagingInvites } from './invites.js'
 import { charactersNs } from './characters.js'
@@ -56,6 +57,8 @@ function bindTx(c: ClientLike) {
     sessionMessages: sessionMessagesNs(c),
     transcriptSearch: transcriptSearchNs(c),
     sessionPreps: sessionPrepsNs(c),
+    // myth-g4hf3: per-turn secret-tripwire verdict persistence (handle-only).
+    tripwireVerdicts: tripwireVerdictsNs(c),
     credits: creditsNs(c),
     invites: invitesNs(c),
     characters: charactersNs(c),

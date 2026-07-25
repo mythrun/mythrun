@@ -88,11 +88,13 @@
       "replacePrompt": "Replace this link? The old link stops working.",
       "share": "Share"
     },
+    "lastSession": "Last session",
     "noAccess": {
       "body": "It may not exist, or you may not have access. Head home.",
       "title": "This campaign is closed to you"
     },
     "notFound": "We couldn't find this campaign",
+    "readRecap": "Read the recap",
     "settling": "Settling in"
   },
   "campaignNew": {
@@ -102,7 +104,7 @@
         "subtitle": "Give a sentence or a page. Mythrun fills in the rest.",
         "title": "I know what I want"
       },
-      "lede": "Every story needs a setting.",
+      "lede": "Every story needs a world.",
       "love": {
         "subtitle": "Describe what you love and watch a world emerge.",
         "title": "Help me brainstorm"
@@ -116,22 +118,32 @@
       "question": "Describe the world you want to play in.",
       "rejectedFallback": "$t(shared.rejected)",
       "retry": "The nib snapped mid-sentence. Try submitting again.",
-      "switchToGuided": "Intimidated by the blank page? Try building from things you love."
+      "switchAction": "Try building from things you love.",
+      "switchPrompt": "Intimidated by the blank page?"
     },
     "guided": {
       "cooldown": "$t(shared.cooldown)",
       "credits": "$t(shared.lowCredits)",
       "eyebrow": "From what you love",
       "find": "Weave it together →",
-      "nameQuestion": "Name a story you love.",
+      "leave": "Leave brainstorm",
+      "nameQuestion": {
+        "one": "Name a story you love.",
+        "three": "One more.",
+        "two": "A second story you love."
+      },
       "next": "Next",
       "retry": "$t(shared.interrupted)",
+      "settledLabel": "Story {{n}}",
       "step": {
-        "one": "One of three",
-        "three": "Three of three",
-        "two": "Two of three"
+        "one": "Story 1 of 3",
+        "three": "Story 3 of 3",
+        "two": "Story 2 of 3"
       },
-      "switchToFreeform": "Feeling constrained? Describe your world yourself.",
+      "switchAction": "Describe your world yourself.",
+      "switchPrompt": "Feeling constrained?",
+      "titlePlaceholder": "Spirited Away",
+      "whyHint": "A feeling, a place, a scene. A sentence is plenty.",
       "whyQuestion": "What about it stays with you?"
     },
     "preview": {
@@ -141,11 +153,16 @@
       "changeQuestion": "What would you like to edit?",
       "changeUsed": "Your world has already been altered.",
       "cooldown": "$t(shared.cooldown)",
+      "cost": "Building your world takes a few minutes.",
       "credits": "$t(shared.lowCredits)",
       "eyebrow": "Your world",
       "retry": "$t(shared.interrupted)",
       "rework": "Revise",
-      "startOver": "$t(shared.beginAgain)"
+      "startOver": "Start over",
+      "startOverConfirm": "Start over? This discards the current draft.",
+      "startOverKeep": "Keep it",
+      "startOverYes": "Yes, start over",
+      "wovenFrom": "Woven from {{sources}}"
     },
     "rejection": {
       "editAsFreeform": "Adjust it yourself",
@@ -153,7 +170,7 @@
       "fallback": "$t(shared.rejected)",
       "filteredMessage": "That's off the table here. Try something else.",
       "judged": "The concept",
-      "startOver": "$t(shared.beginAgain)"
+      "startOver": "Start over"
     },
     "synthesizing": {
       "eyebrow": "Piecing it together",
@@ -164,8 +181,9 @@
   },
   "characterCreate": {
     "chooser": {
+      "eyebrow": "Creating your character",
       "freeform": {
-        "body": "Write what's important to you and Mythrun will fill in the rest",
+        "body": "Write what's important to you and Mythrun will fill in the rest. The quickest way to start.",
         "cta": "Simply describe your character"
       },
       "guided": {
@@ -189,42 +207,55 @@
       "background": {
         "options": {
           "Acolyte": {
+            "gloss": "Raised on ritual and quiet service.",
             "name": "Acolyte"
           },
           "Charlatan": {
+            "gloss": "Charm as a trade. Truth optional.",
             "name": "Charlatan"
           },
           "Criminal": {
+            "gloss": "The law knows your name. Unfavorably.",
             "name": "Criminal"
           },
           "Entertainer": {
+            "gloss": "You lived on applause and passed hats.",
             "name": "Entertainer"
           },
           "Folk Hero": {
+            "gloss": "Ordinary hands, one extraordinary day.",
             "name": "Folk Hero"
           },
           "Guild Artisan": {
+            "gloss": "A trade mastered, a guild behind you.",
             "name": "Guild Artisan"
           },
           "Hermit": {
+            "gloss": "Years of silence, and one secret.",
             "name": "Hermit"
           },
           "Noble": {
+            "gloss": "Born with a name that opens doors.",
             "name": "Noble"
           },
           "Outlander": {
+            "gloss": "Raised far from roads and manners.",
             "name": "Outlander"
           },
           "Sage": {
+            "gloss": "You went looking for answers in books.",
             "name": "Sage"
           },
           "Sailor": {
+            "gloss": "Salt, rope, storms, and tall tales.",
             "name": "Sailor"
           },
           "Soldier": {
+            "gloss": "Drilled, deployed, and hard to rattle.",
             "name": "Soldier"
           },
           "Urchin": {
+            "gloss": "The streets raised you. Cheaply.",
             "name": "Urchin"
           }
         },
@@ -233,39 +264,51 @@
       "class": {
         "options": {
           "barbarian": {
+            "gloss": "Hit things. Get hit. Keep standing.",
             "name": "Barbarian"
           },
           "bard": {
+            "gloss": "Charm, songs, and a bit of everything.",
             "name": "Bard"
           },
           "cleric": {
+            "gloss": "You asked a power for help. Something answered.",
             "name": "Cleric"
           },
           "druid": {
+            "gloss": "The wild lends you its shapes and storms.",
             "name": "Druid"
           },
           "fighter": {
+            "gloss": "Weapons are a language. You are fluent.",
             "name": "Fighter"
           },
           "monk": {
+            "gloss": "Empty hands, faster than knives.",
             "name": "Monk"
           },
           "paladin": {
+            "gloss": "An oath you keep with a sword.",
             "name": "Paladin"
           },
           "ranger": {
+            "gloss": "At home where the maps give up.",
             "name": "Ranger"
           },
           "rogue": {
+            "gloss": "Locks, shadows, and other people's pockets.",
             "name": "Rogue"
           },
           "sorcerer": {
+            "gloss": "Magic was born in you. It leaks.",
             "name": "Sorcerer"
           },
           "warlock": {
+            "gloss": "You made a deal. The magic is the interest.",
             "name": "Warlock"
           },
           "wizard": {
+            "gloss": "Fragile body, immense studied power.",
             "name": "Wizard"
           }
         },
@@ -273,41 +316,53 @@
       },
       "next": "Next",
       "notes": {
+        "placeholder": "A scar, a debt, a name they no longer use.",
         "prompt": "Anything else to add?",
+        "skip": "Skip",
         "whisper": "Add a detail, or skip ahead."
       },
       "species": {
         "options": {
           "Dragonborn": {
+            "gloss": "Dragon blood, and the breath to prove it.",
             "name": "Dragonborn"
           },
           "Dwarf": {
+            "gloss": "Stone-patient, forge-proud, hard to knock down.",
             "name": "Dwarf"
           },
           "Elf": {
+            "gloss": "Long lives, light feet, older memories.",
             "name": "Elf"
           },
           "Gnome": {
+            "gloss": "Small hands, restless minds, big inventions.",
             "name": "Gnome"
           },
           "Half-Elf": {
+            "gloss": "Two worlds, and a foot in each.",
             "name": "Half-Elf"
           },
           "Half-Orc": {
+            "gloss": "Orc strength, human stubbornness.",
             "name": "Half-Orc"
           },
           "Halfling": {
+            "gloss": "Small, cheerful, and strangely lucky.",
             "name": "Halfling"
           },
           "Human": {
+            "gloss": "Everywhere, ambitious, quick to adapt.",
             "name": "Human"
           },
           "Tiefling": {
+            "gloss": "A fiendish inheritance you never asked for.",
             "name": "Tiefling"
           }
         },
         "question": "What kin claims you?"
       },
+      "stepCounter": "Step {{current}} of {{total}}",
       "subclass": {
         "options": {
           "barbarian": {
@@ -347,9 +402,10 @@
             "name": "School of Evocation"
           }
         },
-        "question": "How do you practice your calling?"
+        "question": "How do you practice your calling?",
+        "statement": "{{subclass}} is the {{className}}'s path here."
       },
-      "switchToFreeform": "Describe them instead"
+      "switchToFreeform": "Describe your character instead"
     },
     "joinSummary": {
       "cta": "Create your character",
@@ -365,9 +421,10 @@
         "name": "A name surfaces",
         "scores": "Ability scores settle"
       },
-      "countdown": "{{time}} remaining",
+      "countdown": "Ready in {{time}}",
       "heading": "Bringing them to life…",
       "stalled": "Still working. This one's taking a while.",
+      "tableRoom": "The table has room.",
       "title": "Your character is coming together"
     },
     "recap": {
@@ -386,10 +443,18 @@
       },
       "retry": "$t(shared.tryAgain)",
       "seeFull": "See full sheet",
-      "startOver": "$t(shared.beginAgain)"
+      "startOver": "Start over",
+      "startOverConfirm": "Yes, start over",
+      "startOverKeep": "Keep them",
+      "startOverPrompt": "Start over? This discards this character."
     },
     "staging": {
+      "beginConfirmNo": "Keep waiting",
+      "beginConfirmYes": "Start anyway",
+      "beginConfirm_one": "{{count}} player isn't ready. Start anyway?",
+      "beginConfirm_other": "{{count}} players aren't ready. Start anyway?",
       "beginError": "$t(shared.somethingWrong)",
+      "beginPartial": "Begin with {{ready}} of {{total}} ready →",
       "beginParty": "Everyone's ready, begin →",
       "beginSolo": "Begin the adventure →",
       "creating": "Choosing who they are…",
@@ -453,6 +518,7 @@
   "home": {
     "card": {
       "byCreator": " · by {{creator}}",
+      "continueSession": "Continue session →",
       "failed": "The ink ran dry. Open to retry.",
       "generating": "Crafting your world...",
       "lowCredits": "$t(shared.lowCredits)",
@@ -533,6 +599,7 @@
       "cancel": "Keep playing",
       "confirm": "End session",
       "control": "End session",
+      "credit": "This session used one credit.",
       "prompt": "End the session?"
     },
     "error": {
@@ -542,10 +609,12 @@
     "input": {
       "dmBusy": "The DM is writing…",
       "ending": "Ending the session…",
-      "pendingRoll": "Resolve the roll first",
+      "pendingContinue": "Continue the scene first",
+      "pendingRoll": "Waiting on your roll",
       "placeholder": "What do you do next?",
       "send": "Send",
-      "summon": "Ask the DM"
+      "summon": "Ask the DM",
+      "summonHint": "Ask a question, out of character"
     },
     "knowledge": {
       "graphNodes": "Browse the world by name",
@@ -558,7 +627,7 @@
         "empty": "Still as you started.",
         "hp": "HP"
       },
-      "sheetTab": "Your character",
+      "sheetTab": "Character",
       "sheetUnavailable": "Your character sheet isn't ready yet.",
       "tabs": "What you know",
       "type": {
@@ -599,10 +668,17 @@
       "failedTitle": "The prep didn't come together"
     },
     "preparing": {
-      "countdown": "{{time}} remaining",
+      "countdown": "Ready in {{time}}",
       "detail": "This can take a moment.",
+      "flavor1": "The DM reads back through the notes.",
+      "flavor2": "The locals take their seats.",
+      "flavor3": "Rumors make their rounds.",
+      "flavor4": "The map is unrolled.",
+      "flavor5": "Weather is decided.",
+      "flavor6": "Lanterns are trimmed and lit.",
       "integratingLabel": "Bringing your party into the world…",
       "label": "The DM is preparing the next session…",
+      "safeToLeave": "Safe to leave. The table will be set when you return.",
       "settlingLabel": "Your character is settling into the world…"
     },
     "purchase": {
@@ -621,8 +697,10 @@
       "beats": "beats",
       "continue": "Continue",
       "dc": "DC",
+      "dcExplainer": "The DC is the mark to meet",
       "dieResult": "Your roll",
       "disadvantage": "Disadvantage",
+      "explainer": "Roll a d20 · {{skill}} {{modifier}} is your bonus",
       "misses": "misses",
       "roll": "Roll",
       "tier": {
@@ -658,13 +736,17 @@
   },
   "recap": {
     "back": "Back to campaign",
-    "cost": "One session credit spent.",
+    "copied": "Link copied",
+    "copyLink": "Copy link",
+    "cost": "This session used one credit.",
     "empty": "No recap yet.",
     "pending": "Writing up the recap…",
     "sessionLabel": "Session {{number}}",
     "summaryHeading": "What happened",
     "threadsHeading": "Threads left open",
-    "title": "The session ends"
+    "threadsKeep": "The threads will keep until next session.",
+    "title": "The session ends",
+    "waitContract": "It will be waiting on the campaign page when it's ready. You don't have to stay."
   },
   "shared": {
     "beginAgain": "Begin again",
@@ -686,9 +768,9 @@
     "somethingWrong": "Something went wrong. Try again.",
     "tryAgain": "Try again",
     "wait": {
-      "minutes": "{{count}} min",
+      "minutes": "about {{count}} min",
       "stalled": "Still working. This is taking longer than usual.",
-      "underMinute": "Under a minute"
+      "underMinute": "under a minute"
     },
     "wiki": {
       "digDeeper": "Dig deeper",
@@ -716,19 +798,22 @@
     "eyebrow": "Starting level",
     "grant1": "The absolute baseline.",
     "grant2": "A little extra power.",
-    "grant3": "Gain expertise through specialization.",
+    "grant3": "Old enough to have found a calling.",
     "grant4": "Seasoned, and sure of it.",
     "grant5": "Let's skip the training montage.",
     "hold": "Your host is setting the party's level.",
     "holdTitle": "Setting the table",
     "lede": "We start most parties at three. Capable enough to feel heroic, green enough to grow.",
     "loading": "Setting the table",
+    "permanence": "The whole party begins here. Set once.",
     "prompt": "What level does your party begin at?"
   },
   "startingSituation": {
+    "contract": "Three openings, drafted from your world. Pick one to open your first session. You can shape everything from there.",
     "empty": "No openings yet",
     "error": "$t(shared.somethingWrong)",
     "eyebrow": "Where it starts",
+    "eyebrowNamed": "{{worldName}} · Where it starts",
     "hold": "Your host is choosing where it all begins.",
     "holdTitle": "Setting the table",
     "loading": "Selecting your starting locations",
@@ -744,7 +829,7 @@
       "entities": "{{count}} entities have been written",
       "entityList": "What's appeared so far"
     },
-    "countdown": "{{time}} remaining",
+    "countdown": "Ready in {{time}}",
     "failedBody": "The making was interrupted.",
     "failedTitle": "The world stalled",
     "flavor1": "The gods decide what to name themselves.",
@@ -783,11 +868,14 @@
       "world_color": "Setting the mood",
       "world_introduction": "Writing the opening pages"
     },
+    "safeToLeave": "Safe to leave. The world keeps forming.",
+    "stagePosition": "Stage {{current}} of {{total}} · {{stage}}",
     "statusDone": "Your world is ready",
     "statusProgress": "World generation progress",
     "statusTitle": "Weaving your world",
     "terminalBody": "This world's a dead end. Start a new one.",
     "terminalTitle": "This world can't be made",
+    "waitQuietly": "Wait quietly instead",
     "watch": "Watch it take shape"
   },
   "worldReveal": {

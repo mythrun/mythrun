@@ -189,6 +189,7 @@ describe('drawNodes — displayId lookup', () => {
       t: null, // no bob → the draw translate is the raw physics position
       showLabels: false,
       labeled: undefined,
+      sides: undefined,
       labelFont: LABEL_FONT_STUB,
       paper: '',
       virtual: REF_DIMS,
@@ -209,6 +210,7 @@ describe('drawNodes — displayId lookup', () => {
       t: null,
       showLabels: false,
       labeled: undefined,
+      sides: undefined,
       labelFont: LABEL_FONT_STUB,
       paper: '',
       virtual: REF_DIMS,
@@ -231,6 +233,7 @@ describe('drawNodes — arriving nodes are full-ink on first frame', () => {
     t: null,
     showLabels: false,
     labeled: undefined,
+    sides: undefined,
     labelFont: LABEL_FONT_STUB,
     paper: '',
     virtual: REF_DIMS,
@@ -284,6 +287,7 @@ describe('drawNodes — name labels (MYT-89 audit #3)', () => {
     t: null,
     showLabels,
     labeled,
+    sides: undefined,
     labelFont: LABEL_FONT_STUB,
     paper: '',
     virtual: REF_DIMS,
@@ -322,6 +326,7 @@ describe('drawNodes — label tiering (density redesign)', () => {
     t: null,
     showLabels: true,
     labeled,
+    sides: undefined,
     labelFont: LABEL_FONT_STUB,
     paper: '',
     virtual: REF_DIMS,
@@ -353,6 +358,34 @@ describe('drawNodes — label tiering (density redesign)', () => {
     drawNodes(r.ctx, [liveWon], displayIdPositions, deco(undefined)) // paper: ''
     expect(r.strokeTexts).toEqual([])
     expect(r.texts).toEqual([liveWon.name])
+  })
+
+  it('renders an UNLABELED node hollow — outline-only, so a missing name reads as intent, not a bug (ux-run2 myth-uis1p)', () => {
+    const r = recorder()
+    // seedOnly is an npc — normally a FILLED two-rect stack. Demoted to
+    // glyph-only by the tier, it strokes its outline instead: "eleven anonymous
+    // squares read as a rendering bug"; a hollow marker reads as a place that
+    // exists but keeps its name in the list.
+    drawNodes(r.ctx, [seedOnly], displayIdPositions, deco(new Set<string>()))
+    expect(r.rects).toEqual([]) // no filled ink…
+    expect(r.strokeRects).toHaveLength(2) // …the stack renders as an outline pair.
+  })
+
+  it('renders an unlabeled FACTION diamond hollow too (path stroke, no fill)', () => {
+    const r = recorder()
+    drawNodes(r.ctx, [liveWon], displayIdPositions, deco(new Set<string>()))
+    expect(r.rects).toEqual([])
+    expect(r.strokes).toBe(1) // the diamond path, stroked not filled
+  })
+
+  it('keeps SOLID glyphs when labels are off as a mode — hollow encodes per-node demotion only', () => {
+    const r = recorder()
+    drawNodes(r.ctx, [seedOnly], displayIdPositions, {
+      ...deco(new Set<string>()),
+      showLabels: false,
+    })
+    expect(r.rects).toHaveLength(2) // the filled stack, exactly as before
+    expect(r.strokeRects).toEqual([])
   })
 
   it('raises the FOCUSED node exactly like a hover (the tap name-reveal reads lifted)', () => {
@@ -389,6 +422,7 @@ function drawLabelled(node: GraphNode, hovered: boolean, labelFont = LABEL_FONT_
     t: null,
     showLabels: true,
     labeled: undefined,
+    sides: undefined,
     labelFont,
     paper: '',
     virtual: REF_DIMS,
@@ -511,6 +545,7 @@ describe('fogEntitiesFrom — fog obstacles from live node positions (C5 decisio
       kind: 'location',
       name: 'Ashfen Reach',
       labeled: true,
+      side: 'e', // no sides map → the east default (myth-uis1p)
     })
     expect(entities[1]?.x).toBe(VIRTUAL_WIDTH / 2 - 80)
     expect(entities[1]?.y).toBe(VIRTUAL_HEIGHT / 2 + 60)
@@ -576,5 +611,58 @@ describe('bobOffset / fogEntitiesFrom — buoy bob is a RENDER offset only (C5 d
     const v = centredToVirtual({ x: 40, y: -10 }, REF_DIMS)
     expect(still.x).toBeCloseTo(v.x, 6)
     expect(still.y).toBeCloseTo(v.y, 6)
+  })
+})
+
+// ── ux-run2 myth-uis1p: WEST-side labels (candidate slots) ────────────────────────────
+// A label revealed on an already-pinned field can find its east slot occupied by an
+// immovable neighbour; the side chooser (graph-stability) then commits 'w'. These pin
+// the mirror across all three geometry consumers: the draw (right-aligned text ending
+// at -LABEL_TEXT_OFFSET_X), the collision box, and the fog obstacle — one mirrored
+// geometry, never three opinions.
+
+describe('west-side labels (myth-uis1p)', () => {
+  const westDeco: Parameters<typeof drawNodes>[3] = {
+    selectedKey: undefined,
+    hoverKey: null,
+    focusKey: null,
+    t: null,
+    showLabels: true,
+    labeled: undefined,
+    sides: new Map([[liveWon.displayId, 'w']]),
+    labelFont: LABEL_FONT_STUB,
+    paper: 'paper-stub',
+    virtual: REF_DIMS,
+  }
+
+  it('draws a WEST label (and its halo) mirrored to -LABEL_TEXT_OFFSET_X', () => {
+    const r = recorder()
+    drawNodes(r.ctx, [liveWon], displayIdPositions, westDeco)
+    expect(r.fillTexts).toEqual([{ text: liveWon.name, x: -LABEL_TEXT_OFFSET_X, y: 0 }])
+    expect(r.strokeTexts).toEqual([{ text: liveWon.name, x: -LABEL_TEXT_OFFSET_X, y: 0 }])
+  })
+
+  it('mirrors the reserved box horizontally about the anchor (vertical window unchanged)', () => {
+    const east = labelBoxExtents('faction', 60)
+    const west = labelBoxExtents('faction', 60, 'w')
+    expect(west.left).toBe(-east.right)
+    expect(west.right).toBe(-east.left)
+    expect(west.top).toBe(east.top)
+    expect(west.bottom).toBe(east.bottom)
+  })
+
+  it('mirrors the fog obstacle to the same west box (one geometry, three surfaces)', () => {
+    const eastOb = entityObstacle({ x: 100, y: 50, kind: 'faction' }, 60, 0, 0)
+    const westOb = entityObstacle({ x: 100, y: 50, kind: 'faction', side: 'w' }, 60, 0, 0)
+    expect(westOb.w).toBe(eastOb.w)
+    expect(westOb.h).toBe(eastOb.h)
+    // The west box ENDS where the east box began, reflected about the anchor.
+    expect(westOb.x).toBeCloseTo(2 * 100 - (eastOb.x + eastOb.w), 6)
+  })
+
+  it('fogEntitiesFrom carries each node\'s side through to the fog layer', () => {
+    const sides = new Map<string, 'e' | 'w'>([[liveWon.displayId, 'w']])
+    const entities = fogEntitiesFrom([liveWon, seedOnly], displayIdPositions, null, REF_DIMS, undefined, sides)
+    expect(entities.map((e) => e.side)).toEqual(['w', 'e'])
   })
 })

@@ -35,11 +35,25 @@ describe('GraphLegend', () => {
     expect(queryByText('Items')).toBeNull()
   })
 
-  it('orders factions and locations ahead of people and items', () => {
+  it('orders by frequency — Places, People, Factions, Items (ux-run2 myth-asd9d)', () => {
     const nodes = [node('item', 'Ledger'), node('npc', 'Corr'), node('location', 'Ward'), node('faction', 'Guild')]
     const { getAllByRole } = render(<GraphLegend nodes={nodes} labels={LABELS} />)
     const items = getAllByRole('listitem').map((li) => li.textContent)
-    expect(items).toEqual(['Factions', 'Places', 'People', 'Items'])
+    expect(items).toEqual(['Places', 'People', 'Factions', 'Items'])
+  })
+
+  it('draws the People swatch with a head/body gap so it never reads as the Places square (ux-run2 myth-asd9d)', () => {
+    const nodes = [node('npc', 'Corr'), node('location', 'Ward')]
+    const { getAllByRole } = render(<GraphLegend nodes={nodes} labels={LABELS} />)
+    const people = getAllByRole('listitem').find((li) => li.textContent === 'People')
+    const rects = [...(people?.querySelectorAll('rect') ?? [])]
+    expect(rects).toHaveLength(2)
+    const [head, body] = rects
+    if (head === undefined || body === undefined) throw new Error('missing swatch rects')
+    // The head rect must END strictly ABOVE the body rect's top — daylight
+    // between the two squares is what makes the figure read at legend size.
+    const headBottom = Number(head.getAttribute('y')) + Number(head.getAttribute('height'))
+    expect(headBottom).toBeLessThan(Number(body.getAttribute('y')))
   })
 
   it('omits a present kind that has no resolved label (the DS invents no copy)', () => {

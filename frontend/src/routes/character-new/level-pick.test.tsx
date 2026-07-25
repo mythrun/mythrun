@@ -158,6 +158,14 @@ describe('LevelPickRoute — the owner-only picker', () => {
     expect(screen.queryByTestId('level-pick-hold')).toBeNull()
   })
 
+  it('states the choice\'s permanence under the confirm (ux-run2 myth-nyjtl)', async () => {
+    renderPick()
+    await screen.findAllByTestId('level-card')
+    expect(screen.getByTestId('level-pick-permanence').textContent).toBe(
+      i18n.t('startingLevel.permanence'),
+    )
+  })
+
   it('holds on a neutral loading line while the role probe is in flight', () => {
     const pending = new Promise<readonly CampaignSummary[]>(() => {
       /* never resolves */

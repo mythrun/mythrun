@@ -70,6 +70,15 @@ describe('Text', () => {
     expect(getByTestId('t')).not.toHaveClass('shrink-0')
   })
 
+  it('carries an element id (the anchor for a field describedBy relationship)', () => {
+    const { getByTestId } = render(
+      <Text data-testid="t" id="hint-1">
+        A feeling, a place, a scene.
+      </Text>,
+    )
+    expect(getByTestId('t')).toHaveAttribute('id', 'hint-1')
+  })
+
   it('forwards its ref to the underlying element', () => {
     const ref = createRef<HTMLElement>()
     render(

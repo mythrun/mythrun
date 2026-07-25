@@ -34,10 +34,18 @@ function formatRelative(iso: string, nowMs: number, locale: string): string {
   const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
   const days = Math.round((new Date(iso).getTime() - nowMs) / DAY_MS)
   const magnitude = Math.abs(days)
-  if (magnitude < 7) return rtf.format(days, 'day')
-  if (magnitude < 30) return rtf.format(Math.round(days / 7), 'week')
-  if (magnitude < 365) return rtf.format(Math.round(days / 30), 'month')
-  return rtf.format(Math.round(days / 365), 'year')
+  const phrase =
+    magnitude < 7
+      ? rtf.format(days, 'day')
+      : magnitude < 30
+        ? rtf.format(Math.round(days / 7), 'week')
+        : magnitude < 365
+          ? rtf.format(Math.round(days / 30), 'month')
+          : rtf.format(Math.round(days / 365), 'year')
+  // NBSP-join the phrase so the number never wraps from its unit at the card's
+  // measure ("last played 4 / days ago" read as unproofread — myth-rhvkt). The
+  // record line still wraps at the copy's own spaces / the · separator.
+  return phrase.replaceAll(' ', '\u00A0')
 }
 
 /**

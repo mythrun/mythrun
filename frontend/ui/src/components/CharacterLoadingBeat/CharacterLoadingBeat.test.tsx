@@ -9,23 +9,30 @@ import { CharacterLoadingBeat } from './CharacterLoadingBeat.tsx'
 const HEADING = 'Bringing them to life…'
 
 // Four ordered beats mid-progress: two done, one surfacing, one still pending —
-// the mockup's "a name surfaces / class settles / rolling scores / gathering kit".
+// the real stage-ladder copy (praise-ledger — reused verbatim).
 const MID_BEATS: LoadingBeat[] = [
-  { id: 'name', label: 'Kessa Vurm — a name surfaces', state: 'done' },
-  { id: 'class', label: 'Human · Fighter — Champion', state: 'done' },
-  { id: 'scores', label: 'rolling ability scores…', state: 'active' },
-  { id: 'kit', label: 'gathering equipment…', state: 'pending' },
+  { id: 'name', label: 'A name surfaces', state: 'done' },
+  { id: 'class', label: 'A calling takes shape', state: 'done' },
+  { id: 'scores', label: 'Ability scores settle', state: 'active' },
+  { id: 'kit', label: 'Equipment is gathered', state: 'pending' },
 ]
 
 const ALL_DONE: LoadingBeat[] = MID_BEATS.map((b) => ({ ...b, state: 'done' }))
+const ALL_PENDING: LoadingBeat[] = MID_BEATS.map((b) => ({ ...b, state: 'pending' }))
 
 describe('CharacterLoadingBeat', () => {
-  it('renders every beat label, in order, as a row', () => {
+  it('renders every beat label, in order, as a row — the ACTIVE row carrying the working ellipsis', () => {
     // (The active beat's label also appears in the SR live region, so assert via
-    // the rows rather than a document-wide text query.)
+    // the rows rather than a document-wide text query.) The ellipsis is the
+    // now-state's motion-free "in progress" cue (ux-run2 myth-8ddt4).
     const { getAllByTestId } = render(<CharacterLoadingBeat heading={HEADING} beats={MID_BEATS} reducedMotion={false} />)
     const rows = getAllByTestId('character-loading-beat-row')
-    expect(rows.map((r) => r.textContent)).toEqual(MID_BEATS.map((b) => b.label))
+    expect(rows.map((r) => r.textContent)).toEqual([
+      'A name surfaces',
+      'A calling takes shape',
+      'Ability scores settle…',
+      'Equipment is gathered',
+    ])
   })
 
   it('tags each row with its beat state so done/active/pending style distinctly', () => {
@@ -36,26 +43,33 @@ describe('CharacterLoadingBeat', () => {
     expect(classByState.get('active')).not.toEqual(classByState.get('pending'))
     expect(classByState.get('done')).not.toEqual(classByState.get('pending'))
     // Pending reads muted via the solid AA tertiary-ink token — NOT a static `opacity-NN` dim.
-    // Active reads emphasized (ember).
     expect(classByState.get('pending')).toMatch(/ink-tertiary/)
     expect(classByState.get('pending')).not.toMatch(/opacity-\d/)
-    expect(classByState.get('active')).toMatch(/accent/)
+    // The three-state read (ux-run2 myth-8ddt4): done settles into QUIET ACCENT;
+    // ACTIVE is the emphasized ink line (the one thing happening right now).
+    expect(classByState.get('done')).toMatch(/accent/)
+    expect(classByState.get('active')).toMatch(/font-medium/)
+    expect(classByState.get('active')).toMatch(/text-ink/)
   })
 
-  it('wears the GuidedRail rung idiom so state is legible at a squint (edge + text, not text-color alone)', () => {
-    // The legibility fix (MYT-102): each phase is a bordered rung whose EDGE
-    // carries state through the DS done/now/todo token trio — done = solid ink
-    // edge, active = ember edge, pending = faint muted edge. Two channels (edge +
-    // text) mean done never collapses into pending as "two greys".
+  it('is a plain typographic list — no bordered rows (the button-cosplay fix, ux-run2 myth-8ddt4)', () => {
+    // Run 2: four full-width bordered rectangles read as disabled BUTTONS in this
+    // square-cornered register. The ladder is now a typographic list: no row
+    // borders; a small leading FILLED square marks completed stages instead.
     const { getAllByTestId } = render(<CharacterLoadingBeat heading={HEADING} beats={MID_BEATS} reducedMotion={false} />)
-    const classByState = new Map(
-      getAllByTestId('character-loading-beat-row').map((r) => [r.dataset.state, r.className]),
-    )
-    expect(classByState.get('done')).toMatch(/border-ink/)
-    expect(classByState.get('active')).toMatch(/border-accent/)
-    expect(classByState.get('pending')).toMatch(/border-border/)
-    // Every rung is a flat square (no rounded corners), per the paper register.
-    for (const cls of classByState.values()) expect(cls).toContain('rounded-none')
+    for (const row of getAllByTestId('character-loading-beat-row')) {
+      expect(row.className).not.toMatch(/border/)
+    }
+    const markers = getAllByTestId('character-loading-beat-marker')
+    expect(markers).toHaveLength(MID_BEATS.length)
+    const fillByState = getAllByTestId('character-loading-beat-row').map((row, i) => [
+      row.dataset.state,
+      markers[i]?.className ?? '',
+    ])
+    for (const [state, cls] of fillByState) {
+      if (state === 'done') expect(cls).toMatch(/bg-accent/)
+      else expect(cls).toMatch(/bg-transparent/)
+    }
   })
 
   it('sets the meter level from the done/total ratio', () => {
@@ -71,6 +85,34 @@ describe('CharacterLoadingBeat', () => {
     expect(getByTestId('character-loading-beat-figure')).toHaveAttribute('data-beat-level', '1')
   })
 
+  it('NEVER renders an empty fill frame — the figure breathes until the first beat lands (ux-run2 myth-zyk6o)', () => {
+    // Run 2's blocker: at zero progress the fill meter painted nothing — an empty
+    // black-bordered rectangle indistinguishable from a rendering failure. Before
+    // the first completion the figure now runs the ambient BREATHE field (alive
+    // dither from frame one, the praised session-prep square); the determinate
+    // fill takes over only once there is something true to fill.
+    const { getByTestId } = render(
+      <CharacterLoadingBeat heading={HEADING} beats={ALL_PENDING} reducedMotion={false} />,
+    )
+    const figure = getByTestId('character-loading-beat-figure')
+    expect(figure).toHaveAttribute('data-beat-mode', 'breathe')
+    expect(figure).not.toHaveAttribute('data-beat-level')
+  })
+
+  it('frames the figure with the panel-weight border, never the heaviest stroke on the page', () => {
+    // "Border must not outweigh the containing panel" (myth-zyk6o): the figure
+    // wears the muted tone (panel border-border), not the ink frame.
+    const { getByTestId } = render(<CharacterLoadingBeat heading={HEADING} beats={MID_BEATS} reducedMotion={false} />)
+    const figure = getByTestId('character-loading-beat-figure')
+    expect(figure.className).toMatch(/border-border/)
+    expect(figure.className).not.toMatch(/border-ink/)
+  })
+
+  it('caps the panel width — a readout, not an admin table (ux-run2 myth-8ddt4)', () => {
+    const { getByTestId } = render(<CharacterLoadingBeat heading={HEADING} beats={MID_BEATS} reducedMotion={false} />)
+    expect(getByTestId('character-loading-beat').className).toMatch(/max-w-\[38rem\]/)
+  })
+
   it('is aria-busy while any beat is unfinished, and settles once all are done', () => {
     const { getByTestId, rerender } = render(
       <CharacterLoadingBeat heading={HEADING} beats={MID_BEATS} reducedMotion={false} />,
@@ -80,11 +122,11 @@ describe('CharacterLoadingBeat', () => {
     expect(getByTestId('character-loading-beat')).toHaveAttribute('aria-busy', 'false')
   })
 
-  it('announces the active beat through an SR live region', () => {
+  it('announces the active beat through an SR live region (plain label — the ellipsis is visual pacing)', () => {
     const { getByTestId } = render(<CharacterLoadingBeat heading={HEADING} beats={MID_BEATS} reducedMotion={false} />)
     const live = getByTestId('character-loading-beat-live')
     expect(live).toHaveAttribute('aria-live', 'polite')
-    expect(live).toHaveTextContent('rolling ability scores…')
+    expect(live.textContent).toBe('Ability scores settle')
   })
 
   it('threads reduced motion to the beat so the fill lands instantly', () => {
@@ -101,16 +143,25 @@ describe('CharacterLoadingBeat', () => {
 
   it('renders the countdown label as a quiet aria-hidden tabular line when provided', () => {
     const { getByTestId } = render(
-      <CharacterLoadingBeat heading={HEADING} beats={MID_BEATS} reducedMotion={false} countdownLabel="~2:10 left" />,
+      <CharacterLoadingBeat heading={HEADING} beats={MID_BEATS} reducedMotion={false} countdownLabel="Ready in about 2 min" />,
     )
     const countdown = getByTestId('character-loading-beat-countdown')
-    expect(countdown.textContent).toBe('~2:10 left')
+    expect(countdown.textContent).toBe('Ready in about 2 min')
     // aria-hidden: the SR live region stays the single AT source of truth.
     expect(countdown).toHaveAttribute('aria-hidden', 'true')
     // The world-gen countdown register: quiet tertiary ink, tabular digits, wrap-safe.
     expect(countdown.className).toMatch(/tabular-nums/)
     expect(countdown.className).toMatch(/text-ink-tertiary/)
     expect(countdown.className).toMatch(/break-words/)
+  })
+
+  it('seats the estimate on the kicker line, label·value — never floating attached to nothing (ux-run2 myth-8ddt4)', () => {
+    const { getByTestId, getByText } = render(
+      <CharacterLoadingBeat heading={HEADING} beats={MID_BEATS} reducedMotion={false} countdownLabel="Ready in about 2 min" />,
+    )
+    const header = getByTestId('character-loading-beat-header')
+    expect(header).toContainElement(getByText(HEADING))
+    expect(header).toContainElement(getByTestId('character-loading-beat-countdown'))
   })
 
   it('omits the countdown line entirely when no label is provided (no fake estimate)', () => {

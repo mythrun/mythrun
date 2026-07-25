@@ -41,7 +41,7 @@ function makeCampaign(overrides: Partial<CampaignSummary> = {}): CampaignSummary
 
 function renderCard(
   campaign: CampaignSummary,
-  extra: { lowOnSessionCredits?: boolean } = {},
+  extra: { lowOnSessionCredits?: boolean; premier?: boolean } = {},
 ): void {
   render(
     <I18nextProvider i18n={i18n}>
@@ -69,12 +69,22 @@ describe('CampaignCard — cardPhase → mono state line', () => {
   it.each([
     ['generating', 'home.card.generating'],
     ['failed', 'home.card.failed'],
-    ['needs-character', 'home.card.needsCharacter'],
     ['waiting-for-players', 'home.card.waiting'],
     ['not-played', 'home.card.notPlayed'],
   ] as const)('renders the %s phase line', (cardPhase, key) => {
     renderCard(makeCampaign({ cardPhase }))
     expect(screen.getByTestId('card-state').textContent).toBe(i18n.t(key))
+  })
+
+  it('lifts the needs-character line to the accent cta — never metadata gray (myth-rhvkt)', () => {
+    // Run 2: "Author your character →" sat at the same ink as "N sessions ·
+    // last played…", so a stalled campaign (a high-value re-engagement target)
+    // didn't pop when scanning a full grid. It now renders as the card's accent
+    // cta line (weight/color only — no badge, state-as-prose), replacing the
+    // muted state line.
+    renderCard(makeCampaign({ cardPhase: 'needs-character' }))
+    expect(screen.getByTestId('cover-card-cta').textContent).toBe(i18n.t('home.card.needsCharacter'))
+    expect(screen.queryByTestId('card-state')).toBeNull()
   })
 
   it('renders the play record for the played phase (N sessions · relative)', () => {
@@ -84,7 +94,7 @@ describe('CampaignCard — cardPhase → mono state line', () => {
     renderCard(makeCampaign({ cardPhase: 'played', sessionCount: 4, lastPlayedAt }))
     const line = screen.getByTestId('card-state').textContent
     expect(line).toContain('4 sessions')
-    expect(line).toContain('2 days ago')
+    expect(line).toContain('2\u00A0days\u00A0ago')
   })
 })
 
@@ -200,6 +210,32 @@ describe('CampaignCard — assembling party (built vs building seals)', () => {
     // Both a pigment Avatar and a placeholder seal are role="img"; 5 seals show.
     expect(screen.getAllByRole('img')).toHaveLength(5)
     expect(screen.getByText('+2')).toBeDefined()
+  })
+})
+
+// ── myth-z9eiq: the premier slot's continue-session cue ─────────────────────
+describe('CampaignCard — premier continue-session cue', () => {
+  // The hub passes `premier` to exactly one card (the most-recent-activity,
+  // top-left cell). A premier card WITH a play record carries the accent
+  // "Continue session →" cta — the resume affordance the returning player came
+  // for. A premier card not yet played keeps its ordinary state line only.
+  it('renders the continue-session cta on a premier played card', () => {
+    renderCard(makeCampaign({ cardPhase: 'played', sessionCount: 3, lastPlayedAt: '2026-06-01T10:00:00.000Z' }), {
+      premier: true,
+    })
+    expect(screen.getByTestId('cover-card-cta').textContent).toBe(i18n.t('home.card.continueSession'))
+    // The record line still reads alongside it.
+    expect(screen.getByTestId('card-state').textContent).toContain('3 sessions')
+  })
+
+  it('renders no cta on a premier card that has not been played', () => {
+    renderCard(makeCampaign({ cardPhase: 'not-played' }), { premier: true })
+    expect(screen.queryByTestId('cover-card-cta')).toBeNull()
+  })
+
+  it('renders no cta on a non-premier played card', () => {
+    renderCard(makeCampaign({ cardPhase: 'played', sessionCount: 3, lastPlayedAt: '2026-06-01T10:00:00.000Z' }))
+    expect(screen.queryByTestId('cover-card-cta')).toBeNull()
   })
 })
 

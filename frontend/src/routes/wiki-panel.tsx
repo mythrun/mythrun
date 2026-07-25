@@ -88,12 +88,17 @@ interface WikiPanelProps {
   onSelect: (entityId: string) => void
   query: string
   onQuery: (query: string) => void
+  /** The active creation step's topic (ux-run2 myth-ehcf4), forwarded to the
+   *  step-aware panel — see `WorldWikiProps.stepContext` for the contract. The
+   *  guided builder passes its step topic / selected card name; every other
+   *  host omits it. */
+  stepContext?: string
 }
 
 /** The wiki side of a world surface: a calm i18n line while the snapshot
  *  loads (or failed to), else the browsable `WorldWiki` with every chrome label
  *  resolved from the app catalog (the DS owns no copy). */
-export function WikiPanel({ state, externalSelection, onSelect, query, onQuery }: WikiPanelProps): React.JSX.Element {
+export function WikiPanel({ state, externalSelection, onSelect, query, onQuery, stepContext }: WikiPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   if (state.model === null) {
     return (
@@ -125,6 +130,7 @@ export function WikiPanel({ state, externalSelection, onSelect, query, onQuery }
         item: t('worldReveal.group.item'),
       }}
       {...(externalSelection !== undefined ? { selectedId: externalSelection } : {})}
+      {...(stepContext !== undefined ? { stepContext } : {})}
     />
   )
 }

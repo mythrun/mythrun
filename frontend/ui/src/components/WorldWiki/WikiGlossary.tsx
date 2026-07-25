@@ -1,5 +1,6 @@
 import type { WikiViewModel } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
+import { smartQuotes } from './smart-quotes.ts'
 
 // WikiGlossary (MYT-100 IA) — the world's invented vocabulary as a SCANNABLE,
 // collapsible list: one row per term (alphabetical, as the view model sorts
@@ -40,6 +41,9 @@ const TERM_CLASS = 'min-w-0 font-ui text-sm text-ink'
 const MARKER_CLASS = 'shrink-0 font-ui text-sm text-ink-tertiary select-none'
 
 // The definition — serif prose, revealed under the term when the row opens.
+// Rendered through `smartQuotes` (myth-urtcn): the generator's straight
+// typewriter quotes read as typos in the bookish serif; the term above stays
+// verbatim (mono DATA register, never transformed).
 const DEF_CLASS = 'px-[var(--space-3)] pb-[var(--space-3)] font-body text-base leading-[1.6] text-ink'
 
 export interface WikiGlossaryProps {
@@ -62,7 +66,7 @@ export function WikiGlossary({ glossary }: WikiGlossaryProps): React.JSX.Element
                 <span className="hidden group-open:inline">−</span>
               </span>
             </summary>
-            <p className={DEF_CLASS}>{entry.definition}</p>
+            <p className={DEF_CLASS}>{smartQuotes(entry.definition)}</p>
           </details>
         </li>
       ))}

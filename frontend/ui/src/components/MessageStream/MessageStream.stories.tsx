@@ -28,6 +28,8 @@ const ROLL_LABELS: RollCardLabels = {
   advantage: 'advantage',
   disadvantage: 'disadvantage',
   dieResult: 'You rolled',
+  explainerFor: (skill, modifier) => `Roll a d20 · ${skill} ${modifier} is your bonus`,
+  dcExplainer: 'The DC is the mark to meet',
 }
 
 // A mixed multi-turn transcript: a DM beat + a player reply + a skill check, then

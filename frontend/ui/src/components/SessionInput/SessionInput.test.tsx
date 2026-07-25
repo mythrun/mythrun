@@ -17,6 +17,7 @@ const LABELS = {
   summonLabel: 'Ask the DM',
   sendLabel: 'Send',
 }
+const SUMMON_HINT = 'Ask a question, out of character'
 
 // A controlled harness — SessionInput is a controlled composer (value/onChange),
 // so the test drives the value the way the route wire will.
@@ -29,6 +30,7 @@ function ControlledSessionInput(props: {
   busyLabel?: string
   initial?: string
   maxLength?: number
+  summonHint?: string
 }) {
   const {
     onSend = vi.fn(),
@@ -39,6 +41,7 @@ function ControlledSessionInput(props: {
     busyLabel,
     initial = '',
     maxLength,
+    summonHint,
   } = props
   const [v, setV] = useState(initial)
   return (
@@ -57,6 +60,7 @@ function ControlledSessionInput(props: {
       summonLabel={LABELS.summonLabel}
       sendLabel={LABELS.sendLabel}
       {...(maxLength !== undefined ? { maxLength } : {})}
+      {...(summonHint !== undefined ? { summonHint } : {})}
     />
   )
 }
@@ -218,6 +222,35 @@ describe('SessionInput — busy gating (myth-dd63v: no silent send-swallow)', ()
     )
     expect(getByRole('textbox')).toBeDisabled()
     expect(getByTestId('session-input-busy')).toHaveTextContent('')
+  })
+})
+
+describe('SessionInput — the @DM modality hint (myth-cimi3)', () => {
+  it('hovering the @DM summon shifts the placeholder to the out-of-character hint, and back on leave', () => {
+    const { getByRole } = render(<ControlledSessionInput summonHint={SUMMON_HINT} />)
+    const field = getByRole('textbox')
+    const summon = getByRole('button', { name: LABELS.summonLabel })
+    expect(field).toHaveAttribute('placeholder', LABELS.placeholder)
+    fireEvent.mouseEnter(summon)
+    expect(field).toHaveAttribute('placeholder', SUMMON_HINT)
+    fireEvent.mouseLeave(summon)
+    expect(field).toHaveAttribute('placeholder', LABELS.placeholder)
+  })
+
+  it('keyboard focus on the summon shifts the placeholder too (not a hover-only disclosure)', () => {
+    const { getByRole } = render(<ControlledSessionInput summonHint={SUMMON_HINT} />)
+    const field = getByRole('textbox')
+    const summon = getByRole('button', { name: LABELS.summonLabel })
+    fireEvent.focus(summon)
+    expect(field).toHaveAttribute('placeholder', SUMMON_HINT)
+    fireEvent.blur(summon)
+    expect(field).toHaveAttribute('placeholder', LABELS.placeholder)
+  })
+
+  it('without a summonHint the placeholder never shifts (back-compat)', () => {
+    const { getByRole } = render(<ControlledSessionInput />)
+    fireEvent.mouseEnter(getByRole('button', { name: LABELS.summonLabel }))
+    expect(getByRole('textbox')).toHaveAttribute('placeholder', LABELS.placeholder)
   })
 })
 

@@ -13,7 +13,11 @@
 // prose nit (that would strand the player mid-scene). The AuditedFastThinker calls it
 // post-render and logs any hits.
 
-export type FtProseViolationKind = 'unrendered_emphasis' | 'fused_sentence' | 'internal_term'
+export type FtProseViolationKind =
+  | 'unrendered_emphasis'
+  | 'fused_sentence'
+  | 'internal_term'
+  | 'structure_token'
 
 export interface FtProseViolation {
   readonly kind: FtProseViolationKind
@@ -35,6 +39,13 @@ const INTERNAL_TERMS: readonly string[] = [
   'my instructions',
   'the scaffolding',
 ]
+
+// A markdown structure token (ux-run2, myth-g4hf3 cross-cutting): a line that is
+// nothing but a horizontal rule (---, ***, ___). The client renders FT narration
+// as prose, so the token surfaces LITERALLY on the page (playthrough-2 seq 12
+// ended with a bare "---"). Same posture as the other checks: observability
+// only; the real fix is the ft-system prompt.
+const STRUCTURE_TOKEN = /^[ \t]*(-{3,}|\*{3,}|_{3,})[ \t]*$/m
 
 // A fused sentence seam (myth-uhr0f): sentence-final punctuation immediately followed
 // by a capital, with a LOWERCASE letter before the punctuation. The lowercase-before
@@ -82,6 +93,11 @@ export function checkFtProse(narration: string): FtProseViolation[] {
   if (term !== undefined) {
     const idx = lower.indexOf(term)
     violations.push({ kind: 'internal_term', detail: narration.slice(idx, idx + term.length) })
+  }
+
+  const structure = STRUCTURE_TOKEN.exec(narration)
+  if (structure !== null) {
+    violations.push({ kind: 'structure_token', detail: sliceAround(narration, structure.index) })
   }
 
   return violations

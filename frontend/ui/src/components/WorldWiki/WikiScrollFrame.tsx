@@ -3,28 +3,40 @@ import type { ReactNode, RefObject } from 'react'
 import { cn } from '../../lib/cn.ts'
 import { useScrollEdges } from './scroll-edges.ts'
 
-// WikiScrollFrame (myth-lcvv2) — the wiki's reading scroll region, made to ANNOUNCE
-// its overflow. The reveal wiki panel is a fixed-height scroll region (the graph half
-// owns the row height; the wiki half caps to it and scrolls internally), but two things
-// hid that: macOS overlay scrollbars vanish at rest, and nothing faded the cut edge — so
-// a definition that ran past the fold read as a hard clip mid-sentence, not as "scroll
-// for more" (the run-1 critique: "the flagship entry can't be finished").
+// WikiScrollFrame (myth-lcvv2; fade rebuilt in ux-run2 myth-9dcfq) — the wiki's
+// reading scroll region, made to ANNOUNCE its overflow. The reveal wiki panel is a
+// fixed-height scroll region (the graph half owns the row height; the wiki half caps
+// to it and scrolls internally), but two things hid that: macOS overlay scrollbars
+// vanish at rest, and nothing marked the cut edge — so a definition that ran past the
+// fold read as a hard clip mid-sentence, not as "scroll for more".
 //
-// The fix, both halves of the run-1 prescription:
+// The affordance, both halves:
 //   1. a quiet, styled scrollbar — `scrollbar-color`/`-width` render it thin in the ink
 //      register, and a stable gutter reserves its width so expanding a glossary row never
 //      reflows the prose sideways (on platforms with classic scrollbars; macOS overlay
 //      scrollbars still auto-hide, which is why the fade below is the still-frame cue).
-//   2. top / bottom FADE masks, gated by scroll position (`useScrollEdges`) — the bottom
-//      fade appears whenever content extends past the fold and clears at the end, so the
-//      truncation announces itself even in a still frame; the top fade mirrors it once the
-//      reader scrolls down.
+//   2. shallow top/bottom edge FADES, gated by scroll position (`useScrollEdges`) — the
+//      bottom fade appears whenever content extends past the fold and clears at the end;
+//      the top fade mirrors it once the reader scrolls down.
+//
+// THE FADE IS A MASK, NOT AN OVERLAY (myth-9dcfq). The first cut painted a
+// `--bg`→transparent gradient div OVER the content, which failed two ways: on a
+// panel grounded on `--surface` (the char-fork rail) the wash was the WRONG tone —
+// a visible gray smudge — and its 32px band rendered whole glossary rows at
+// intermediate alpha, "the near-universal styling for DISABLED, exactly the wrong
+// thing to imply about a tappable term." A CSS mask on the scroll element fades the
+// CONTENT ITSELF to transparent, revealing whatever ground is truly behind (any
+// panel tone, both themes, by construction), and the band is clamped to
+// `FADE_BAND_PX` — shallower than one text line, so it can only graze the sliced
+// edge of the line the fold cuts. A cleanly cropped line with a grazed edge is the
+// honest cue (the praised reveal-pane crop); a ghosted full row never happens.
 //
 // The scroll element carries the caller's `scrollRef` (the shell's scroll-memory reads
 // `scrollTop` off it) merged with the frame's own. Children are the scroll element's
 // DIRECT content (no wrapper) so the shell's `article.parentElement`-relative scroll
-// memory and the browser sweep's overflow probes are unchanged. The fades are
-// `aria-hidden` paper masks — strictly two-tone (`--bg` → transparent), no new colour.
+// memory and the browser sweep's overflow probes are unchanged. The live edge state is
+// stamped as `data-scroll-edges` (jsdom can't compute inline mask styles — the attribute
+// is the testable surface, and a debugging aid in the inspector).
 
 /** The scroll element's classes: the flex-filled scroll region plus the quiet styled
  *  scrollbar (thin, `--border-strong` thumb over a transparent track, a stable gutter
@@ -35,11 +47,21 @@ const SCROLL_CLASS = cn(
   '[scrollbar-width:thin] [scrollbar-color:var(--border-strong)_transparent] [scrollbar-gutter:stable]',
 )
 
-const FADE_BASE = 'pointer-events-none absolute inset-x-0 z-10 h-[var(--space-6)] transition-opacity duration-[var(--duration-fast)]'
-// The paper masks: a gradient from the page ground to transparent (token `var(--bg)`,
-// which flips with the theme — no raw colour, no color-function → no-ad-hoc-color safe).
-const TOP_FADE_STYLE = { backgroundImage: 'linear-gradient(to bottom, var(--bg), transparent)' } as const
-const BOTTOM_FADE_STYLE = { backgroundImage: 'linear-gradient(to top, var(--bg), transparent)' } as const
+/** The edge-fade band (px). MUST stay below one text line (~20px at the wiki's
+ *  tightest row, text-sm) — the mask may graze only the SLICED edge of the line
+ *  the fold cuts, never render a full line or a tappable row at intermediate
+ *  alpha (myth-9dcfq; the geometry pin lives in the test). */
+export const FADE_BAND_PX = 12
+
+/** The mask-image for the current edge state — `black` is only the alpha carrier
+ *  (a mask reads alpha, it paints nothing), `transparent` is the fade-out. No
+ *  edges → no mask (undefined). */
+function maskFor(top: boolean, bottom: boolean): string | undefined {
+  if (!top && !bottom) return undefined
+  const from = top ? `transparent 0, black ${String(FADE_BAND_PX)}px` : 'black 0'
+  const to = bottom ? `black calc(100% - ${String(FADE_BAND_PX)}px), transparent 100%` : 'black 100%'
+  return `linear-gradient(to bottom, ${from}, ${to})`
+}
 
 export interface WikiScrollFrameProps {
   /** The semantic element for the scroll region — `article` for an entity page,
@@ -58,7 +80,7 @@ export interface WikiScrollFrameProps {
 }
 
 /** A vertical scroll region that announces its overflow with a styled scrollbar and
- *  scroll-gated top/bottom fades. */
+ *  scroll-gated, mask-built edge fades. */
 export function WikiScrollFrame({
   as = 'div',
   scrollRef,
@@ -77,10 +99,15 @@ export function WikiScrollFrame({
     if (scrollRef !== undefined) scrollRef.current = el
   }
 
+  const mask = maskFor(top, bottom)
+  const edges = [top && 'top', bottom && 'bottom'].filter(Boolean).join(' ')
   const scrollProps = {
     ref: setScroll,
     onScroll,
     className: cn(SCROLL_CLASS, contentClassName),
+    ...(mask !== undefined
+      ? { style: { maskImage: mask, WebkitMaskImage: mask }, 'data-scroll-edges': edges }
+      : {}),
     ...(dataTestId !== undefined ? { 'data-testid': dataTestId } : {}),
   }
 
@@ -91,8 +118,6 @@ export function WikiScrollFrame({
       ) : (
         <div {...scrollProps}>{children}</div>
       )}
-      <div aria-hidden="true" style={TOP_FADE_STYLE} className={cn(FADE_BASE, 'top-0', top ? 'opacity-100' : 'opacity-0')} />
-      <div aria-hidden="true" style={BOTTOM_FADE_STYLE} className={cn(FADE_BASE, 'bottom-0', bottom ? 'opacity-100' : 'opacity-0')} />
     </div>
   )
 }

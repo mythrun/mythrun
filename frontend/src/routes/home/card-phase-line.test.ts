@@ -53,7 +53,7 @@ describe('cardPhaseLine', () => {
       NOW_MS,
     )
     expect(plural).toContain('4 sessions')
-    expect(plural).toContain('2 days ago')
+    expect(plural).toContain('2\u00A0days\u00A0ago')
 
     // count === 1 selects record_one → the singular "1 session" (never "1 sessions").
     const singular = cardPhaseLine(
@@ -64,6 +64,21 @@ describe('cardPhaseLine', () => {
     )
     expect(singular).toContain('1 session')
     expect(singular).not.toContain('1 sessions')
+  })
+
+  it('keeps the relative phrase internally non-breaking so a number never wraps from its unit (myth-rhvkt)', () => {
+    // Run 2 caught "last played 4 / days ago" wrapping mid-phrase at the card's
+    // measure, reading as unproofread. The phrase joins with NBSP so it wraps as
+    // one unit (the line may still break at the literal copy's spaces or the ·).
+    const lastPlayedAt = new Date(NOW_MS - 4 * DAY_MS).toISOString()
+    const line = cardPhaseLine(
+      makeCampaign({ cardPhase: 'played', sessionCount: 7, lastPlayedAt }),
+      i18n.t,
+      'en',
+      NOW_MS,
+    )
+    expect(line).toContain('4\u00A0days\u00A0ago')
+    expect(line).not.toContain('4 days ago')
   })
 
   it('falls back to the terse "recently" when a played card has a null lastPlayedAt', () => {

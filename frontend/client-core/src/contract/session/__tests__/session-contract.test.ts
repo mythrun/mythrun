@@ -104,6 +104,10 @@ describe('prop contracts (exact — the U tasks build to these)', () => {
       readonly advantage: string
       readonly disadvantage: string
       readonly dieResult: string
+      // myth-3dufc — the newcomer framing line (a label FUNCTION: it interpolates
+      // per-card skill + signed modifier) + the post-roll DC explainer.
+      readonly explainerFor: (skill: string, modifier: string) => string
+      readonly dcExplainer: string
     }>()
   })
 
@@ -149,6 +153,8 @@ describe('prop contracts (exact — the U tasks build to these)', () => {
       busy?: boolean
       busyLabel?: string
       placeholder: string
+      // myth-cimi3 — the hover/focus modality hint the placeholder shifts to.
+      summonHint?: string
       summonLabel: string
       sendLabel: string
       maxLength?: number

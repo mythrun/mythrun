@@ -20,26 +20,41 @@ export default meta
 
 type Story = StoryObj<typeof GuidedRail>
 
-// The grounding screen — every builder rung done, the rail-only grounding rung
-// `now`: the state guided-path renders above the grounding prompt.
+// The grounding screen — every builder rung done (collapsed to their chosen
+// values — the receipt IS the path; a chosen subclass rides the class rung), the
+// rail-only Arrival rung `now`: the state guided-path renders above the
+// grounding prompt.
 const GROUNDING_RAIL: RailStep[] = [
-  { step: 'class', label: 'Class', chosen: 'Fighter', state: 'done' },
-  { step: 'subclass', label: 'Subclass', chosen: 'Champion', state: 'done' },
+  { step: 'class', label: 'Class', chosen: 'Fighter · Champion', state: 'done' },
   { step: 'species', label: 'Species', chosen: 'Human', state: 'done' },
   { step: 'background', label: 'Background', chosen: 'Soldier', state: 'done' },
   { step: 'notes', label: 'Notes', state: 'done' },
-  { step: 'grounding', label: 'Grounding', state: 'now' },
+  { step: 'grounding', label: 'Arrival', state: 'now' },
 ]
 
 // The notes screen — the free-text coda mid-journey: picks done, notes `now`,
-// grounding still `todo` ahead.
+// the arrival still `todo` ahead.
 const NOTES_RAIL: RailStep[] = [
-  { step: 'class', label: 'Class', chosen: 'Cleric', state: 'done' },
-  { step: 'subclass', label: 'Subclass', chosen: 'Life Domain', state: 'done' },
+  { step: 'class', label: 'Class', chosen: 'Cleric · Life Domain', state: 'done' },
   { step: 'species', label: 'Species', chosen: 'Dwarf', state: 'done' },
   { step: 'background', label: 'Background', chosen: 'Acolyte', state: 'done' },
   { step: 'notes', label: 'Notes', state: 'now' },
-  { step: 'grounding', label: 'Grounding', state: 'todo' },
+  { step: 'grounding', label: 'Arrival', state: 'todo' },
+]
+
+// A completed NOTES station carrying the player's own prose — clamped to a
+// one-line ellipsis token, expandable on click (ux-run2 myth-udhp3).
+const CLAMPED_RAIL: RailStep[] = [
+  { step: 'class', label: 'Class', chosen: 'Cleric · Life Domain', state: 'done' },
+  { step: 'species', label: 'Species', chosen: 'Human', state: 'done' },
+  { step: 'background', label: 'Background', chosen: 'Hermit', state: 'done' },
+  {
+    step: 'notes',
+    label: 'Notes',
+    chosen: 'They call me Sable now, though that is only the half of it. The ledger remembers the rest.',
+    state: 'done',
+  },
+  { step: 'grounding', label: 'Arrival', state: 'now' },
 ]
 
 // Desktop — the grounding state at a comfortable measure.
@@ -52,12 +67,25 @@ export const Grounding: Story = {
   ),
 }
 
-// Mid-journey — the notes step with grounding still ahead.
+// Mid-journey — the notes step with the arrival still ahead, plus the quiet
+// step counter on the trailing edge.
 export const Notes: Story = {
-  name: 'Notes (grounding ahead)',
+  name: 'Notes (arrival ahead, counter)',
   render: () => (
     <div className="max-w-[720px] bg-bg p-[var(--space-6)]">
-      <GuidedRail rail={NOTES_RAIL} />
+      <GuidedRail rail={NOTES_RAIL} counter="Step 4 of 5" />
+    </div>
+  ),
+}
+
+// A long NOTES value — the rung clamps to a one-line token with an ellipsis and
+// expands on click (the full note is one click away; the breadcrumb never
+// out-shouts the current step).
+export const ClampedNotes: Story = {
+  name: 'Long notes (clamped, click to expand)',
+  render: () => (
+    <div className="max-w-[720px] bg-bg p-[var(--space-6)]">
+      <GuidedRail rail={CLAMPED_RAIL} counter="Step 5 of 5" />
     </div>
   ),
 }

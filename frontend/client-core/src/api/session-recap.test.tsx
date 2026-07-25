@@ -81,7 +81,9 @@ describe('useSessionRecap', () => {
     await waitFor(() => {
       expect(result.current.data).toBeDefined()
     })
-    expect(result.current.data.recap.status).toBe('pending')
+    // `recap` is nullable in the contract (no ended session yet) — the optional
+    // chain keeps strict-null happy; a null recap fails the expectation anyway.
+    expect(result.current.data.recap?.status).toBe('pending')
   })
 
   it('polls while pending, then STOPS once the analysis lands', async () => {
@@ -99,7 +101,7 @@ describe('useSessionRecap', () => {
     // answer is ready, after which the interval resolves to false (no more calls).
     await waitFor(
       () => {
-        expect(result.current.data.recap.status).toBe('ready')
+        expect(result.current.data.recap?.status).toBe('ready')
       },
       { timeout: 8_000 },
     )

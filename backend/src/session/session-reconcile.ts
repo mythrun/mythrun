@@ -142,7 +142,9 @@ export function renderWorkingSet(items: readonly WorkingSetItem[]): string {
       const prov =
         it.provenance.kind === 'attributed'
           ? `attributed (by ${it.provenance.npcName})`
-          : 'objective'
+          : it.provenance.kind === 'dice_outcome'
+            ? `dice-earned (${it.provenance.outcomeTier} on a resolved roll — canon-on-grant; the world conforms to it)`
+            : 'objective'
       const parent = it.parentName !== undefined && it.parentName.length > 0 ? ` parent=${it.parentName}` : ''
       return (
         `[ITEM ${String(i + 1)}] subject="${it.subjectName}" kind=${it.kind} tier=${it.tier} ` +

@@ -24,7 +24,7 @@ describe('Heading', () => {
     expect(getByTestId('h')).toHaveClass(...TYPE_ROLE_CLASS.heading.split(' '))
   })
 
-  it.each(['display', 'title'] as const)('applies the %s role classes', (role) => {
+  it.each(['display', 'headline', 'title'] as const)('applies the %s role classes', (role) => {
     const { getByTestId } = render(
       <Heading data-testid="h" level={1} role={role}>
         x

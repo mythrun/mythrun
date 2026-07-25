@@ -123,16 +123,14 @@ describe('cardPhase', () => {
 describe('buildRevealView', () => {
   it('(e) phases every card and gates only un-released skill_checks (dice never gates, released does not)', () => {
     const items: readonly TranscriptItem[] = [
-      playerItem('p1'), // non-card — skipped
-      skillCard('sc1', 'T1'), // live, idle → gates T1
-      diceCard('dr1', 'T2'), // live dice — never gates
-      dmItem('dm2', 'T2'), // non-card
+      playerItem('p1'), // non-card, BEFORE the card — never demotes it
       skillCard('sc3', 'T3', 9), // replayed → released → does not gate
+      skillCard('sc1', 'T1'), // live, idle, at the tail → gates T1
+      dmItem('dm1', 'T1'), // same-turn prose — gated (invisible), not a demotion
     ]
     const view = buildRevealView(items, emptyRollReveal)
-    expect(view.phaseByKey).toEqual({ sc1: 'idle', dr1: 'idle', sc3: 'released' })
+    expect(view.phaseByKey).toEqual({ sc1: 'idle', sc3: 'released' })
     expect(view.gatedTurnIds.has('T1')).toBe(true) // un-released skill_check gates
-    expect(view.gatedTurnIds.has('T2')).toBe(false) // dice_roll never gates
     expect(view.gatedTurnIds.has('T3')).toBe(false) // released skill_check does not gate
   })
 
@@ -146,6 +144,89 @@ describe('buildRevealView', () => {
 
     state = rollRevealReducer(state, { type: 'continue', key: 'b' })
     expect(buildRevealView(items, state).gatedTurnIds.has('T')).toBe(false) // both released → open
+  })
+})
+
+describe('buildRevealView — moved-on demotion (myth-svmer)', () => {
+  // The turn-state coherence law: nothing may render below a card still claiming
+  // to be unresolved. When a VISIBLE item lands after an un-released card, the
+  // card demotes to a historical record ('released') and its gate lifts.
+
+  it('a player message after an un-released card demotes it (and lifts the gate) in the same paint', () => {
+    const items: readonly TranscriptItem[] = [skillCard('sc1', 'T1'), dmItem('dm1', 'T1'), playerItem('p1')]
+    const view = buildRevealView(items, emptyRollReveal)
+    expect(view.phaseByKey.sc1).toBe('released')
+    expect(view.gatedTurnIds.has('T1')).toBe(false)
+  })
+
+  it('a revealed (awaiting-Continue) card demotes the same way when the transcript moves on', () => {
+    const rolled = rollRevealReducer(emptyRollReveal, { type: 'roll', key: 'sc1' })
+    const items: readonly TranscriptItem[] = [skillCard('sc1', 'T1'), playerItem('p1')]
+    expect(buildRevealView(items, rolled).phaseByKey.sc1).toBe('released')
+  })
+
+  it("a LATER turn's visible item demotes an earlier armed card", () => {
+    const items: readonly TranscriptItem[] = [skillCard('sc1', 'T1'), dmItem('dm2', 'T2')]
+    const view = buildRevealView(items, emptyRollReveal)
+    expect(view.phaseByKey.sc1).toBe('released')
+    expect(view.gatedTurnIds.size).toBe(0)
+  })
+
+  it("same-turn items never demote: the card's own gated prose and mechanical lines are the normal flow", () => {
+    const ledger: TranscriptItem = {
+      kind: 'ledger_update',
+      key: 'lu1',
+      turnId: 'T1',
+      frame: {
+        type: 'ledger_update',
+        turnId: 'T1',
+        characterName: 'Cee',
+        kind: 'rest',
+        restType: 'short',
+        summary: 'Cee catches her breath.',
+      },
+    }
+    const items: readonly TranscriptItem[] = [skillCard('sc1', 'T1'), dmItem('dm1', 'T1'), ledger]
+    const view = buildRevealView(items, emptyRollReveal)
+    expect(view.phaseByKey.sc1).toBe('idle') // the theatre stays armed
+    expect(view.gatedTurnIds.has('T1')).toBe(true)
+  })
+
+  it('a gated dm item of ANOTHER un-released turn is invisible, so it does not demote', () => {
+    // Two armed turns: T2's card + prose sit after T1's card, but T2's prose is
+    // gated (invisible). T1's card sees only T2's CARD as visible → demotes; T2's
+    // card is the tail → stays armed.
+    const items: readonly TranscriptItem[] = [
+      skillCard('sc1', 'T1'),
+      skillCard('sc2', 'T2'),
+      dmItem('dm2', 'T2'),
+    ]
+    const view = buildRevealView(items, emptyRollReveal)
+    expect(view.phaseByKey.sc1).toBe('released') // T2's card is visible below it
+    expect(view.phaseByKey.sc2).toBe('idle') // the tail card keeps its theatre
+    expect(view.gatedTurnIds.has('T2')).toBe(true)
+    expect(view.gatedTurnIds.has('T1')).toBe(false)
+  })
+
+  it("the demotion probe looks PAST a later turn's gated prose to that turn's own visible card", () => {
+    // T2 streams its prose BEFORE its check card (the in-turn order). T1's card
+    // must not stop at the invisible gated prose: the next VISIBLE item is T2's
+    // card, which demotes T1's theatre; T2's own card stays armed at the tail.
+    const items: readonly TranscriptItem[] = [
+      skillCard('sc1', 'T1'),
+      dmItem('dm2', 'T2'),
+      skillCard('sc2', 'T2'),
+    ]
+    const view = buildRevealView(items, emptyRollReveal)
+    expect(view.phaseByKey.sc1).toBe('released')
+    expect(view.phaseByKey.sc2).toBe('idle')
+    expect(view.gatedTurnIds.has('T2')).toBe(true)
+    expect(view.gatedTurnIds.has('T1')).toBe(false)
+  })
+
+  it('an armed dice_roll (flavor) card also demotes when a later turn renders below it', () => {
+    const items: readonly TranscriptItem[] = [diceCard('dr1', 'T1'), playerItem('p1')]
+    expect(buildRevealView(items, emptyRollReveal).phaseByKey.dr1).toBe('released')
   })
 })
 

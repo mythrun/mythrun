@@ -44,10 +44,17 @@ export interface PublisherCalls {
    *  rather than `expect(publisher.turnError)` (which detaches the method —
    *  `@typescript-eslint/unbound-method`). */
   readonly turnErrorArgs: { campaignId: string; turnId: string; message: string }[]
+  /** myth-aiiao — args of each turnReplace call (the corrected-turn push). */
+  readonly turnReplaceArgs: {
+    campaignId: string
+    messages: readonly unknown[]
+    participants: readonly unknown[]
+    mode: string
+  }[]
 }
 
 export function newCalls(): PublisherCalls {
-  return { order: [], turnErrorArgs: [] }
+  return { order: [], turnErrorArgs: [], turnReplaceArgs: [] }
 }
 
 export function recordingPublisher(calls: PublisherCalls): TurnPublisher {
@@ -64,6 +71,19 @@ export function recordingPublisher(calls: PublisherCalls): TurnPublisher {
       calls.order.push('turn_end')
       return Promise.resolve()
     }),
+    // myth-aiiao — the corrected-turn whole-turn-replace publish.
+    turnReplace: vi.fn(
+      (
+        campaignId: string,
+        messages: readonly unknown[],
+        participants: readonly unknown[],
+        mode: string,
+      ): Promise<void> => {
+        calls.order.push('turn_replace')
+        calls.turnReplaceArgs.push({ campaignId, messages, participants, mode })
+        return Promise.resolve()
+      },
+    ),
     skillCheck: vi.fn((): Promise<void> => {
       calls.order.push('skill_check')
       return Promise.resolve()
@@ -218,6 +238,11 @@ export function fakeRepo(overrides?: {
    *  its name-detection haystack (also the controller's history rebuild). Default
    *  [] → augment early-returns the base ft_context. */
   ftContextRows?: readonly SessionMessage[]
+  /** myth-aiiao: the rows `listByTurn` returns for the corrected-turn replace
+   *  push. Default [] → an empty replace batch. */
+  turnRows?: readonly SessionMessage[]
+  /** myth-aiiao: the campaign-member roster `listMembers` returns. Default []. */
+  members?: readonly { userId: string; displayName: string }[]
   /** myth-dwyuw: the KNOWN-tier canon entities `augment` loads (default []). */
   canonEntities?: readonly { id: string; name: string; entityType: string }[]
   /** myth-dwyuw: the KNOWN-tier facts `augment` loads per matched entity (default []). */
@@ -240,6 +265,8 @@ export function fakeRepo(overrides?: {
         overrides?.listAfterSeqRejects
           ? Promise.reject(overrides.listAfterSeqRejects)
           : Promise.resolve(trailing),
+      // myth-aiiao — the corrected-turn replace push's row read (empty default).
+      listByTurn: () => Promise.resolve([...(overrides?.turnRows ?? [])]),
     },
     sessions: {
       getById: () => Promise.resolve(session),
@@ -252,6 +279,8 @@ export function fakeRepo(overrides?: {
       // MYT-72: the world-id lookup `resolveWorldId` reads on the fresh-run arm.
       // Default a stable world id so the fresh-run tests resolve cleanly.
       getWorldId: () => Promise.resolve('w-fake'),
+      // myth-aiiao — the replace push's display-name roster (empty default).
+      listMembers: () => Promise.resolve([...(overrides?.members ?? [])]),
     },
     characters: {
       findSessionParticipantCharacterByName: () => Promise.resolve({ outcome: 'not_found' }),

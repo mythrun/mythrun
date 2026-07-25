@@ -156,7 +156,7 @@ describe('sessions analysis repo (integration)', () => {
       await sessions.writeAnalysis(s2.id, {
         summary: 'S2',
         emergingThreads: ['t'],
-        handoff: { npcs: [] },
+        handoff: makeHandoff(),
       })
       const latest = await sessions.getLatestEndedRecap(campaignId)
       expect(latest?.sessionNumber).toBe(2)

@@ -42,6 +42,29 @@ describe('WikiGlossary', () => {
     expect(details.open).toBe(false)
   })
 
+  it('renders definitions with typographic quotes (ux-run2 myth-urtcn) — the term stays verbatim data', () => {
+    const quoted = [
+      { term: "mara's water", definition: "named for 'Mara Solenne', the city's first drowned." },
+    ]
+    const { getByText } = render(<WikiGlossary glossary={quoted} />)
+    expect(getByText('named for ‘Mara Solenne’, the city’s first drowned.')).toBeInTheDocument()
+    // The TERM is the mono data register — rendered as-is, never transformed.
+    expect(getByText("mara's water")).toBeInTheDocument()
+  })
+
+  it('toggles from anywhere on the row — the summary spans rule to rule (ux-run2 myth-urtcn)', async () => {
+    const user = userEvent.setup()
+    const { getByText } = render(<WikiGlossary glossary={GLOSSARY} />)
+    const summary = getByText('ashfen').closest('summary')
+    if (summary === null) throw new Error('glossary term is not inside a <summary>')
+    // The full-width summary IS the hit target: activating the summary itself
+    // (not the term text, not the +) discloses the row.
+    expect(summary.className).toContain('w-full')
+    const details = summary.closest('details')
+    await user.click(summary)
+    expect(details?.open).toBe(true)
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(<WikiGlossary glossary={GLOSSARY} />)
     expect(await axe(container)).toHaveNoViolations()

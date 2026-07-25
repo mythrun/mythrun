@@ -15,7 +15,9 @@ import { resolveIncludes } from '../../prompts.js'
 import { SONNET } from '../../models.js'
 import {
   CharacterConceptOutputSchema,
+  GuidedChoicesSchema,
   type CharacterConceptOutput,
+  type GuidedChoices,
 } from '../../schemas/character-concept.js'
 import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
 import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
@@ -59,9 +61,32 @@ export interface CharacterConceptStageResult {
   readonly outputTokens: number
 }
 
+// myth-4jhrk: parse the persisted guided_choices JSONB into the typed wire
+// shape. The route validated on write, so a parse miss is a legacy/foreign
+// row — treated as "no picks" (freeform), never an error.
+function parseGuidedChoices(raw: Record<string, unknown>): GuidedChoices {
+  const parsed = GuidedChoicesSchema.safeParse(raw)
+  return parsed.success ? parsed.data : {}
+}
+
+// Render the {{guidedChoices}} prompt block: one `field: value` line per
+// present pick, or the explicit none-marker so the template's framing text
+// reads coherently on freeform submissions.
+function renderGuidedChoices(picks: GuidedChoices): string {
+  const lines = [
+    picks.class !== undefined ? `class: ${picks.class}` : null,
+    picks.subclass !== undefined ? `subclass: ${picks.subclass}` : null,
+    picks.species !== undefined ? `species: ${picks.species}` : null,
+    picks.background !== undefined ? `background: ${picks.background}` : null,
+  ].filter((line): line is string => line !== null)
+  return lines.length > 0 ? lines.join('\n') : '(none — the player wrote a freeform concept)'
+}
+
 export async function runCharacterConceptStage(
   args: CharacterConceptArgs,
 ): Promise<CharacterConceptStageResult> {
+  const picks = parseGuidedChoices(args.guidedChoices)
+
   // Function replacers: every value is user/LLM-derived (the concept text is
   // user input), so a `$&`/`$'`-style sequence must splice in literally rather
   // than being read as a special replacement pattern.
@@ -77,6 +102,7 @@ export async function runCharacterConceptStage(
       () => renderVocabularyRegistry(args.vocabularyRegistry),
     )
     .replace('{{conceptText}}', () => args.conceptText)
+    .replace('{{guidedChoices}}', () => renderGuidedChoices(picks))
 
   const result = await generateObject({
     model: SONNET,
@@ -95,8 +121,18 @@ export async function runCharacterConceptStage(
   const outputTokens = result.usage.outputTokens ?? 0
   /* c8 ignore stop */
 
+  // myth-4jhrk: the guided subclass is a KNOWN input, not the model's call —
+  // OVERRIDE the echo deterministically (ZFC; mirrors the MYT-90 A4 level
+  // override in the processor). The run-2 forensics showed the model dropping
+  // the pick under the canonical-vocabulary framing; the pin makes the drop
+  // structurally impossible regardless of prompt compliance.
+  const concept: CharacterConceptOutput =
+    picks.subclass !== undefined
+      ? { ...result.output, subclass: picks.subclass }
+      : result.output
+
   return {
-    concept: result.output,
+    concept,
     costUsd:
       (inputTokens / 1_000_000) * SONNET_INPUT_PER_MTOK +
       (outputTokens / 1_000_000) * SONNET_OUTPUT_PER_MTOK,

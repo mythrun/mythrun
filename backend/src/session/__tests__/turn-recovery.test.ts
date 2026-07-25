@@ -66,6 +66,8 @@ const recoveryRepo: TurnWorkerRepo = {
     maxSeq: () => Promise.resolve(0),
     // No trailing rows → the post-turn re-mature never re-arms in this flow.
     listAfterSeq: () => Promise.resolve([]),
+    // myth-aiiao — the corrected-turn replace push's row read (unused here).
+    listByTurn: () => Promise.resolve([]),
   },
   sessions: {
     getById: () => Promise.resolve({ sessionNumber: 1 }),
@@ -73,7 +75,7 @@ const recoveryRepo: TurnWorkerRepo = {
     budgetSummary: () => Promise.resolve(null),
   },
   sessionPreps: { getBy: () => Promise.resolve(null) },
-  campaigns: { getWorldId: () => Promise.resolve('w-recovery') },
+  campaigns: { getWorldId: () => Promise.resolve('w-recovery'), listMembers: () => Promise.resolve([]) },
   characters: {
     findSessionParticipantCharacterByName: () => Promise.resolve({ outcome: 'not_found' }),
     listSessionParticipantCharacters: () => Promise.resolve([]),

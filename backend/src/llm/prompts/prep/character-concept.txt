@@ -18,12 +18,27 @@ Key tensions: {{keyTensions}}
 # Player's concept text
 {{conceptText}}
 
+# Guided-builder picks
+{{guidedChoices}}
+
+When picks are listed above, they are the player's COMMITTED choices from the
+guided character builder — authoritative inputs, not suggestions. Echo each
+one verbatim into the matching output field (class, subclass, race for
+species, background). Never substitute, normalize away, or "improve" a listed
+pick.
+
 # Output requirements
 - name: a name that fits the world's naming conventions, not a real-world
   franchise name.
 - race, class, background: SRD-compliant. Use the canonical SRD vocabulary
   (cleric/wizard/rogue/etc., elf/dwarf/halfling/etc.) — these are platform
   terms, not franchise borrowings.
+- subclass: OPTIONAL — include ONLY when the player named one: a
+  guided-builder subclass pick above, or a subclass stated explicitly in the
+  concept text (a domain, college, oath, path, circle, archetype, school,
+  tradition, or patron). Echo the player's named subclass verbatim — the
+  canonical-vocabulary rule above does NOT strip it. NEVER invent a subclass
+  the player did not name; omit the field instead.
 - alignment, age, gender: as fits the concept.
 - physical_description: 1-3 sentences.
 - personality_traits / ideals / bonds / flaws: 1-3 each, specific to this

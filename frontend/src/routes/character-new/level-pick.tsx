@@ -121,6 +121,33 @@ function MemberHold(): React.JSX.Element {
   )
 }
 
+/** Seed the pre-selection from the persisted level (owner only) so the picker
+ *  reflects a prior choice instead of always showing the default — otherwise
+ *  Back → re-confirm silently overwrites e.g. 5 with 3 (MYT-102 QA M1). A failed
+ *  probe just leaves the default. */
+function usePersistedLevelSeed(
+  role: RoleState,
+  ctx: ApiContext,
+  campaignId: string,
+  fetchStartingLevel: FetchStartingLevel,
+  setSelected: (level: CharacterLevel) => void,
+): void {
+  useEffect(() => {
+    if (role !== 'owner') return
+    let active = true
+    void fetchStartingLevel(ctx, campaignId)
+      .then((lvl) => {
+        if (active && lvl !== null && lvl >= 1 && lvl <= 5) setSelected(lvl as CharacterLevel)
+      })
+      .catch(() => {
+        // Calm: a failed probe just leaves the default pre-selection.
+      })
+    return () => {
+      active = false
+    }
+  }, [role, ctx, campaignId, fetchStartingLevel, setSelected])
+}
+
 export interface LevelPickRouteProps {
   /** The set sink — defaults to the real endpoint; tests substitute it. */
   setStartingLevel?: SetStartingLevel
@@ -145,23 +172,7 @@ export function LevelPickRoute({
   const role = useOwnerRole(id, ctx, fetchCampaigns)
   const choices = useLevelChoices()
   const [selected, setSelected] = useState<CharacterLevel>(DEFAULT_LEVEL)
-  // Seed the pre-selection from the persisted level (owner only) so the picker
-  // reflects a prior choice instead of always showing DEFAULT_LEVEL — otherwise
-  // Back → re-confirm silently overwrites e.g. 5 with 3 (MYT-102 QA M1).
-  useEffect(() => {
-    if (role !== 'owner') return
-    let active = true
-    void fetchStartingLevel(ctx, id)
-      .then((lvl) => {
-        if (active && lvl !== null && lvl >= 1 && lvl <= 5) setSelected(lvl as CharacterLevel)
-      })
-      .catch(() => {
-        // Calm: a failed probe just leaves the default pre-selection.
-      })
-    return () => {
-      active = false
-    }
-  }, [role, ctx, id, fetchStartingLevel])
+  usePersistedLevelSeed(role, ctx, id, fetchStartingLevel, setSelected)
   const [submitFailed, setSubmitFailed] = useState(false)
 
   const handleConfirm = (): void => {
@@ -195,47 +206,62 @@ export function LevelPickRoute({
   }
 
   return (
-    <Stack gap={5} data-testid="level-pick">
-      <Stack gap={1}>
-        <Text role="ui-caption" as="p">
-          {t('startingLevel.eyebrow')}
-        </Text>
-        <Heading level={1} role="title">
-          {t('startingLevel.prompt')}
-        </Heading>
-        <Text role="prose-body" as="p">
-          {t('startingLevel.lede')}
-        </Text>
-      </Stack>
-      {/* 5-across on a normal desktop, collapsing to a single stacked column at 375px.
-          auto-fill sizes cells at a card-scale min (176px) and grows them to fill via
-          1fr: at ~311px mobile content only one 176px track fits (stacked); at desktop
-          widths all five sit on one row. (The DS auto-FIT track tops out at a 64px min
-          — too small for cards — so the px auto-FILL fallback is the card-grid idiom.) */}
-      <Grid columns="auto-fill" minColumnPx={176} gap={3}>
-        {choices.map((choice) => (
-          <LevelCard
-            key={choice.level}
-            level={choice.level}
-            eyebrow={t('startingLevel.cardEyebrow')}
-            grantGloss={choice.grantGloss}
-            selected={choice.level === selected}
-            onSelect={() => {
-              setSelected(choice.level)
-            }}
-          />
-        ))}
-      </Grid>
-      <Stack gap={2}>
-        <Button variant="primary" onPress={handleConfirm} data-testid="level-pick-confirm">
-          {t('startingLevel.cta', { level: selected })}
-        </Button>
-        {submitFailed && (
+    // The page-seated block (ux-run2 myth-ma8yv, critique 023): a minHeight="page"
+    // column with 1:2 grow spacers seats the one decision optically above center
+    // instead of top-anchoring it over a dead lower half. On short viewports the
+    // content exceeds the floor and the spacers quietly collapse.
+    <Stack minHeight="page" data-testid="level-pick">
+      <Stack grow={1} />
+      <Stack gap={5}>
+        <Stack gap={1}>
           <Text role="ui-caption" as="p">
-            {t('startingLevel.error')}
+            {t('startingLevel.eyebrow')}
           </Text>
-        )}
+          <Heading level={1} role="title">
+            {t('startingLevel.prompt')}
+          </Heading>
+          <Text role="prose-body" as="p">
+            {t('startingLevel.lede')}
+          </Text>
+        </Stack>
+        {/* 5-across on a normal desktop, collapsing to a single stacked column at
+            375px: min(176px,100%) tracks stack when only one fits. auto-FIT (not
+            auto-fill) so EMPTY tracks collapse and the five real cards stretch to
+            the full measure — the card row and the confirm button below share
+            their right edge (ux-run2 myth-ma8yv, critique 023: auto-fill's
+            phantom sixth track ended the row ~200px shy of the button). */}
+        <Grid columns="auto-fit" minColumnPx={176} gap={3}>
+          {choices.map((choice) => (
+            <LevelCard
+              key={choice.level}
+              level={choice.level}
+              eyebrow={t('startingLevel.cardEyebrow')}
+              grantGloss={choice.grantGloss}
+              selected={choice.level === selected}
+              onSelect={() => {
+                setSelected(choice.level)
+              }}
+            />
+          ))}
+        </Grid>
+        <Stack gap={2}>
+          <Button variant="primary" onPress={handleConfirm} data-testid="level-pick-confirm">
+            {t('startingLevel.cta', { level: selected })}
+          </Button>
+          {/* The choice's permanence, stated plainly (ux-run2 myth-nyjtl): the
+              level is party-wide and locks once set — exactly what a hesitating
+              newcomer wants to know, and true of the product (409 level_locked). */}
+          <Text role="ui-caption" as="p" data-testid="level-pick-permanence">
+            {t('startingLevel.permanence')}
+          </Text>
+          {submitFailed && (
+            <Text role="ui-caption" as="p">
+              {t('startingLevel.error')}
+            </Text>
+          )}
+        </Stack>
       </Stack>
+      <Stack grow={2} />
     </Stack>
   )
 }

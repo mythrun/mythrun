@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createRef } from 'react'
-import { render, within } from '@testing-library/react'
+import { fireEvent, render, within } from '@testing-library/react'
 import { axe } from 'jest-axe'
 import type { RailStep } from '@mythrun/client-core/contract'
 import { GuidedRail } from './GuidedRail.tsx'
@@ -65,6 +65,42 @@ describe('GuidedRail', () => {
     const { getByText } = render(<GuidedRail rail={GROUNDING_RAIL} />)
     // The rung box is the parent of the label span.
     expect(getByText('Grounding').parentElement?.className).toContain('rounded-none')
+  })
+
+  // ux-run2 myth-udhp3: a completed rung collapses to its chosen value — the
+  // choices become the path. The category label survives for AT only.
+  it('collapses a completed rung to its value: the label loses its visible chrome, the current rung keeps it', () => {
+    const { getByText } = render(<GuidedRail rail={GROUNDING_RAIL} />)
+    // Done rung ('Calling' → 'Fighter'): the label is visually hidden (no mono
+    // uppercase chrome — it renders through the SR-only wrapper).
+    expect(getByText('Calling').className).not.toContain('uppercase')
+    // The current rung ('Grounding', state now) keeps its visible label.
+    expect(getByText('Grounding').className).toContain('uppercase')
+  })
+
+  it('clamps a long chosen value to a one-line disclosure token that expands on click', () => {
+    const longNotes = 'They call me Sable now, though that is only half of the story'
+    const rail: RailStep[] = [
+      { step: 'class', label: 'Class', chosen: 'Cleric', state: 'done' },
+      { step: 'notes', label: 'Notes', chosen: longNotes, state: 'done' },
+      { step: 'grounding', label: 'Arrival', state: 'now' },
+    ]
+    const { getByRole, getByText } = render(<GuidedRail rail={rail} />)
+    // Only the long-value rung is a disclosure button; short rungs stay static.
+    const toggle = getByRole('button')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(getByText(longNotes).className).toContain('truncate')
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(getByText(longNotes).className).not.toContain('truncate')
+  })
+
+  it('renders the quiet step counter as the trailing rail item when provided', () => {
+    const first = render(<GuidedRail rail={GROUNDING_RAIL} counter="Step 5 of 5" />)
+    expect(first.getByTestId('guided-rail-counter')).toHaveTextContent('Step 5 of 5')
+    first.unmount()
+    const second = render(<GuidedRail rail={GROUNDING_RAIL} />)
+    expect(second.queryByTestId('guided-rail-counter')).toBeNull()
   })
 
   it('forwards the ref to the list element', () => {

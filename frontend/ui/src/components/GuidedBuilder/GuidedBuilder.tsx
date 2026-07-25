@@ -68,18 +68,15 @@ const LINK_CLASS = cn(
 )
 
 export const GuidedBuilder = forwardRef<HTMLDivElement, GuidedBuilderProps>(function GuidedBuilder(
-  { labels, rail, question, options, selectedId, onSelect, onNext, onBack, onSkipToFreeform },
+  { labels, rail, counter, question, options, selectedId, onSelect, onNext, onBack, onSkipToFreeform },
   ref,
 ) {
-  // First step ⇔ nothing is completed yet: derive it from the rail (no internal
-  // state) so Back is hidden on the opening step and surfaces once a rung is `done`.
-  const isFirstStep = !rail.some((rung) => rung.state === 'done')
   return (
     <Stack ref={ref} data-testid="guided-builder" gap={6}>
       {/* Progress rail — the extracted GuidedRail (a semantic ordered list of
           rungs), under the builder's historical testid so the composition renders
           identically to the pre-extraction markup. */}
-      <GuidedRail rail={rail} data-testid="guided-builder-rail" />
+      <GuidedRail rail={rail} data-testid="guided-builder-rail" {...(counter !== undefined && { counter })} />
 
       {/* The step's question — the large serif hero. */}
       <Heading level={2} role="display">
@@ -103,30 +100,33 @@ export const GuidedBuilder = forwardRef<HTMLDivElement, GuidedBuilderProps>(func
               className={OPTION_CLASS}
             >
               <span className={OPTION_NAME}>{option.name}</span>
-              <span className={OPTION_DESC}>{option.description}</span>
+              {option.description !== '' && <span className={OPTION_DESC}>{option.description}</span>}
             </button>
           )
         })}
       </div>
 
-      {/* Nav row: the quiet Back (hidden on the first step) + the always-available
-          "describe them instead" escape hatch on the left; the primary Next on the
-          right. Wraps at narrow widths. */}
+      {/* Nav row (ux-run2 myth-80an1 / myth-esd1y): the quiet Back holds the
+          bottom-left on EVERY step — one Back, one meaning, one position (on the
+          first step the parent wires it to leave the builder). The mode-switching
+          "describe them instead" escape hatch is separated from step navigation:
+          it sits right-aligned beside Next. Wraps at narrow widths. */}
       <Stack direction="row" justify="between" align="center" wrap gap={4}>
+        <button type="button" onClick={onBack} className={LINK_CLASS}>
+          <span aria-hidden="true">‹</span>
+          {labels.back}
+        </button>
         <Stack direction="row" align="center" wrap gap={4}>
-          {!isFirstStep && (
-            <button type="button" onClick={onBack} className={LINK_CLASS}>
-              <span aria-hidden="true">‹</span>
-              {labels.back}
-            </button>
-          )}
           <button type="button" onClick={onSkipToFreeform} className={LINK_CLASS}>
             {labels.switchToFreeform}
           </button>
+          {/* Next is honestly gated: disabled (muted, identical geometry — the DS
+              Button owns the styling) until the step has an answer; the accent
+              fill is the reward for deciding (ux-run2 myth-x9ugl / myth-skbzw). */}
+          <Button variant="primary" size="lg" disabled={selectedId === null} onPress={onNext}>
+            {labels.next}
+          </Button>
         </Stack>
-        <Button variant="primary" size="lg" onPress={onNext}>
-          {labels.next}
-        </Button>
       </Stack>
     </Stack>
   )

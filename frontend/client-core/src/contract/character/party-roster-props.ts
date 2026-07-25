@@ -23,6 +23,17 @@ export interface PartyRosterLabels {
   beginSolo: string
   /** The owner's begin control with a full party (e.g. "Everyone's ready, begin →"). */
   beginParty: string
+  /** The owner's begin control while some members are NOT ready — the label carries
+   *  the truth instead of a silent gray-out (ux-run2 myth-wfgfi), already count-
+   *  resolved by the shell (e.g. "Begin with 1 of 3 ready →"). */
+  beginPartial: string
+  /** The partial-begin confirm prompt (count-resolved by the shell, e.g. "Two
+   *  players aren't ready. Start anyway?"). */
+  beginConfirmPrompt: string
+  /** The partial-begin confirm verb (e.g. "Start anyway"). */
+  beginConfirmYes: string
+  /** The partial-begin dismiss verb (e.g. "Keep waiting"). */
+  beginConfirmNo: string
 }
 
 /** Props for the party-finalize roster. */
@@ -35,6 +46,15 @@ export interface PartyRosterProps {
   viewerIsOwner: boolean
   /** Whether the party is finalizable now (every member ready, or a solo owner). */
   canBegin: boolean
+  /** The partial-begin confirm's CONTROLLED disclosure state (ux-run2 myth-wfgfi):
+   *  `true` renders the inline confirm (prompt + confirm/dismiss verbs) in place of
+   *  the begin control. The parent owns it — the roster stays fully controlled. */
+  beginConfirming: boolean
+  /** Ask to begin while members are not ready — the parent arms the inline confirm
+   *  (sets `beginConfirming`); the actual finalize fires only from `onBegin`. */
+  onRequestBegin: () => void
+  /** Dismiss the partial-begin confirm without beginning. */
+  onCancelBegin: () => void
   /** Fire the character-integration finalize pass and enter the opening scene. */
   onBegin: () => void
   /** Toggle the invite flow (share a join link). On the staging surface this opens

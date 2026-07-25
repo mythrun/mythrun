@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { axe } from 'jest-axe'
 import { WikiHome } from './WikiHome.tsx'
 import { WIKI_FIXTURE_MODEL, WIKI_FIXTURE_MODEL_BARE } from './wiki-fixture.ts'
+import { TYPE_ROLE_CLASS } from '../../lib/typography.ts'
 
 // WikiHome is the wiki's landing. With an `introduction` on the model
 // (myth-b9bap) it IS the world's front door — the world-name title, the
@@ -154,6 +155,74 @@ describe('WikiHome — the Index/Glossary views (MYT-100)', () => {
   it('shows the empty note when a query matches no entity (index view)', () => {
     const { getByText } = renderHome({ model: WIKI_FIXTURE_MODEL, query: 'zzzznomatch' })
     expect(getByText('Nothing here')).toBeInTheDocument()
+  })
+})
+
+describe('WikiHome — the panel title (ux-run2 myth-o9iuh)', () => {
+  it('promotes the world name ABOVE the Index/Glossary strip — the tabs switch the reading matter, not the identity', () => {
+    const { getByRole } = renderHome({ model: WIKI_FIXTURE_MODEL })
+    const title = getByRole('heading', { name: 'The Ashfen Reaches' })
+    const indexTab = getByRole('button', { name: 'Index' })
+    expect(
+      title.compareDocumentPosition(indexTab) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it('keeps the world name in place while the glossary view is active', () => {
+    const { getByRole } = renderHome({ model: WIKI_FIXTURE_MODEL, view: 'glossary' })
+    expect(getByRole('heading', { name: 'The Ashfen Reaches' })).toBeInTheDocument()
+  })
+
+  it('sets the name one full step below display — a panel identity, not a second front page', () => {
+    const { getByRole } = renderHome({ model: WIKI_FIXTURE_MODEL })
+    const title = getByRole('heading', { name: 'The Ashfen Reaches' })
+    expect(title.className).toBe(TYPE_ROLE_CLASS.heading)
+  })
+})
+
+describe('WikiHome — step-aware landing (ux-run2 myth-ehcf4)', () => {
+  it('surfaces matching glossary definitions under the step eyebrow, WITHOUT a tap', () => {
+    const { getAllByText, getByText } = renderHome({ model: WIKI_FIXTURE_MODEL, stepContext: 'lampblack' })
+    // The step topic renders twice by design here (the quiet uppercase eyebrow +
+    // the matched term row) — the eyebrow is the one in the mono small-caps idiom.
+    const eyebrow = getAllByText('lampblack', { selector: 'p' }).find((el) =>
+      el.className.includes('uppercase'),
+    )
+    expect(eyebrow).toBeDefined()
+    // The matched term's definition is VISIBLE — the world's voice, not a closed row.
+    expect(getByText(/what lampblack means here/)).toBeInTheDocument()
+  })
+
+  it('surfaces matching entities as openable rows — selection drives the panel', async () => {
+    const onOpen = vi.fn()
+    const user = userEvent.setup()
+    const { getAllByRole } = renderHome({
+      model: WIKI_FIXTURE_MODEL,
+      stepContext: 'Maeris',
+      onOpen,
+    })
+    // Two Maeris Vale rows exist now (step section + browse group) — the step
+    // section's row is the FIRST in document order and opens the entity page.
+    const rows = getAllByRole('button', { name: /Maeris Vale/ })
+    expect(rows.length).toBeGreaterThan(1)
+    const first = rows[0]
+    if (first === undefined) throw new Error('no step row')
+    await user.click(first)
+    expect(onOpen).toHaveBeenCalledWith('n-vale')
+  })
+
+  it('renders NOTHING extra when the step topic matches nothing (graceful absence)', () => {
+    const { queryByText } = renderHome({ model: WIKI_FIXTURE_MODEL, stepContext: 'zzznothing' })
+    expect(queryByText('zzznothing')).toBeNull()
+  })
+
+  it('stands down while the reader is searching — the query owns the surface', () => {
+    const { queryByText } = renderHome({
+      model: WIKI_FIXTURE_MODEL,
+      stepContext: 'lampblack',
+      query: 'guild',
+    })
+    expect(queryByText(/what lampblack means here/)).toBeNull()
   })
 })
 

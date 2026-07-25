@@ -29,6 +29,8 @@ const LABELS: RollCardLabels = {
   advantage: 'advantage',
   disadvantage: 'disadvantage',
   dieResult: 'You rolled',
+  explainerFor: (skill, modifier) => `Roll a d20 · ${skill} ${modifier} is your bonus`,
+  dcExplainer: 'The DC is the mark to meet',
 }
 
 // A normal skill check: die = total − modifier = 14 (the used d20); readout +2 = 16.
@@ -254,6 +256,47 @@ describe('RollCard', () => {
     expect(screen.queryByRole('button', { name: 'Roll' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument()
     expect(onRollSpy).toHaveBeenCalledTimes(1)
+  })
+
+  // ── myth-3dufc: the newcomer framing line + the post-roll DC explainer ──────
+  it('idle shows the newcomer explainer (skill + signed modifier), never the DC explainer', () => {
+    renderCard({ phase: 'idle' })
+    expect(screen.getByTestId('roll-explainer')).toHaveTextContent('Roll a d20 · perception +2 is your bonus')
+    expect(screen.queryByText('The DC is the mark to meet')).toBeNull()
+  })
+
+  it('revealed drops the pre-roll explainer and shows the quiet DC explainer under the comparison', () => {
+    renderCard({ phase: 'revealed' })
+    expect(screen.queryByTestId('roll-explainer')).toBeNull()
+    expect(screen.getByTestId('roll-dc-explainer')).toHaveTextContent('The DC is the mark to meet')
+  })
+
+  it('the dice_roll flavor variant carries no explainer (no skill, no DC)', () => {
+    renderCard({ phase: 'idle', item: DICE_ITEM })
+    expect(screen.queryByTestId('roll-explainer')).toBeNull()
+  })
+
+  // ── myth-4sxhd: a natural 20 earns the inverted plate at display size ───────
+  it('a natural 20 renders the outcome on the inverted plate (ink field, paper letters)', () => {
+    const nat20 = renderCard({
+      phase: 'released',
+      item: {
+        ...SKILL_ITEM,
+        key: 'sc-20',
+        frame: { ...SKILL_ITEM.frame, roll: 20, total: 22, outcomeTier: 'great_success' },
+      },
+    })
+    expect(nat20.container.querySelector('[data-tier="great_success"]')).toHaveClass('bg-ink', 'text-surface')
+  })
+
+  it('an ordinary great_success (no natural 20) stays weight-only — no plate', () => {
+    const great = renderCard({
+      phase: 'released',
+      item: { ...SKILL_ITEM, key: 'g2', frame: { ...SKILL_ITEM.frame, outcomeTier: 'great_success' } },
+    })
+    const tier = great.container.querySelector('[data-tier="great_success"]')
+    expect(tier).toHaveClass('font-bold')
+    expect(tier).not.toHaveClass('bg-ink')
   })
 
   it('is square register — no circles anywhere', () => {

@@ -121,7 +121,12 @@ const GOLDEN_TRACE: readonly (readonly [string, Pos])[] = [
 describe('ForceSim generating-profile parity (MYT-89 audit v4)', () => {
   it('replays the pre-change golden trace to the exact double at the locked defaults', () => {
     const { nodes, edges } = twoCommunities()
-    const sim = create({ width: 900, height: 470, random: lcg(0xa11ce) })
+    // The trace was RECORDED at the audit-v4-era collisionPadding (3); ux-run2
+    // (myth-uis1p) later moved the production default to 8 as a deliberate
+    // separation re-tune. The parity subject here is the REGIME knobs
+    // (releaseAlpha / decays) being additive-inert, so the replay pins the
+    // recorded padding explicitly rather than re-recording the goldens.
+    const sim = create({ width: 900, height: 470, random: lcg(0xa11ce), params: { collisionPadding: 3 } })
 
     sim.sync(nodes, [])
     sim.setBoxes(new Map<string, NodeBox>(nodes.map((n) => [n.displayId, box(50)])))

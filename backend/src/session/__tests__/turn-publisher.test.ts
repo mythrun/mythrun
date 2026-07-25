@@ -103,6 +103,30 @@ describe('createTurnPublisher', () => {
     })
   })
 
+  it('turnReplace publishes ONE session_reconnect frame carrying the rebuilt turn (myth-aiiao whole-turn replace)', async () => {
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    const messages: ServerFrame[] = [
+      { type: 'dm_message', seq: 7, turnId: TURN, text: 'The fingers do not yield.' },
+      { type: 'dm_message', seq: 8, turnId: TURN, text: 'The vault light holds steady.' },
+    ]
+    const participants = [{ userId: 'u1', displayName: 'Miklos', characterName: 'Sable' }]
+    await pub.turnReplace(CAMPAIGN, messages, participants, 'exploration')
+    await tick()
+
+    expect(received).toHaveLength(1)
+    const [msg] = received
+    expect(msg?.channel).toBe(sessionChannel(KEY_PREFIX, CAMPAIGN))
+    // The wire frame is the SAME session_reconnect the reconnect path sends —
+    // seq-bearing replay messages under one turnId, so the client's transcript
+    // reducer whole-turn-replaces and its high-water mark advances normally.
+    expect(msg?.frame).toEqual({
+      type: 'session_reconnect',
+      messages,
+      participants,
+      mode: 'exploration',
+    })
+  })
+
   it('emitFor().emitCorrection publishes the dm_correction frame', async () => {
     const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
     const emit = pub.emitFor(CAMPAIGN, TURN)

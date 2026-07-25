@@ -73,6 +73,48 @@ describe('DmMessage', () => {
     const settled = render(<DmMessage text="A quiet valley." streaming={false} />)
     expect(await axe(settled.container)).toHaveNoViolations()
   })
+
+  // ── myth-6e0ao: a bare markdown rule paragraph maps to the DS divider ────────
+  describe('horizontal-rule mapping (settled)', () => {
+    const RULED = 'The correction lands.\n\n---\n\nAth looks at the upturned palm.'
+
+    it('maps a settled bare "---" paragraph to a typographic divider between two prose blocks', () => {
+      const { container } = render(<DmMessage text={RULED} streaming={false} />)
+      // The raw token never reaches the reading surface…
+      expect(container.textContent).not.toContain('---')
+      // …a real separator stands in its place…
+      expect(container.querySelector('[role="separator"]')).not.toBeNull()
+      // …and both prose blocks render around it.
+      expect(container.textContent).toContain('The correction lands.')
+      expect(container.textContent).toContain('Ath looks at the upturned palm.')
+      expect(container.querySelectorAll('p').length).toBe(2)
+    })
+
+    it('maps a "***" rule too, and strips a leading/trailing rule outright (no dangling divider)', () => {
+      const star = render(<DmMessage text={'One.\n\n***\n\nTwo.'} streaming={false} />)
+      expect(star.container.textContent).not.toContain('***')
+      expect(star.container.querySelector('[role="separator"]')).not.toBeNull()
+      const edge = render(<DmMessage text={'---\n\nOnly paragraph.\n\n---'} streaming={false} />)
+      expect(edge.container.textContent).not.toContain('---')
+      expect(edge.container.querySelector('[role="separator"]')).toBeNull()
+      expect(edge.container.querySelectorAll('p').length).toBe(1)
+    })
+
+    it('leaves hyphens INSIDE prose alone (only a rule standing as its own paragraph maps)', () => {
+      const { container } = render(
+        <DmMessage text={'A well---known ploy.\n\nShe waits.'} streaming={false} />,
+      )
+      expect(container.textContent).toContain('A well---known ploy.')
+      expect(container.querySelector('[role="separator"]')).toBeNull()
+    })
+
+    it('does NOT split while streaming (the single append-only text node is preserved)', () => {
+      const { container } = render(<DmMessage text={'One.\n\n---\n\nTw'} streaming />)
+      // Mid-stream the raw token may show transiently; the invariant is the single
+      // stable <p> the token-append path grows in place.
+      expect(container.querySelectorAll('p').length).toBe(1)
+    })
+  })
 })
 
 // ── MYT-94 (Task 11) — settled-prose entity highlighting ─────────────────────────

@@ -18,6 +18,8 @@ export { FullBleedStage } from './components/FullBleedStage/FullBleedStage.tsx'
 export { Text } from './components/Text/Text.tsx'
 export { Heading } from './components/Heading/Heading.tsx'
 export { Link } from './components/Link/Link.tsx'
+// The flow escape-hatch line (ux-run2 myth-vjl7d) — quiet prompt + underlined action.
+export { HatchLine } from './components/HatchLine/HatchLine.tsx'
 export { VisuallyHidden } from './components/VisuallyHidden/VisuallyHidden.tsx'
 // Streamed prose (myth-umggn) — LLM text arriving live, with the writing caret.
 export { StreamingProse } from './components/StreamingProse/StreamingProse.tsx'
@@ -27,6 +29,11 @@ export { DmCorrection } from './components/DmCorrection/DmCorrection.tsx'
 export { ThinkingIndicator } from './components/ThinkingIndicator/ThinkingIndicator.tsx'
 export { SessionStartBeat } from './components/SessionStartBeat/SessionStartBeat.tsx'
 export { SessionPreparing } from './components/SessionPreparing/SessionPreparing.tsx'
+// WhisperLedger (ux-run2 myth-i2pdo) — the shared long-wait whisper column: the
+// current flavor line over a faint newest-first ledger of past lines. Composed
+// by WorldGenLoading + SessionPreparing; exported for stories/specimens.
+export { WhisperLedger } from './components/WhisperLedger/WhisperLedger.tsx'
+export type { WhisperLedgerProps } from './components/WhisperLedger/WhisperLedger.tsx'
 export { SessionInput } from './components/SessionInput/SessionInput.tsx'
 export { PlayerMessage } from './components/PlayerMessage/PlayerMessage.tsx'
 export { MessageStream } from './components/MessageStream/MessageStream.tsx'
@@ -263,6 +270,7 @@ export type {
   TextProps,
   TextRole,
   StreamingProseProps,
+  HatchLineProps,
   DmMessageProps,
   ThinkingIndicatorProps,
   SessionStartBeatProps,

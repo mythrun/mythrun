@@ -371,7 +371,11 @@ describe('CharacterSurface — mounted routing', () => {
         },
       }),
     )
+    // Two-step (ux-run2 myth-fca4y): arm the confirm, then fire the confirm verb.
     fireEvent.click(await screen.findByRole('button', { name: i18n.t('characterCreate.reveal.startOver') }))
+    fireEvent.click(
+      screen.getByRole('button', { name: i18n.t('characterCreate.reveal.startOverConfirm') }),
+    )
     expect(await screen.findByTestId('route-create')).toBeDefined()
     expect(resetInReveal).toHaveBeenCalledWith(testCtx, CID)
   })

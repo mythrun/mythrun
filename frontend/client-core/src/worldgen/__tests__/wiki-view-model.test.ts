@@ -334,6 +334,56 @@ describe('toWikiViewModel', () => {
     ])
   })
 
+  it('sorts glossary terms on the first significant word — a leading article does not file everything under its own letter (ux-run2 myth-lbxfe)', () => {
+    const articled: WikiSnapshot = {
+      entities: [],
+      facts: [],
+      entityHierarchy: [],
+      world: {
+        vocabularyRegistry: {
+          entries: [
+            { term: 'the black tide', definition: 'The water that remembers.' },
+            { term: 'iron-rain smell', definition: 'The smell before a Reckoning.' },
+            { term: 'the affectionate water', definition: 'Water that follows the grieving.' },
+            { term: 'a ceremony', definition: 'Any debt paid in syllables.' },
+            { term: 'An Unmarked door', definition: 'A door with no ledger entry.' },
+          ],
+        },
+      },
+    }
+    // Displayed terms keep their articles; the ORDER files each under its first
+    // significant word: affectionate (A) < black (B) < ceremony (C) < iron (I) < Unmarked (U).
+    expect(toWikiViewModel(articled).glossary.map((entry) => entry.term)).toEqual([
+      'the affectionate water',
+      'the black tide',
+      'a ceremony',
+      'iron-rain smell',
+      'An Unmarked door',
+    ])
+  })
+
+  it('a duplicate article-stripped key falls back to the full term — the order stays deterministic', () => {
+    const duplicated: WikiSnapshot = {
+      entities: [],
+      facts: [],
+      entityHierarchy: [],
+      world: {
+        vocabularyRegistry: {
+          entries: [
+            { term: 'The Rift', definition: 'The wound in the valley floor.' },
+            { term: 'rift', definition: 'Any lesser crack the miners cut.' },
+          ],
+        },
+      },
+    }
+    // Both file under "rift"; the full-term tiebreak ('The Rift' vs 'rift')
+    // keeps the pair in one stable order across rebuilds.
+    expect(toWikiViewModel(duplicated).glossary.map((entry) => entry.term)).toEqual([
+      'rift',
+      'The Rift',
+    ])
+  })
+
   it('returns an empty glossary when the snapshot carries no world (back-compat)', () => {
     expect(toWikiViewModel(world).glossary).toEqual([])
   })

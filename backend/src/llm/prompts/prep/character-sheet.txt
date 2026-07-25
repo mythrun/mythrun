@@ -5,6 +5,7 @@ generate SRD-compliant mechanical stats and equipment for a level-{{level}} char
 Name: {{name}}
 Race: {{race}}
 Class: {{class}}
+{{subclassLine}}
 Background: {{background}}
 Alignment: {{alignment}}
 Physical description: {{physicalDescription}}
@@ -87,6 +88,17 @@ none of the features, slots, or spells that arrive at higher levels.
     wizard at level 2; barbarian / bard / fighter / monk / paladin / ranger /
     rogue at level 3. If the class has NO subclass yet by level {{level}}, emit
     none.
+    WHICH subclass (this is load-bearing — a deterministic check enforces it):
+    - If the narrative concept above carries a "Subclass (FIXED, do not
+      change)" line, build EXACTLY that subclass. It is the player's committed
+      pick — never substitute another, however well the backstory might suit
+      one.
+    - Otherwise the subclass MUST be the class's single SRD subclass:
+      {{srdSubclassTable}}.
+      Content from outside the SRD (other domains, colleges, oaths, paths) is
+      not licensed for this platform — never emit it uninvited.
+    - One emitted feature must NAME the subclass verbatim in its feature name,
+      e.g. "Divine Domain: Life Domain" or "Roguish Archetype: Thief".
   - Ability Score Improvement: most classes gain an ASI at level 4. Represent it
     by raising the ability scores above (one score by 2, or two by 1) — NOT as a
     feature row. Default to an ability-score bump, not an arbitrary feat.

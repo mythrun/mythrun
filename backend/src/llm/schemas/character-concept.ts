@@ -7,10 +7,31 @@
 
 import { z } from 'zod'
 
+// myth-4jhrk: the guided builder's structured picks, as POSTed by the client
+// and persisted verbatim into character_concepts.guided_choices. This is the
+// SHARED wire contract with the frontend (client-core's SubmitCharacterBody
+// mirrors it) — every field optional, short labels only (not prose, so max()
+// is legal per the no-max-on-LLM-prose rule; these are player picks, not LLM
+// output). The concept stage renders present picks into the prompt as
+// COMMITTED choices and deterministically pins `subclass` over the LLM echo.
+export const GuidedChoicesSchema = z.object({
+  class: z.string().min(1).max(60).optional(),
+  subclass: z.string().min(1).max(60).optional(),
+  species: z.string().min(1).max(60).optional(),
+  background: z.string().min(1).max(60).optional(),
+})
+
+export type GuidedChoices = z.infer<typeof GuidedChoicesSchema>
+
 export const CharacterConceptOutputSchema = z.object({
   name: z.string().min(2).max(80),
   race: z.string().min(3).max(40),
   class: z.string().min(4).max(40),
+  // myth-4jhrk: optional — emitted ONLY when the player named a subclass (a
+  // guided-builder pick, or one stated in freeform concept text). Never
+  // invented by the model; the guided pick deterministically overrides the
+  // echo in the stage, and the sheet stage pins it as a FIXED constraint.
+  subclass: z.string().min(2).max(60).optional(),
   background: z.string().min(2).max(60),
   level: z.number().int().min(1).max(20),
   alignment: z.string().min(2).max(40),

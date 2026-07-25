@@ -2,6 +2,7 @@ import { forwardRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { CardItem, RollCardLabels, RollCardProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
+import { TYPE_ROLE_CLASS } from '../../lib/typography.ts'
 import { Button } from '../Button/Button.tsx'
 import { Stack } from '../Stack/Stack.tsx'
 import { Text } from '../Text/Text.tsx'
@@ -64,8 +65,20 @@ function signed(n: number): string {
 // PRE-roll ("investigation +6") — it's the player's competence, theirs to weigh
 // before the die drops ("I need a 7+, here goes"); only the DC stays hidden for
 // mystery. `context` is quiet DATA (the attempt, not a key); `constraint` is absent
-// by construction — it is never threaded here.
-function SkillHeader({ frame, labels }: { frame: SkillItem['frame']; labels: RollCardLabels }): ReactNode {
+// by construction — it is never threaded here. myth-3dufc: while the roll is still
+// PENDING, one quiet newcomer framing line ("Roll a d20 · Investigation +0 is your
+// bonus") turns the stat fragment into a sentence — dropped once the equation
+// carries the mental model post-roll. The context line is CENTERED with the rest
+// of the card (the ceremonial composition; mixed alignment read as unfinished).
+function SkillHeader({
+  frame,
+  labels,
+  pending,
+}: {
+  frame: SkillItem['frame']
+  labels: RollCardLabels
+  pending: boolean
+}): ReactNode {
   const posture =
     frame.rollType === 'advantage'
       ? labels.advantage
@@ -86,7 +99,12 @@ function SkillHeader({ frame, labels }: { frame: SkillItem['frame']; labels: Rol
         <Text role="meta">{frame.characterName}</Text>
         {posture !== null && <Text role="meta">{posture}</Text>}
       </Stack>
-      <Text role="meta">{frame.context}</Text>
+      <p className={cn(TYPE_ROLE_CLASS.meta, 'text-center')}>{frame.context}</p>
+      {pending && (
+        <p data-testid="roll-explainer" className={cn(TYPE_ROLE_CLASS.meta, 'text-center')}>
+          {labels.explainerFor(frame.skill, signed(frame.modifier))}
+        </p>
+      )}
     </Stack>
   )
 }
@@ -110,6 +128,11 @@ function equationText(frame: SkillItem['frame']): string {
 function SkillReadout({ frame, labels }: { frame: SkillItem['frame']; labels: RollCardLabels }): ReactNode {
   const passed = frame.outcomeTier !== 'fail'
   const verb = passed ? labels.beats : labels.misses
+  // myth-4sxhd: a NATURAL 20 (the used d20 face, not the modified total) is the
+  // table's slot-machine moment — the outcome word earns the system's native
+  // "loud": the inverted plate (ink field, paper letters) at display size. Both
+  // tokens are theme-aware; no colour, no curve, one move.
+  const nat20 = frame.total - frame.modifier === 20
   return (
     <Stack gap={2} align="center">
       <span data-testid="roll-equation" className="font-ui text-base">
@@ -120,11 +143,21 @@ function SkillReadout({ frame, labels }: { frame: SkillItem['frame']; labels: Ro
       <span data-testid="roll-comparison" className="font-ui text-sm">
         {frame.total} {verb} {labels.dc} {frame.dc}
       </span>
+      {/* myth-3dufc: the quiet post-roll DC explainer — the target was hidden
+          until commitment, so its one-line meaning lands here, with it. */}
+      <p data-testid="roll-dc-explainer" className={cn(TYPE_ROLE_CLASS.meta, 'text-center')}>
+        {labels.dcExplainer}
+      </p>
       {/* The outcome — the card's whole point — at the typographic peak. */}
       <span
         data-tier={frame.outcomeTier}
         data-testid="roll-outcome"
-        className={cn('font-ui', TIER_SIZE, TIER_WEIGHT[frame.outcomeTier])}
+        className={cn(
+          'font-ui',
+          TIER_SIZE,
+          TIER_WEIGHT[frame.outcomeTier],
+          nat20 && 'bg-ink px-[var(--space-3)] py-[var(--space-1)] text-surface',
+        )}
       >
         {labels.tier[frame.outcomeTier]}
       </span>
@@ -167,7 +200,7 @@ export const RollCard = forwardRef<HTMLDivElement, RollCardProps>(function RollC
     <div ref={ref} data-roll-card={item.kind} className={CARD_CLASS}>
       <Stack gap={3} align="center">
         {item.kind === 'skill_check' ? (
-          <SkillHeader frame={item.frame} labels={labels} />
+          <SkillHeader frame={item.frame} labels={labels} pending={!revealed} />
         ) : (
           <DiceHeader frame={item.frame} />
         )}

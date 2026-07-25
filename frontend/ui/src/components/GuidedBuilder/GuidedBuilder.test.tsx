@@ -135,12 +135,21 @@ describe('GuidedBuilder', () => {
     expect(getByRole('button', { name: /Fighter/ })).toHaveAttribute('data-state', 'selected')
   })
 
-  it('fires onNext from the primary Next control', async () => {
+  it('fires onNext from the primary Next control once a selection exists', async () => {
     const onNext = vi.fn()
     const user = userEvent.setup()
-    const { getByRole } = render(<GuidedBuilder {...baseProps({ onNext })} />)
+    const { getByRole } = render(<GuidedBuilder {...baseProps({ onNext, selectedId: 'rogue' })} />)
     await user.click(getByRole('button', { name: /Next/i }))
     expect(onNext).toHaveBeenCalledOnce()
+  })
+
+  // ux-run2 myth-x9ugl / myth-skbzw call-site: Next must not dress as enabled
+  // while the step has no answer — the accent fill is the reward for deciding.
+  it('disables Next until the step has a selection', () => {
+    const { getByRole, rerender } = render(<GuidedBuilder {...baseProps({ selectedId: null })} />)
+    expect(getByRole('button', { name: /Next/i })).toBeDisabled()
+    rerender(<GuidedBuilder {...baseProps({ selectedId: 'fighter' })} />)
+    expect(getByRole('button', { name: /Next/i })).toBeEnabled()
   })
 
   it('fires onSkipToFreeform from the "describe them instead" escape hatch', async () => {
@@ -151,17 +160,25 @@ describe('GuidedBuilder', () => {
     expect(onSkipToFreeform).toHaveBeenCalledOnce()
   })
 
-  it('hides Back on the first step (no rung is done) and fires onBack once past it', async () => {
+  // ux-run2 myth-80an1: one Back, one meaning, one position — bottom-left in the
+  // action row on EVERY step. On the first step the parent wires it to leave the
+  // builder (back to the chooser); the control itself never teleports or hides.
+  it('renders Back on every step (including the first) and fires onBack', async () => {
     const onBack = vi.fn()
     const user = userEvent.setup()
-    const { queryByRole, rerender, getByRole } = render(
+    const { rerender, getByRole } = render(
       <GuidedBuilder {...baseProps({ rail: FIRST_RAIL, onBack })} />,
     )
-    expect(queryByRole('button', { name: /^Back$/i })).toBeNull()
-    // A later step (a rung is done) surfaces Back.
-    rerender(<GuidedBuilder {...baseProps({ rail: MID_RAIL, options: CLASS_OPTIONS, onBack })} />)
     await user.click(getByRole('button', { name: /^Back$/i }))
     expect(onBack).toHaveBeenCalledOnce()
+    rerender(<GuidedBuilder {...baseProps({ rail: MID_RAIL, options: CLASS_OPTIONS, onBack })} />)
+    await user.click(getByRole('button', { name: /^Back$/i }))
+    expect(onBack).toHaveBeenCalledTimes(2)
+  })
+
+  it('forwards the step counter to the rail', () => {
+    const { getByTestId } = render(<GuidedBuilder {...baseProps({ counter: 'Step 1 of 5' })} />)
+    expect(getByTestId('guided-rail-counter')).toHaveTextContent('Step 1 of 5')
   })
 
   it('renders a single-option step as one confirm card', () => {

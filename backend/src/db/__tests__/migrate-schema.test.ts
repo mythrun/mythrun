@@ -63,6 +63,7 @@ const EXPECTED_TABLES = [
   'stat_block_actions',
   'stat_blocks',
   'stripe_events',
+  'tripwire_verdicts',
   'user_subscriptions',
   'users',
   'world_marketplace',
@@ -111,6 +112,8 @@ const EXPECTED_IDX_NAMES = [
   'idx_session_usage_one_per_session',
   'idx_sessions_campaign',
   'idx_sessions_one_active',
+  'idx_tripwire_verdicts_session',
+  'idx_tripwire_verdicts_turn',
   'idx_user_subscriptions_user',
   'idx_world_snapshots_campaign',
   'idx_worlds_one_demo',
@@ -331,6 +334,14 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   {
     table_name: 'stat_block_actions',
     check_clause: `CHECK ((action_type = ANY (ARRAY['action'::text, 'reaction'::text, 'bonus_action'::text, 'legendary'::text])))`,
+  },
+  {
+    table_name: 'tripwire_verdicts',
+    check_clause: `CHECK (((confidence >= (0)::double precision) AND (confidence <= (1)::double precision)))`,
+  },
+  {
+    table_name: 'tripwire_verdicts',
+    check_clause: `CHECK ((severity = ANY (ARRAY['none'::text, 'soft_consistency'::text, 'hard_reveal'::text])))`,
   },
   {
     table_name: 'user_subscriptions',
@@ -729,6 +740,18 @@ const EXPECTED_FK_DELETE_RULES: readonly {
     delete_rule: 'CASCADE',
   },
   {
+    table_name: 'tripwire_verdicts',
+    column_name: 'campaign_id',
+    foreign_table_name: 'campaigns',
+    delete_rule: 'CASCADE',
+  },
+  {
+    table_name: 'tripwire_verdicts',
+    column_name: 'session_id',
+    foreign_table_name: 'sessions',
+    delete_rule: 'CASCADE',
+  },
+  {
     table_name: 'user_subscriptions',
     column_name: 'user_id',
     foreign_table_name: 'users',
@@ -845,6 +868,7 @@ describe('schema-parity (integration)', () => {
       '034_session_opening.sql',
       '035_session_opening_trigger_kind.sql',
       '036_campaign_invite_primary.sql',
+      '037_tripwire_verdicts.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(

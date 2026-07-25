@@ -28,7 +28,7 @@ type Story = StoryObj<typeof GuidedBuilder>
 const noop = (): void => undefined
 
 // The resolved nav labels the shell supplies (real MYT-100 copy).
-const NAV_LABELS = { next: 'Next', back: 'Back', switchToFreeform: 'Describe them instead' }
+const NAV_LABELS = { next: 'Next', back: 'Back', switchToFreeform: 'Describe your character instead' }
 
 // Step 1 (Calling) — nothing chosen yet, so no rung is `done` and Back is hidden.
 const CALLING_RAIL: RailStep[] = [
@@ -39,47 +39,45 @@ const CALLING_RAIL: RailStep[] = [
 
 // The twelve SRD classes (realistic sample display copy).
 const CLASS_OPTIONS: GuidedOption[] = [
-  { id: 'barbarian', name: 'Barbarian', description: 'The fury that answers when reason will not.' },
-  { id: 'bard', name: 'Bard', description: 'The story that bends the room.' },
-  { id: 'cleric', name: 'Cleric', description: 'A borrowed power, and its price.' },
-  { id: 'druid', name: 'Druid', description: 'The wild speaks; you answer.' },
-  { id: 'fighter', name: 'Fighter', description: 'The discipline of the blade — and knowing when to use it.' },
-  { id: 'monk', name: 'Monk', description: 'Stillness sharpened into a weapon.' },
-  { id: 'paladin', name: 'Paladin', description: 'An oath heavier than any armor.' },
-  { id: 'ranger', name: 'Ranger', description: 'The border between wild and settled.' },
-  { id: 'rogue', name: 'Rogue', description: 'The door that was never locked to you.' },
-  { id: 'sorcerer', name: 'Sorcerer', description: 'Power that was always in the blood.' },
-  { id: 'warlock', name: 'Warlock', description: 'A bargain, and what it wants back.' },
-  { id: 'wizard', name: 'Wizard', description: 'The world, written down and rewritten.' },
+  { id: 'barbarian', name: 'Barbarian', description: 'Hit things. Get hit. Keep standing.' },
+  { id: 'bard', name: 'Bard', description: 'Charm, songs, and a bit of everything.' },
+  { id: 'cleric', name: 'Cleric', description: 'You asked a power for help. Something answered.' },
+  { id: 'druid', name: 'Druid', description: 'The wild lends you its shapes and storms.' },
+  { id: 'fighter', name: 'Fighter', description: 'Weapons are a language. You are fluent.' },
+  { id: 'monk', name: 'Monk', description: 'Empty hands, faster than knives.' },
+  { id: 'paladin', name: 'Paladin', description: 'An oath you keep with a sword.' },
+  { id: 'ranger', name: 'Ranger', description: 'At home where the maps give up.' },
+  { id: 'rogue', name: 'Rogue', description: "Locks, shadows, and other people's pockets." },
+  { id: 'sorcerer', name: 'Sorcerer', description: 'Magic was born in you. It leaks.' },
+  { id: 'warlock', name: 'Warlock', description: 'You made a deal. The magic is the interest.' },
+  { id: 'wizard', name: 'Wizard', description: 'Fragile body, immense studied power.' },
 ]
 
 // A mid-sequence step (Origin) — two prior picks carried as `done` rungs.
 const ORIGIN_RAIL: RailStep[] = [
-  { step: 'class', label: 'Calling', chosen: 'Fighter', state: 'done' },
-  { step: 'subclass', label: 'Practice', chosen: 'Champion', state: 'done' },
+  { step: 'class', label: 'Calling', chosen: 'Fighter · Champion', state: 'done' },
   { step: 'species', label: 'Origin', state: 'now' },
   { step: 'background', label: 'Background', state: 'todo' },
 ]
 
 const SPECIES_OPTIONS: GuidedOption[] = [
-  { id: 'human', name: 'Human', description: 'Adaptable, everywhere, unremarkable until they are not.' },
-  { id: 'elf', name: 'Elf', description: 'A longer memory than the streets that raised them.' },
-  { id: 'dwarf', name: 'Dwarf', description: 'Stone-patient, ledger-exact.' },
-  { id: 'halfling', name: 'Halfling', description: 'Small, and comfortable being underestimated.' },
-  { id: 'tiefling', name: 'Tiefling', description: 'A heritage the street reads before you speak.' },
+  { id: 'human', name: 'Human', description: 'Everywhere, ambitious, quick to adapt.' },
+  { id: 'elf', name: 'Elf', description: 'Long lives, light feet, older memories.' },
+  { id: 'dwarf', name: 'Dwarf', description: 'Stone-patient, forge-proud, hard to knock down.' },
+  { id: 'halfling', name: 'Halfling', description: 'Small, cheerful, and strangely lucky.' },
+  { id: 'tiefling', name: 'Tiefling', description: 'A fiendish inheritance you never asked for.' },
 ]
 
-// The subclass step for a class the SRD gives exactly one first-level subclass.
+// The subclass sub-question for a class the SRD gives exactly one first-level
+// subclass — the CLASS station stays current (the rail never grows a station
+// mid-flow; ux-run2 myth-udhp3 / myth-mttu7).
 const PRACTICE_RAIL: RailStep[] = [
-  { step: 'class', label: 'Calling', chosen: 'Cleric', state: 'done' },
-  { step: 'subclass', label: 'Practice', state: 'now' },
+  { step: 'class', label: 'Calling', chosen: 'Cleric', state: 'now' },
   { step: 'species', label: 'Origin', state: 'todo' },
   { step: 'background', label: 'Background', state: 'todo' },
 ]
 
-const SINGLE_SUBCLASS: GuidedOption[] = [
-  { id: 'life', name: 'Life Domain', description: 'The care of the living — warmth, mending, the refusal to let go.' },
-]
+const SINGLE_SUBCLASS: GuidedOption[] = [{ id: 'life', name: 'Life Domain', description: '' }]
 
 // A small stateful harness so a specimen behaves like the real screen: clicking a
 // card moves the ember selection. Flow callbacks are no-ops (the reducer owns them).
@@ -112,8 +110,9 @@ function Builder({
   )
 }
 
-// Step 1 — the twelve callings in a grid, Fighter pre-selected (the ember card),
-// Back hidden (nothing done yet).
+// Step 1 — the twelve callings in a grid, Fighter pre-selected (the ember card).
+// Back holds the action row's bottom-left on every step (ux-run2 myth-80an1) —
+// on the first step the parent wires it to leave the builder.
 export const Calling: Story = {
   name: 'Calling — 12 classes (first step)',
   render: () => (
@@ -134,11 +133,18 @@ export const Origin: Story = {
   ),
 }
 
-// A single-option subclass step — one full-width confirm card.
+// The single-option subclass — a statement with consent (ux-run2 myth-mttu7):
+// the lore statement as the question, the sole card preselected, Continue the
+// single act (no staged choice).
 export const SingleSubclass: Story = {
-  name: 'Practice — single-option confirm',
+  name: 'Practice — statement with consent',
   render: () => (
-    <Builder rail={PRACTICE_RAIL} question="How do you practice it?" options={SINGLE_SUBCLASS} />
+    <Builder
+      rail={PRACTICE_RAIL}
+      question="Life Domain is the Cleric's path here."
+      options={SINGLE_SUBCLASS}
+      initialSelected="life"
+    />
   ),
 }
 

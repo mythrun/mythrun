@@ -26,6 +26,7 @@
 /** Every typographic role across {@link Text} (prose/subtitle/ui/data/meta) and Heading (display/heading/title). */
 export type TypeRole =
   | 'display'
+  | 'headline'
   | 'heading'
   | 'title'
   | 'prose-body'
@@ -42,6 +43,7 @@ export type TypeRole =
 /** Type role → its complete static token class string. */
 export const TYPE_ROLE_CLASS: Record<TypeRole, string> = {
   display: 'font-body text-3xl font-semibold leading-[1.2]',
+  headline: 'font-body text-2xl font-semibold leading-[1.25]',
   heading: 'font-body text-[1.25rem] font-semibold leading-[1.3]',
   title: 'font-body text-lg font-semibold leading-[1.4]',
   'prose-body': 'font-body text-base font-normal leading-[1.6]',

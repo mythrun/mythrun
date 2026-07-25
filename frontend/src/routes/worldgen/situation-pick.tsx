@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Stack, Heading, Text, GhostHookList } from '@mythrun/ui'
+import { Stack, Heading, Text, GhostHookList, Button, Icon } from '@mythrun/ui'
 import type { GhostHookItem } from '@mythrun/ui'
 import {
   getStartingSituations,
@@ -49,36 +49,44 @@ type LoadState =
 
 /** The viewer's role for this campaign. `owner` sees the picker; `member` (and the
  *  unresolved `loading` state) sees the calm hold — the gate fails CLOSED so the
- *  owner-only picker never flashes for a non-owner. */
-type RoleState = 'loading' | 'owner' | 'member'
+ *  owner-only picker never flashes for a non-owner. `worldName` rides the same
+ *  probe (the hub summary carries it) and anchors the screen's eyebrow
+ *  (ux-run2 myth-8ozsw); `null` when the campaign/probe didn't resolve. */
+interface CampaignRole {
+  readonly role: 'loading' | 'owner' | 'member'
+  readonly worldName: string | null
+}
 
 /** Resolve the viewer's role from the hub payload: `creator === null` means the
  *  viewer made this world (owner); any other case — a non-null creator, a campaign
  *  we can't see, or a failed probe — resolves to `member` (the safe, gated default). */
-function useOwnerRole(
+function useCampaignRole(
   campaignId: string,
   ctx: ApiContext,
   fetchCampaigns: FetchCampaigns,
-): RoleState {
-  const [role, setRole] = useState<RoleState>('loading')
+): CampaignRole {
+  const [state, setState] = useState<CampaignRole>({ role: 'loading', worldName: null })
   useEffect(() => {
     let active = true
-    setRole('loading')
+    setState({ role: 'loading', worldName: null })
     void fetchCampaigns(ctx)
       .then((list) => {
         if (!active) return
         const campaign = list.find((c) => c.id === campaignId) ?? null
-        setRole(campaign !== null && campaign.creator === null ? 'owner' : 'member')
+        setState({
+          role: campaign !== null && campaign.creator === null ? 'owner' : 'member',
+          worldName: campaign?.worldName ?? null,
+        })
       })
       .catch(() => {
         // A failed role probe fails CLOSED — the member hold, never the owner picker.
-        if (active) setRole('member')
+        if (active) setState({ role: 'member', worldName: null })
       })
     return () => {
       active = false
     }
   }, [campaignId, ctx, fetchCampaigns])
-  return role
+  return state
 }
 
 /** Fetch the three opening hooks once. A failed/transient fetch settles to a calm
@@ -160,18 +168,57 @@ function SituationBody({ load, submitFailed, onSelect }: SituationBodyProps): Re
   )
 }
 
+/** The world-anchored eyebrow (ux-run2 myth-8ozsw): "{worldName} · Where it
+ *  starts" once the role probe delivered the name; the plain fallback until
+ *  then (and for a failed probe). Shared by the picker and the member hold. */
+function SituationEyebrow({ worldName }: { worldName: string | null }): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <Text role="ui-caption" as="p" data-testid="situation-eyebrow">
+      {worldName !== null
+        ? t('startingSituation.eyebrowNamed', { worldName })
+        : t('startingSituation.eyebrow')}
+    </Text>
+  )
+}
+
+/** The quiet Back to the campaign surface the picker came from (the reveal /
+ *  campaign page) — the screen's one named exit (ux-run2 myth-80an1). */
+function SituationBack({ campaignId }: { campaignId: string }): React.JSX.Element {
+  const { t } = useTranslation()
+  const navigate = useNavigate()
+  return (
+    <Stack align="start">
+      <Button
+        variant="ghost"
+        size="sm"
+        icon={<Icon name="arrow-left" decorative />}
+        onPress={() => void navigate(`/campaigns/${campaignId}`)}
+        data-testid="situation-back"
+      >
+        {t('back')}
+      </Button>
+    </Stack>
+  )
+}
+
 /** The member (non-owner) WAITING HOLD — a calm eyebrow + heading + line; the owner
  *  makes the opening pick, so a member just holds until the table is set. Never
  *  renders the owner-only picker (no `situation-hooks`). */
-function MemberHold(): React.JSX.Element {
+function MemberHold({
+  campaignId,
+  worldName,
+}: {
+  campaignId: string
+  worldName: string | null
+}): React.JSX.Element {
   const { t } = useTranslation()
   return (
-    <Stack gap={4} data-testid="situation-pick-hold">
+    <Stack gap={4} maxWidth="content" data-testid="situation-pick-hold">
+      <SituationBack campaignId={campaignId} />
       <Stack gap={1}>
-        <Text role="ui-caption" as="p">
-          {t('startingSituation.eyebrow')}
-        </Text>
-        <Heading level={1} role="title">
+        <SituationEyebrow worldName={worldName} />
+        <Heading level={1} role="headline">
           {t('startingSituation.holdTitle')}
         </Heading>
       </Stack>
@@ -202,7 +249,7 @@ export function SituationPickRoute({
   const navigate = useNavigate()
   // The route only matches with an `:id`; `?? ''` keeps the hook calls unconditional.
   const { id = '' } = useParams<{ id: string }>()
-  const role = useOwnerRole(id, ctx, fetchCampaigns)
+  const { role, worldName } = useCampaignRole(id, ctx, fetchCampaigns)
   const load = useSituations(id, ctx, fetchSituations)
   const [submitFailed, setSubmitFailed] = useState(false)
 
@@ -225,7 +272,7 @@ export function SituationPickRoute({
   // hold on a neutral loading line (no owner framing leaks); a member gets the hold.
   if (role === 'loading') {
     return (
-      <Stack gap={4} data-testid="situation-pick-loading">
+      <Stack gap={4} maxWidth="content" data-testid="situation-pick-loading">
         <Text role="ui-caption" as="p">
           {t('startingSituation.loading')}
         </Text>
@@ -233,18 +280,30 @@ export function SituationPickRoute({
     )
   }
   if (role === 'member') {
-    return <MemberHold />
+    return <MemberHold campaignId={id} worldName={worldName} />
   }
 
   return (
-    <Stack gap={4} data-testid="situation-pick">
-      <Stack gap={1}>
-        <Text role="ui-caption" as="p">
-          {t('startingSituation.eyebrow')}
+    // The centred ~720px content column (ux-run2 myth-ma8yv, critique 021): the
+    // hook cards wrap their prose (already capped at its own reading measure)
+    // instead of running full-bleed with the enter arrow stranded across ~600px
+    // of empty card. Width only — the third card's fold-peek scroll cue stays.
+    <Stack gap={4} maxWidth="content" data-testid="situation-pick">
+      <SituationBack campaignId={id} />
+      <Stack gap={2}>
+        <Stack gap={1}>
+          <SituationEyebrow worldName={worldName} />
+          {/* The page question earns the headline step (ux-run2 myth-aynpf) —
+              clearly above the 18px hook-card titles it governs. */}
+          <Heading level={1} role="headline">
+            {t('startingSituation.prompt')}
+          </Heading>
+        </Stack>
+        {/* The contract line (ux-run2 myth-wq6ln): the option COUNT + what
+            picking commits the player to, in one quiet chrome line. */}
+        <Text role="ui-caption" as="p" data-testid="situation-contract">
+          {t('startingSituation.contract')}
         </Text>
-        <Heading level={1} role="title">
-          {t('startingSituation.prompt')}
-        </Heading>
       </Stack>
       <SituationBody load={load} submitFailed={submitFailed} onSelect={handleSelect} />
     </Stack>

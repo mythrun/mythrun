@@ -173,6 +173,13 @@ describe('CharacterLoadingSurface', () => {
     ).toBeDefined()
   })
 
+  it('closes with the invite setup line — context for the collapsed invite affordance below (ux-run2 myth-3bl24)', () => {
+    renderSurface()
+    expect(screen.getByTestId('character-loading-table-room').textContent).toBe(
+      i18n.t('characterCreate.loading.tableRoom'),
+    )
+  })
+
   it('does not call onDone while the character is still processing (done false)', () => {
     const onDone = vi.fn()
     renderSurface({ done: false, onDone })

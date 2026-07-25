@@ -12,7 +12,7 @@ const meta: Meta<typeof Heading> = {
   tags: ['autodocs'],
   argTypes: {
     level: { control: 'inline-radio', options: [1, 2, 3, 4, 5, 6] },
-    role: { control: 'inline-radio', options: ['display', 'heading', 'title'] },
+    role: { control: 'inline-radio', options: ['display', 'headline', 'heading', 'title'] },
   },
 }
 
@@ -24,6 +24,12 @@ type Story = StoryObj<typeof Heading>
 export const Display: Story = {
   args: { level: 1, role: 'display' },
   render: (args) => <Heading {...args}>The Hollow Road</Heading>,
+}
+
+export const Headline: Story = {
+  name: 'Headline (page question)',
+  args: { level: 1, role: 'headline' },
+  render: (args) => <Heading {...args}>How do you want to craft your world?</Heading>,
 }
 
 export const HeadingRole: Story = {

@@ -54,6 +54,7 @@ export {
 } from './api/characters.ts'
 export type {
   SubmitCharacterBody,
+  GuidedChoicesPayload,
   SubmitCharacterResponse,
   PartyRoster,
   CharacterFull,
@@ -84,6 +85,7 @@ export {
 } from './create/guided-draft.ts'
 export type { SessionDraftStore, GuidedDraft, GuidedPickDraft } from './create/guided-draft.ts'
 export { getBalance, useBalance } from './api/billing.ts'
+export { useInvalidateBalance } from './api/billing.ts'
 export { useLowSessionCredits } from './api/billing.ts'
 // MYT-92 play-session slice: start (200/409/402 arms surface as HttpError for
 // the start-flow classifier) + the /active lookup the 409-join path needs.
@@ -296,6 +298,8 @@ export type { StageTiming, StageTimingsResponse } from '@mythrun/contract/rest'
 // the copy, and which kinds it shows.
 export { coarseWaitBucket, waitDisplay } from './loading/wait-estimate.ts'
 export type { WaitBucket, WaitDisplay, WaitDisplayInput } from './loading/wait-estimate.ts'
+export { clampEtaMonotonic } from './loading/monotonic-eta.ts'
+export { worldGenAccretion } from './loading/wait-accretion.ts'
 
 // Wiki-reveal timing (MYT-89 reveal timing): the pure predicates the
 // campaign-detail route reads off the stream's folded `stages[]` —

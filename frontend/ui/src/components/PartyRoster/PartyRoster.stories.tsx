@@ -21,19 +21,23 @@ const LABELS = {
   waiting: 'Waiting for the party to gather…',
   beginSolo: 'Begin the adventure →',
   beginParty: "Everyone's ready, begin →",
+  beginPartial: 'Begin with 2 of 3 ready →',
+  beginConfirmPrompt: "1 player isn't ready. Start anyway?",
+  beginConfirmYes: 'Start anyway',
+  beginConfirmNo: 'Keep waiting',
 }
 
 // Solo — the viewer is the only real member; the `empty` slot is the invite row.
 const SOLO: RosterMember[] = [
-  { userId: 'u1', displayName: 'Miklos', characterName: 'Kessa Vurm — Human Fighter', status: 'ready', isViewer: true },
+  { userId: 'u1', displayName: 'Miklos', characterName: 'Kessa Vurm', status: 'ready', isViewer: true },
   { userId: 'invite', displayName: '', status: 'empty', isViewer: false },
 ]
 
 // A full party with a laggard — two ready, one still creating (no character name
 // yet → the "Choosing who they are…" stand-in). The owner can begin now or wait.
 const PARTY: RosterMember[] = [
-  { userId: 'u1', displayName: 'Miklos', characterName: 'Kessa Vurm — Human Fighter', status: 'ready', isViewer: true },
-  { userId: 'u2', displayName: 'Ordric', characterName: 'Ordric Vane — Elf Wizard', status: 'ready', isViewer: false },
+  { userId: 'u1', displayName: 'Miklos', characterName: 'Kessa Vurm', status: 'ready', isViewer: true },
+  { userId: 'u2', displayName: 'Ordric', characterName: 'Ordric Vane', status: 'ready', isViewer: false },
   { userId: 'u3', displayName: 'Pell', status: 'creating', isViewer: false },
 ]
 
@@ -42,7 +46,7 @@ const PARTY: RosterMember[] = [
 // (the "just joined…" stand-in), NOT the dashed invite slot, and no synthetic invite
 // row appears (the party is now 2 real members).
 const GATHERING: RosterMember[] = [
-  { userId: 'u1', displayName: 'Miklos', characterName: 'Kessa Vurm — Human Fighter', status: 'ready', isViewer: true },
+  { userId: 'u1', displayName: 'Miklos', characterName: 'Kessa Vurm', status: 'ready', isViewer: true },
   { userId: 'u2', displayName: 'Bree', status: 'gathering', isViewer: false },
 ]
 
@@ -50,7 +54,7 @@ const meta: Meta<typeof PartyRoster> = {
   title: 'Character/PartyRoster',
   component: PartyRoster,
   tags: ['autodocs'],
-  args: { labels: LABELS, onBegin: noop, onInvite: noop },
+  args: { labels: LABELS, beginConfirming: false, onRequestBegin: noop, onCancelBegin: noop, onBegin: noop, onInvite: noop },
   // A paper page ground + a reading measure (the consuming screen owns the width).
   decorators: [
     (Story) => (
@@ -94,6 +98,13 @@ export const OwnerNotReady: Story = {
 export const PartyWithGatheringMember: Story = {
   name: 'Party — a just-joined member gathering',
   args: { members: GATHERING, viewerIsOwner: true, canBegin: true },
+}
+
+// Owner mid-confirm — a partial start armed (ux-run2 myth-wfgfi): the count-aware
+// prompt replaces the Begin control, with the Start anyway / Keep waiting verbs.
+export const OwnerPartialConfirm: Story = {
+  name: 'Owner — partial begin, confirm armed',
+  args: { members: PARTY, viewerIsOwner: true, canBegin: true, beginConfirming: true },
 }
 
 // Member (non-owner) view — no Begin control; a waiting line instead.

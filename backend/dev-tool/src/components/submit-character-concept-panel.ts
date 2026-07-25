@@ -25,6 +25,43 @@ function readCode(body: unknown): string {
   return 'unknown'
 }
 
+// The panel's three inputs share one visual shape: a muted mono label over a
+// full-width mono textarea.
+function appendLabeledTextarea(
+  parent: HTMLElement,
+  opts: { label: string; rows: number; placeholder?: string },
+): HTMLTextAreaElement {
+  const label = document.createElement('label')
+  label.style.display = 'block'
+  label.style.fontFamily = 'var(--mono)'
+  label.style.fontSize = '12px'
+  label.style.color = 'var(--fg-muted)'
+  label.textContent = opts.label
+  parent.appendChild(label)
+
+  const input = document.createElement('textarea')
+  input.rows = opts.rows
+  input.style.width = '100%'
+  input.style.fontFamily = 'var(--mono)'
+  input.style.fontSize = '12px'
+  input.style.marginBottom = '6px'
+  if (opts.placeholder !== undefined) input.placeholder = opts.placeholder
+  parent.appendChild(input)
+  return input
+}
+
+// Panel-side rejection for an unparseable guidedChoices field (never sent —
+// the backend would 400 bad_body anyway).
+function renderBadGuidedJson(feedbackEl: HTMLElement, raw: string): void {
+  feedbackEl.replaceChildren()
+  renderErrorBlock(feedbackEl, {
+    status: 0,
+    code: 'bad_guided_choices_json',
+    message: 'guidedChoices is not valid JSON — fix it or clear the field',
+    raw,
+  })
+}
+
 export function mountSubmitCharacterConceptPanel(parent: HTMLElement): PanelHandle {
   const { root, actionEl, feedbackEl, setState } = buildSplitView({
     parent,
@@ -38,37 +75,26 @@ export function mountSubmitCharacterConceptPanel(parent: HTMLElement): PanelHand
   note.textContent = 'Submit or re-submit your character concept for the active campaign.'
   actionEl.appendChild(note)
 
-  const conceptLabel = document.createElement('label')
-  conceptLabel.style.display = 'block'
-  conceptLabel.style.fontFamily = 'var(--mono)'
-  conceptLabel.style.fontSize = '12px'
-  conceptLabel.style.color = 'var(--fg-muted)'
-  conceptLabel.textContent = 'conceptText (20–4000 chars, optional on resubmit)'
-  actionEl.appendChild(conceptLabel)
+  const conceptInput = appendLabeledTextarea(actionEl, {
+    label: 'conceptText (20–4000 chars, optional on resubmit)',
+    rows: 4,
+  })
 
-  const conceptInput = document.createElement('textarea')
-  conceptInput.rows = 4
-  conceptInput.style.width = '100%'
-  conceptInput.style.fontFamily = 'var(--mono)'
-  conceptInput.style.fontSize = '12px'
-  conceptInput.style.marginBottom = '6px'
-  actionEl.appendChild(conceptInput)
+  const groundingInput = appendLabeledTextarea(actionEl, {
+    label: 'situationGroundingText (20–2000 chars)',
+    rows: 3,
+  })
 
-  const groundingLabel = document.createElement('label')
-  groundingLabel.style.display = 'block'
-  groundingLabel.style.fontFamily = 'var(--mono)'
-  groundingLabel.style.fontSize = '12px'
-  groundingLabel.style.color = 'var(--fg-muted)'
-  groundingLabel.textContent = 'situationGroundingText (20–2000 chars)'
-  actionEl.appendChild(groundingLabel)
-
-  const groundingInput = document.createElement('textarea')
-  groundingInput.rows = 3
-  groundingInput.style.width = '100%'
-  groundingInput.style.fontFamily = 'var(--mono)'
-  groundingInput.style.fontSize = '12px'
-  groundingInput.style.marginBottom = '6px'
-  actionEl.appendChild(groundingInput)
+  // myth-4jhrk: the guided-builder structured picks — optional JSON object
+  // mirroring GuidedChoicesSchema ({class, subclass, species, background},
+  // each optional). Sent only when non-empty; the placeholder shows a
+  // working example body.
+  const guidedInput = appendLabeledTextarea(actionEl, {
+    label: 'guidedChoices (optional JSON — guided-builder picks)',
+    rows: 2,
+    placeholder:
+      '{"class":"Cleric","subclass":"Life Domain","species":"Human","background":"Hermit"}',
+  })
 
   const submitBtn = document.createElement('button')
   submitBtn.textContent = 'Submit character'
@@ -99,6 +125,17 @@ export function mountSubmitCharacterConceptPanel(parent: HTMLElement): PanelHand
     // is a supported backend flow).
     const body: Record<string, unknown> = { situationGroundingText }
     if (conceptText.length > 0) body.conceptText = conceptText
+    // guidedChoices only when the operator typed one.
+    const guidedRaw = guidedInput.value.trim()
+    if (guidedRaw.length > 0) {
+      try {
+        body.guidedChoices = JSON.parse(guidedRaw)
+      } catch {
+        setState('error')
+        renderBadGuidedJson(feedbackEl, guidedRaw)
+        return
+      }
+    }
 
     setState('loading')
     feedbackEl.replaceChildren()

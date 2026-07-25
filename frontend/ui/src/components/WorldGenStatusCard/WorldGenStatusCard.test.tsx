@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { render } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render } from '@testing-library/react'
 import { axe } from 'jest-axe'
 import {
   PREP_STAGES,
@@ -19,15 +19,20 @@ import { WorldGenStatusCard } from './WorldGenStatusCard.tsx'
 // (entity_consolidation → embed_world) run behind the wiki reveal and get NO bar
 // either — the bars hit 100% exactly at the reveal moment. A prep or tail entry in the stream's `stages[]` is ignored. The
 // stream only ADVANCES each bar's fill. It shows: the CURRENT (running) stage's
-// friendly label, a completed/total percent, an optional per-second COUNTDOWN
-// (`countdownLabel`, MYT-89 waiting-feedback — the consumer ticks + formats it;
-// aria-hidden, the progressbar carries the semantics), and a PAPER-REGISTER
-// segmented SQUARE bar whose running cell pulses (opacity fade, the brand's only
-// sanctioned motion). Hard brand rule: NO circles / spinners / dots. Cost is NOT
-// rendered (audit ⑥). These tests pin the fixed bar count + % math, the prep/tail
-// exclusion, 100%-at-the-reveal-moment, the running-vs-done label, the square
-// (non-circular) indicator, the stage-label resolution + titleLabel fallback, and
-// the countdown line.
+// friendly label (the consumer composes any stage-scope framing into it), an
+// optional COUNTDOWN (`countdownLabel` — the consumer ticks + formats it;
+// aria-hidden, the progressbar carries the semantics) or its `stalledLabel`
+// stand-in, an optional quiet RETURN link (myth-t11az — back to the calm wait),
+// and a PAPER-REGISTER segmented SQUARE bar whose running cell pulses (opacity
+// fade, the brand's only sanctioned motion). Hard brand rule: NO circles /
+// spinners / dots. NO percent numeral (ux-run2 myth-uz1bn: "0%" over six named
+// markers and a numeral contradicting the bar fill are honesty defects — the
+// bars + stage line carry within-wait progress; percent lives only in the
+// progressbar's machine values). Cost is NOT rendered (audit ⑥). These tests pin
+// the fixed bar count, the prep/tail exclusion, 100%-at-the-reveal-moment, the
+// running-vs-done label, the square (non-circular) indicator, the stage-label
+// resolution + titleLabel fallback, the countdown/stalled line, and the return
+// link.
 
 const TOTAL = WATCHED_ENTITY_STAGES.length // 4 (myth-zaqxh added world_introduction)
 
@@ -80,47 +85,56 @@ describe('WorldGenStatusCard — FIXED bars from the WATCHED_ENTITY_STAGES taxon
     expect(container.querySelectorAll('[data-cell-state="pending"]')).toHaveLength(TOTAL - 1)
   })
 
-  it('renders 4 pending bars at 0% before the first snapshot frame (empty stream)', () => {
-    const { container, getByText } = render(<WorldGenStatusCard stages={[]} {...LABELS} />)
+  it('renders 4 pending bars before the first snapshot frame (empty stream)', () => {
+    const { container } = render(<WorldGenStatusCard stages={[]} {...LABELS} />)
     expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
     expect(container.querySelectorAll('[data-cell-state="pending"]')).toHaveLength(TOTAL)
-    expect(getByText('0%')).toBeInTheDocument()
   })
 
-  it('IGNORES prep-stage stream entries — no bar, no percent movement (the two-act cut)', () => {
-    // The whole prep act completed + the first entity stage running: the card still
-    // shows 0% (no prep bar exists to fill) with exactly one running entity bar.
+  it('IGNORES prep-stage stream entries — no bar exists for them (the two-act cut)', () => {
+    // The whole prep act completed + the first entity stage running: no completed
+    // bar (no prep bar exists to fill), exactly one running entity bar.
     const withPrep: readonly StageProgress[] = [
       ...PREP_STAGES.map((s) => stage(s, 'completed')),
       stage('world_and_factions', 'running'),
     ]
-    const { container, getByText } = render(<WorldGenStatusCard stages={withPrep} {...LABELS} />)
+    const { container, getByRole } = render(<WorldGenStatusCard stages={withPrep} {...LABELS} />)
     expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
     expect(container.querySelectorAll('[data-cell-state="completed"]')).toHaveLength(0)
     expect(container.querySelectorAll('[data-cell-state="running"]')).toHaveLength(1)
-    expect(getByText('0%')).toBeInTheDocument()
+    expect(getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0')
   })
 
   it('IGNORES silent-tail stream entries — the tail is nobody’s wait (reveal timing)', () => {
     // Everything through the boundary completed AND tail stages underway: the card
-    // holds at 100% with no extra bars and no running cell — a tail entry never
+    // holds full with no extra bars and no running cell — a tail entry never
     // renders as progress-to-come.
     const withTail: readonly StageProgress[] = [
       ...DONE,
       stage('entity_consolidation', 'completed'),
       stage('coherence_pass', 'running'),
     ]
-    const { container, getByText } = render(<WorldGenStatusCard stages={withTail} {...LABELS} />)
+    const { container, getByRole } = render(<WorldGenStatusCard stages={withTail} {...LABELS} />)
     expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
     expect(container.querySelectorAll('[data-cell-state="completed"]')).toHaveLength(TOTAL)
     expect(container.querySelectorAll('[data-cell-state="running"]')).toHaveLength(0)
-    expect(getByText('100%')).toBeInTheDocument()
+    expect(getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100')
   })
 
-  it('computes percent as completed / 4 (fixed denominator), NOT over the stream length', () => {
-    const { getByText, getByRole } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
-    expect(getByText(`${String(EXPECTED_MID_PERCENT)}%`)).toBeInTheDocument()
+  it('computes the progressbar percent as completed / 4 (fixed denominator), NOT over the stream length', () => {
+    const { getByRole } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
     expect(getByRole('progressbar')).toHaveAttribute('aria-valuenow', String(EXPECTED_MID_PERCENT))
+  })
+
+  it('renders NO percent numeral — the bars + stage line carry progress (ux-run2 myth-uz1bn)', () => {
+    // Run 2: "0%" rendered over six named markers already on the canvas, and the
+    // numeral contradicted the bar fill. The numeral is gone in every state;
+    // percent lives only in the progressbar's machine values.
+    for (const stages of [[], SHORT, MID, DONE]) {
+      const { queryByText, unmount } = render(<WorldGenStatusCard stages={stages} {...LABELS} />)
+      expect(queryByText(/%/)).toBeNull()
+      unmount()
+    }
   })
 
   it('shows the RUNNING stage friendly label', () => {
@@ -153,25 +167,24 @@ describe('WorldGenStatusCard — FIXED bars from the WATCHED_ENTITY_STAGES taxon
 })
 
 describe('WorldGenStatusCard — done state (the wiki-reveal moment)', () => {
-  it('hits 100% + the done label when the BOUNDARY stage completes — the tail not required', () => {
+  it('shows the done label when the BOUNDARY stage completes — the tail not required', () => {
     // No tail entry in the stream at all: the bars rest full the instant
     // connection-weaving lands, which is exactly when the route fires the reveal.
     const { getByText, getByRole } = render(<WorldGenStatusCard stages={DONE} {...LABELS} />)
-    expect(getByText('100%')).toBeInTheDocument()
     expect(getByText('Your world is ready')).toBeInTheDocument()
     expect(getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100')
   })
 
-  it('stops the working indicator at 100% (no running cell, no pulse)', () => {
+  it('stops the working indicator at full (no running cell, no pulse)', () => {
     const { container } = render(<WorldGenStatusCard stages={DONE} {...LABELS} />)
     expect(container.querySelector('[data-cell-state="running"]')).toBeNull()
     expect(container.querySelector('.animate-pulse')).toBeNull()
   })
 
-  it('never reaches 100% before the boundary stage (world_introduction) completes', () => {
-    const { queryByText } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
-    expect(queryByText('100%')).toBeNull()
+  it('never shows the done state before the boundary stage (world_introduction) completes', () => {
+    const { queryByText, getByRole } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
     expect(queryByText('Your world is ready')).toBeNull()
+    expect(getByRole('progressbar')).not.toHaveAttribute('aria-valuenow', '100')
   })
 })
 
@@ -196,6 +209,59 @@ describe('WorldGenStatusCard — the per-second countdown (MYT-89 waiting-feedba
   it('renders NO countdown when countdownLabel is omitted (cold-start / no history)', () => {
     const { queryByText } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
     expect(queryByText(/left/)).toBeNull()
+  })
+})
+
+describe('WorldGenStatusCard — the stalled stand-in (ux-run2 myth-uz1bn: degrade in language, never sit)', () => {
+  it('renders the stalled line in the countdown slot when the estimate exhausts', () => {
+    // The consumer swaps the countdown for the stalled reassurance the instant
+    // the estimate exhausts — the number never sits frozen at its floor.
+    const { getByTestId, queryByTestId } = render(
+      <WorldGenStatusCard stages={MID} stalledLabel="Still working. This is taking longer than usual." {...LABELS} />,
+    )
+    expect(getByTestId('worldgen-status-stalled')).toHaveTextContent(
+      'Still working. This is taking longer than usual.',
+    )
+    expect(queryByTestId('worldgen-status-countdown')).toBeNull()
+  })
+
+  it('is meaningful content (a one-time state change) — NOT aria-hidden', () => {
+    const { getByTestId } = render(
+      <WorldGenStatusCard stages={MID} stalledLabel="Still working." {...LABELS} />,
+    )
+    expect(getByTestId('worldgen-status-stalled')).not.toHaveAttribute('aria-hidden')
+  })
+
+  it('prefers the live countdown when both are supplied (defensive — the consumer passes at most one)', () => {
+    const { getByTestId, queryByTestId } = render(
+      <WorldGenStatusCard stages={MID} countdownLabel="Ready in about 2 min" stalledLabel="Still working." {...LABELS} />,
+    )
+    expect(getByTestId('worldgen-status-countdown')).toBeInTheDocument()
+    expect(queryByTestId('worldgen-status-stalled')).toBeNull()
+  })
+})
+
+describe('WorldGenStatusCard — the quiet return link (ux-run2 myth-t11az: no one-way door)', () => {
+  it('renders the return link and fires onReturn when pressed', () => {
+    const onReturn = vi.fn()
+    const { getByRole } = render(
+      <WorldGenStatusCard stages={MID} returnLabel="Wait quietly instead" onReturn={onReturn} {...LABELS} />,
+    )
+    const link = getByRole('button', { name: 'Wait quietly instead' })
+    fireEvent.click(link)
+    expect(onReturn).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-enables pointer events on the link (the card itself is a pointer-transparent readout)', () => {
+    const { getByRole } = render(
+      <WorldGenStatusCard stages={MID} returnLabel="Wait quietly instead" onReturn={() => undefined} {...LABELS} />,
+    )
+    expect(getByRole('button', { name: 'Wait quietly instead' }).className).toMatch(/pointer-events-auto/)
+  })
+
+  it('renders no link when the consumer omits it (the reveal moment / non-returnable hosts)', () => {
+    const { queryByRole } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
+    expect(queryByRole('button')).toBeNull()
   })
 })
 
@@ -237,8 +303,8 @@ describe('WorldGenStatusCard — footer variant (MYT-89 audit v2: the mobile sta
   // caption is dropped (the footer reclaims real estate, it doesn't relocate the
   // card verbatim). The overlay stays the default — the shipped desktop card.
 
-  it('keeps the substance: running label, percent, all bars, the countdown', () => {
-    const { container, getByText, getByTestId } = render(
+  it('keeps the substance: running label, progressbar, all bars, the countdown', () => {
+    const { container, getByText, getByTestId, getByRole } = render(
       <WorldGenStatusCard
         variant="footer"
         stages={MID}
@@ -248,9 +314,22 @@ describe('WorldGenStatusCard — footer variant (MYT-89 audit v2: the mobile sta
     )
     expect(container.querySelector('[data-variant="footer"]')).not.toBeNull()
     expect(getByText('Drawing the connections')).toBeInTheDocument()
-    expect(getByText(`${String(EXPECTED_MID_PERCENT)}%`)).toBeInTheDocument()
+    expect(getByRole('progressbar')).toHaveAttribute('aria-valuenow', String(EXPECTED_MID_PERCENT))
     expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
     expect(getByTestId('worldgen-status-countdown')).toHaveTextContent('~2:14 left')
+  })
+
+  it('keeps the return link available in the footer (mobile is not a one-way door either)', () => {
+    const { getByRole } = render(
+      <WorldGenStatusCard
+        variant="footer"
+        stages={MID}
+        returnLabel="Wait quietly instead"
+        onReturn={() => undefined}
+        {...LABELS}
+      />,
+    )
+    expect(getByRole('button', { name: 'Wait quietly instead' })).toBeInTheDocument()
   })
 
   it('drops the framing caption (compact — the title is overlay chrome)', () => {

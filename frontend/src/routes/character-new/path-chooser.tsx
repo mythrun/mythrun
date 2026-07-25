@@ -1,4 +1,4 @@
-import { Stack, Heading, GhostChoiceList } from '@mythrun/ui'
+import { Stack, Heading, Text, Button, GhostChoiceList } from '@mythrun/ui'
 import type { GhostChoiceItem } from '@mythrun/client-core/contract'
 import { useTranslation } from 'react-i18next'
 
@@ -11,15 +11,36 @@ import { useTranslation } from 'react-i18next'
 // docked "enter" arrow), the ENTIRE card is the click target, and the serif copy
 // matches the reading register (the earlier mono card body read as a dev stub).
 // Each card keeps its `chooser-*` testId so the route can address one path.
+//
+// GEOMETRY (ux-run2 myth-ma8yv, critique 024): a binary fork reads as two doors,
+// not a stack of full-width bars — `columns={2}` seats the cards SIDE BY SIDE as
+// two taller cards (restacking below `sm`), capped at the `wide` measure so they
+// hold ~400-440px each; and the whole block is vertically weighted into the left
+// column (minHeight="page" + 1:2 grow spacers) so the composition sits in the
+// space beside the wiki rail instead of clinging to the top edge over a dead
+// quadrant. Spacers collapse on short viewports.
+//
+// PLACE + HIERARCHY (ux-run2 myth-80an1 + myth-aynpf): a quiet Back over an
+// altitude eyebrow ("Creating your character") tells the player where they are
+// and how to leave, and the page QUESTION carries the display scale — the one
+// moment on the page that earns it (the sidebar's world title is reference, not
+// a second front page).
 
 export interface PathChooserProps {
   /** Chose the freeform ("describe them in your own words") path. */
   onChooseFreeform: () => void
   /** Chose the guided ("answer a few questions") path. */
   onChooseGuided: () => void
+  /** Leave character creation for the campaign surface (the place the player
+   *  came from) — the chooser's quiet way back (ux-run2 myth-80an1). */
+  onBack: () => void
 }
 
-export function PathChooser({ onChooseFreeform, onChooseGuided }: PathChooserProps): React.JSX.Element {
+export function PathChooser({
+  onChooseFreeform,
+  onChooseGuided,
+  onBack,
+}: PathChooserProps): React.JSX.Element {
   const { t } = useTranslation()
   const choices: GhostChoiceItem[] = [
     {
@@ -38,11 +59,25 @@ export function PathChooser({ onChooseFreeform, onChooseGuided }: PathChooserPro
     },
   ]
   return (
-    <Stack gap={5}>
-      <Heading level={1} role="title">
-        {t('characterCreate.chooser.prompt')}
-      </Heading>
-      <GhostChoiceList items={choices} data-testid="chooser-choices" />
+    <Stack minHeight="page" data-testid="chooser-seat">
+      <Stack grow={1} />
+      <Stack gap={5} maxWidth="wide">
+        <Stack gap={2}>
+          <Stack direction="row">
+            <Button variant="ghost" size="sm" data-testid="chooser-back" onPress={onBack}>
+              {t('back')}
+            </Button>
+          </Stack>
+          <Text role="ui-caption" as="p">
+            {t('characterCreate.chooser.eyebrow')}
+          </Text>
+          <Heading level={1} role="display">
+            {t('characterCreate.chooser.prompt')}
+          </Heading>
+        </Stack>
+        <GhostChoiceList items={choices} columns={2} data-testid="chooser-choices" />
+      </Stack>
+      <Stack grow={2} />
     </Stack>
   )
 }

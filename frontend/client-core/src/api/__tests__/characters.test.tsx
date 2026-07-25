@@ -63,6 +63,39 @@ describe('submitCharacter', () => {
     })
   })
 
+  // myth-4jhrk: the guided builder's structured picks ride the body alongside
+  // the flattened prose — the shared contract with the backend's
+  // GuidedChoicesSchema. A freeform body (the test above) stays pick-free.
+  it('posts guidedChoices verbatim when the guided path supplies them', async () => {
+    let posted: unknown
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns/c-1/characters`, async ({ request }) => {
+        posted = await request.json()
+        return HttpResponse.json({ conceptId: 'con-1', status: 'processing', jobId: 'cc-c-1-u-1' })
+      }),
+    )
+    await submitCharacter(testCtx, 'c-1', {
+      conceptText: 'I am a Cleric, a Life Domain. I am a Human with a Hermit background.',
+      situationGroundingText: 'I came to the reach chasing a rumour of my sister.',
+      guidedChoices: {
+        class: 'Cleric',
+        subclass: 'Life Domain',
+        species: 'Human',
+        background: 'Hermit',
+      },
+    })
+    expect(posted).toEqual({
+      conceptText: 'I am a Cleric, a Life Domain. I am a Human with a Hermit background.',
+      situationGroundingText: 'I came to the reach chasing a rumour of my sister.',
+      guidedChoices: {
+        class: 'Cleric',
+        subclass: 'Life Domain',
+        species: 'Human',
+        background: 'Hermit',
+      },
+    })
+  })
+
   it('throws a typed HttpError 409 concept_locked once the concept is locked', async () => {
     server.use(
       http.post(`${BASE_URL}/api/campaigns/c-1/characters`, () =>

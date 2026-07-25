@@ -26,16 +26,26 @@ export interface StackProps extends BaseProps {
    * Platform-neutral: web → `flex-shrink:0`, native → Yoga `flexShrink:0`.
    */
   noShrink?: boolean
-  /** Floor the stack at the full dynamic viewport height (`100dvh`) — a full-screen flex column (e.g. a genesis screen / a centered splash). */
-  minHeight?: 'screen'
+  /**
+   * Floor the stack's height. `screen` is the full dynamic viewport (`100dvh`) —
+   * a full-screen flex column (e.g. a genesis screen / a centered splash).
+   * `page` is the IN-FRAME content region: the viewport minus the app frame's
+   * fixed dressing (header + hairline + content padding), so a short flow
+   * screen can seat its block with grow-weighted spacers (optical centering)
+   * instead of pooling at the top of the page (ux-run2 myth-ma8yv).
+   */
+  minHeight?: 'screen' | 'page'
   /**
    * Cap the column at a reading measure and centre it (`mx-auto`). For single-
    * column reading/flow surfaces — the creation funnel, a prose beat — that must
    * NOT stretch to the full content width. `prose` (~34rem) is a text-reading
-   * measure; `form` (~36rem) is the single-question flow column; `wide` (~56rem)
-   * is a roomier content measure. Omit for a full-width stack.
+   * measure; `form` (~36rem) is the single-question flow column; `content`
+   * (~45rem) is the card-row content column — option lists / rosters whose card
+   * rows and confirm affordances share the column's edges instead of running
+   * full-bleed (ux-run2 myth-ma8yv); `wide` (~56rem) is a roomier content
+   * measure. Omit for a full-width stack.
    */
-  maxWidth?: 'prose' | 'form' | 'wide'
+  maxWidth?: 'prose' | 'form' | 'content' | 'wide'
   /**
    * Grow to fill / WEIGHT the available main-axis space of a flex parent.
    * `true` → `flex: 1` (fill — the common body-region case, e.g. the region below a

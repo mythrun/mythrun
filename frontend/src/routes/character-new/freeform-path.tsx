@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Button, Stack, Text, FreeformPrompt, SituationRecap } from '@mythrun/ui'
+import { Stack, Text, FreeformPrompt, SituationRecap } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import type { StartingSituation } from '@mythrun/client-core'
 import { useCharacterDraft, type SessionDraftStore } from '@mythrun/client-core/character'
@@ -67,6 +67,31 @@ export interface FreeformPathProps {
   campaignId: string
 }
 
+/** Submit both fields; a failure re-opens the path with a calm retry notice.
+ *  The `submitting` ref is a synchronous double-press guard — on success the
+ *  route unmounts the path, so the guard stays set. */
+function submitFreeform(args: {
+  conceptText: string
+  groundingText: string
+  submit: (conceptText: string, situationGroundingText: string) => Promise<void>
+  onSubmitted: () => void
+  setNotice: (notice: Notice) => void
+  submitting: { current: boolean }
+}): void {
+  const { conceptText, groundingText, submit, onSubmitted, setNotice, submitting } = args
+  if (submitting.current) return
+  submitting.current = true
+  setNotice(null)
+  void submit(conceptText.trim(), groundingText.trim())
+    .then(() => {
+      onSubmitted()
+    })
+    .catch(() => {
+      submitting.current = false
+      setNotice('error')
+    })
+}
+
 export function FreeformPath({
   groundingWhisper,
   situation,
@@ -127,19 +152,7 @@ export function FreeformPath({
       setNotice('tooShort')
       return
     }
-    if (submitting.current) return
-    submitting.current = true
-    setNotice(null)
-    void submit(conceptText.trim(), groundingText.trim())
-      .then(() => {
-        // On success the route unmounts this path (machine → processing), so the
-        // guard is left set — there is nothing here to submit twice into.
-        onSubmitted()
-      })
-      .catch(() => {
-        submitting.current = false
-        setNotice('error')
-      })
+    submitFreeform({ conceptText, groundingText, submit, onSubmitted, setNotice, submitting })
   }
 
   /** The quiet "N of 2" signpost over the current prompt. */
@@ -150,14 +163,6 @@ export function FreeformPath({
 
   return (
     <Stack gap={5}>
-      {/* The quiet back affordance (the reversible decision the player asked for):
-          on the concept step it leaves to the chooser; on the grounding step it
-          steps back to the concept. */}
-      <Stack direction="row">
-        <Button variant="ghost" size="sm" onPress={handleBack} data-testid="freeform-back">
-          {t('back')}
-        </Button>
-      </Stack>
       {/* The opening scene, kept in view on both steps (MYT-102). Title/location/
           prose are LLM DATA; only the eyebrow is catalog chrome. */}
       {situation !== undefined && (
@@ -168,27 +173,27 @@ export function FreeformPath({
           prose={situation.prose}
         />
       )}
-      {step === 'concept' ? (
-        <FreeformPrompt
-          stepIndicator={stepIndicator}
-          prompt={t('characterCreate.freeform.conceptPrompt')}
-          whisper={t('characterCreate.freeform.conceptWhisper')}
-          value={conceptText}
-          onChange={handleConceptChange}
-          onSubmit={handleConcept}
-          submitLabel={t('characterCreate.freeform.continue')}
-        />
-      ) : (
-        <FreeformPrompt
-          stepIndicator={stepIndicator}
-          prompt={t('characterCreate.freeform.groundingPrompt')}
-          whisper={groundingWhisper}
-          value={groundingText}
-          onChange={handleGroundingChange}
-          onSubmit={handleGrounding}
-          submitLabel={t('characterCreate.freeform.continue')}
-        />
-      )}
+      {/* The quiet Back rides the prompt's action row — the flow's ONE Back
+          position (ux-run2 myth-80an1, matching the guided path): the concept
+          step leaves to the chooser; the grounding step steps back in-path. The
+          grounding whisper is the situation's bespoke invitation — the DM's
+          voice, promoted past hint chrome (ux-run2 myth-4gnrp). */}
+      <FreeformPrompt
+        stepIndicator={stepIndicator}
+        prompt={
+          step === 'concept'
+            ? t('characterCreate.freeform.conceptPrompt')
+            : t('characterCreate.freeform.groundingPrompt')
+        }
+        whisper={step === 'concept' ? t('characterCreate.freeform.conceptWhisper') : groundingWhisper}
+        {...(step === 'concept' ? {} : { whisperVoice: 'dm' as const })}
+        value={step === 'concept' ? conceptText : groundingText}
+        onChange={step === 'concept' ? handleConceptChange : handleGroundingChange}
+        onSubmit={step === 'concept' ? handleConcept : handleGrounding}
+        submitLabel={t('characterCreate.freeform.continue')}
+        onBack={handleBack}
+        backLabel={t('back')}
+      />
       {notice !== null ? (
         <Text role="ui-caption" as="p" data-testid="freeform-notice">
           {notice === 'tooShort'

@@ -33,6 +33,12 @@ export interface SessionInputProps {
   placeholder: string
   /** Resolved label for the @DM summon affordance. */
   summonLabel: string
+  /** myth-cimi3 — the modality hint: while the @DM summon affordance is hovered
+   *  or focused, the (empty-field) placeholder shifts to this line ("Ask a
+   *  question, out of character"), disclosing that the SAME textbox is in-fiction
+   *  action via Send and out-of-character question via the summon. Optional;
+   *  absent → the placeholder never shifts. */
+  summonHint?: string
   /** Resolved label for the Send affordance. */
   sendLabel: string
   /** Hard character cap on the composed message — mirrors the server's

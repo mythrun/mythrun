@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Stack, Text, Button, SeamlessInput, Icon, Grid, Divider } from '@mythrun/ui'
+import { useEffect, useId, useState } from 'react'
+import { Stack, Text, Button, SeamlessInput, Icon, Grid, Divider, HatchLine, Box } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import {
   startSynthesisStream,
@@ -14,13 +14,20 @@ import {
 
 // The campaign-create GUIDED screen (spec §1, "Build from what you love") — the
 // player names three things they love, one at a time, and the synthesizer turns
-// them into a concept preview. A quiet eyebrow + a faint 3-tick progress
-// affordance frame each step; the serif question-that-IS-the-label sits over a
-// name field + a multiline "why" field. `Next →` advances (steps 1-2), `Find my
-// world →` opens the synthesis STREAM (step 3, myth-umggn), and a `← Back`
-// steps back (steps 2-3) with the picks PERSISTED in component state. The picks
-// also round-trip through sessionStorage (the client-core draft seam) so a
-// mid-flow reload re-prefills.
+// them into a concept preview. A quiet eyebrow + the step affordance frame each
+// step; the serif question-that-IS-the-label sits over a name field + a
+// multiline "why" field. `Next` advances (steps 1-2), `Weave it together →`
+// opens the synthesis STREAM (step 3, myth-umggn), and a `← Back` steps back
+// (steps 2-3) with the picks PERSISTED in component state. The picks also
+// round-trip through sessionStorage (the client-core draft seam) so a mid-flow
+// reload re-prefills.
+//
+// THE ADVANCE MUST NEVER READ AS DATA LOSS (ux-run2 myth-tf60g): run 2's player
+// hit step 2 as a pixel-repeat of step 1 over emptied fields and believed the
+// input was discarded. Three guards, all here: the settled prior picks stay
+// ON-SCREEN as ledger rows above the active prompts; the name question is
+// sequence-aware per step ("Name a story you love." → "A second story you
+// love." → "One more."); and the counter names the unit ("Story 2 of 3").
 //
 // myth-umggn: the synthesis is a one-shot SSE POST (`startSynthesisStream`).
 // This screen owns the OPEN — so every pre-stream failure (400/429/403/
@@ -81,38 +88,76 @@ function noticeFor(err: unknown): Notice {
   return { kind: 'retry' }
 }
 
-// A faint 3-tick progress affordance composed from DS primitives (Grid + Divider)
+// The 3-tick progress affordance composed from DS primitives (Grid + Divider)
 // — the guided INPUT gets a step indicator (distinct from the world-GEN
 // no-progress-bar rule). Completed/current ticks read as the ink seam; pending
-// ticks stay the quiet decorative hairline.
+// ticks hold the interactive-grade `strong` rule (ux-run2 myth-tf60g — the
+// decorative hairline vanished, weakening the stepper to near-nothing).
 function StepTicks({ step }: { step: Step }): React.JSX.Element {
   return (
     <Grid columns={3} gap={2} data-testid="guided-step-ticks">
       {[1, 2, 3].map((tick) => (
-        <Divider key={tick} tone={tick <= step ? 'ink' : 'border'} />
+        <Divider key={tick} tone={tick <= step ? 'ink' : 'strong'} />
       ))}
     </Grid>
   )
 }
 
-// The quiet eyebrow + the faint tick affordance + the per-step "N of three" marker.
+// The quiet eyebrow, then — DETACHED below it, so the ticks never read as the
+// eyebrow's underline (ux-run2 myth-tf60g) — the tick affordance with its
+// unit-named counter ("Story 2 of 3") in the readable caption register.
 function StepHeader({ step }: { step: Step }): React.JSX.Element {
   const { t } = useTranslation()
   return (
-    <Stack gap={2}>
+    <Stack gap={4}>
       <Text role="ui-label" data-testid="guided-eyebrow">
         {t('campaignNew.guided.eyebrow')}
       </Text>
-      <StepTicks step={step} />
-      <Text role="meta" data-testid="guided-step-marker">
-        {t(`campaignNew.guided.step.${STEP_KEYS[step - 1] ?? 'one'}`)}
-      </Text>
+      <Stack gap={2}>
+        <StepTicks step={step} />
+        <Text role="ui-caption" data-testid="guided-step-marker">
+          {t(`campaignNew.guided.step.${STEP_KEYS[step - 1] ?? 'one'}`)}
+        </Text>
+      </Stack>
+    </Stack>
+  )
+}
+
+// The settled prior picks, echoed above the active prompts as ledger rows —
+// the on-screen receipt that the earlier answers SAVED (ux-run2 myth-tf60g:
+// "persist prior answers on-screen as settled cards (strongest fix)"). One
+// quiet line each: the mono ledger label, then the title in the serif register
+// the player wrote it in.
+function SettledPicks({ picks, step }: { picks: Picks; step: Step }): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <Stack gap={2} data-testid="guided-settled">
+      {picks.slice(0, step - 1).map((pick, i) => (
+        <Stack
+          // Index-keyed is correct here: the list is positional (Story 1..2).
+          key={i}
+          direction="row"
+          gap={3}
+          align="center"
+          data-testid={`guided-settled-${String(i + 1)}`}
+        >
+          <Text role="meta" noShrink>
+            {t('campaignNew.guided.settledLabel', { n: i + 1 })}
+          </Text>
+          <Text role="prose-body" truncate>
+            {pick.title}
+          </Text>
+        </Stack>
+      ))}
     </Stack>
   )
 }
 
 // The one-at-a-time pick fields: the name (autofocused, re-keyed per step so the
-// caret lands on each new step) over the multiline "why".
+// caret lands on each new step) over the multiline "why". The name question is
+// SEQUENCE-AWARE (ux-run2 myth-tf60g); the story field carries one evocative
+// real-title placeholder and the why field a single shape hint — the blank-page
+// scaffolding (myth-exobi), wired to the field via aria-describedby.
 function PickFields({
   step,
   pick,
@@ -123,28 +168,39 @@ function PickFields({
   onPatch: (patch: Partial<GuidedPickDraft>) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const hintId = useId()
   return (
-    <Stack gap={4}>
+    <Stack gap={7}>
       <SeamlessInput
         key={step}
         autoFocus
-        label={t('campaignNew.guided.nameQuestion')}
+        label={t(`campaignNew.guided.nameQuestion.${STEP_KEYS[step - 1] ?? 'one'}`)}
+        placeholder={t('campaignNew.guided.titlePlaceholder')}
         value={pick.title}
         onChange={(v) => { onPatch({ title: v }) }}
         data-testid="guided-name-input"
       />
-      <SeamlessInput
-        multiline
-        label={t('campaignNew.guided.whyQuestion')}
-        value={pick.whyILikeIt}
-        onChange={(v) => { onPatch({ whyILikeIt: v }) }}
-        data-testid="guided-why-input"
-      />
+      <Stack gap={2}>
+        <SeamlessInput
+          multiline
+          label={t('campaignNew.guided.whyQuestion')}
+          describedBy={hintId}
+          value={pick.whyILikeIt}
+          onChange={(v) => { onPatch({ whyILikeIt: v }) }}
+          data-testid="guided-why-input"
+        />
+        <Text role="ui-caption" id={hintId} data-testid="guided-why-hint">
+          {t('campaignNew.guided.whyHint')}
+        </Text>
+      </Stack>
     </Stack>
   )
 }
 
-// The `← Back` (steps 2-3) + the primary `Next →` / `Find my world →` action.
+// The `← Back` (steps 2-3) + the primary `Next` / `Weave it together →` action.
+// The primary rides the LG control (ux-run2 myth-x9ugl: the flow's one CTA was
+// the smallest text on the page); enabled is always the solid fill — the
+// disabled treatment is the Button DS's (myth-skbzw), never restyled here.
 function StepActions({
   step,
   busy,
@@ -174,6 +230,7 @@ function StepActions({
       ) : null}
       <Button
         variant="primary"
+        size="lg"
         loading={busy}
         disabled={!ready}
         onPress={onAdvance}
@@ -253,6 +310,7 @@ export function GuidedScreen({ onStreaming, onFreeform }: GuidedScreenProps): Re
   return (
     <Stack gap={6} data-testid="screen-guided">
       <StepHeader step={step} />
+      {step > 1 ? <SettledPicks picks={picks} step={step} /> : null}
       <PickFields step={step} pick={current} onPatch={patchCurrent} />
       {notice ? (
         <Text role="ui-caption" data-testid="guided-notice">
@@ -260,13 +318,18 @@ export function GuidedScreen({ onStreaming, onFreeform }: GuidedScreenProps): Re
         </Text>
       ) : null}
       <StepActions step={step} busy={busy} ready={advanceReady} onBack={back} onAdvance={advance} />
-      {step === 1 ? (
-        <Stack align="start">
-          <Button variant="ghost" size="sm" onPress={onFreeform} data-testid="guided-switch">
-            {t('campaignNew.guided.switchToFreeform')}
-          </Button>
-        </Stack>
-      ) : null}
+      {/* The escape hatch rides EVERY step (ux-run2 myth-vjl7d), left-aligned to
+          the flow column, with the actionable phrase underlined (HatchLine). The
+          stack's gap keeps ~32px above; the spacer below keeps it off the fold. */}
+      <HatchLine
+        data-testid="guided-switch"
+        prompt={t('campaignNew.guided.switchPrompt')}
+        action={t('campaignNew.guided.switchAction')}
+        onPress={onFreeform}
+      />
+      {/* Bottom breathing (ux-run2 myth-vjl7d: the hatch sat ~4px off the
+          viewport floor) — a transparent spacer past the frame's own padding. */}
+      <Box padding={2} surface="none" />
     </Stack>
   )
 }

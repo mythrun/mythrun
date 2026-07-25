@@ -255,7 +255,9 @@ function pickFreeform(): void {
 function answerAndContinue(value: string): void {
   const prompt = screen.getByTestId('freeform-prompt')
   fireEvent.change(within(prompt).getByRole('textbox'), { target: { value } })
-  fireEvent.click(within(prompt).getByRole('button'))
+  // The action row also carries the quiet Back (ux-run2 myth-80an1) — name the
+  // submit control.
+  fireEvent.click(within(prompt).getByRole('button', { name: /^(Skip|Continue)$/ }))
 }
 
 describe('CharacterNewRoute — the path chooser', () => {
@@ -265,6 +267,15 @@ describe('CharacterNewRoute — the path chooser', () => {
     expect(screen.getByTestId('chooser-freeform')).toBeDefined()
     expect(screen.getByTestId('chooser-guided')).toBeDefined()
     expect(screen.getByText(i18n.t('characterCreate.chooser.prompt'))).toBeDefined()
+  })
+
+  // ux-run2 myth-80an1: the chooser names its place (the altitude eyebrow) and
+  // offers a way back to the campaign surface.
+  it('carries the altitude eyebrow and a Back to the campaign', async () => {
+    renderRoute()
+    expect(screen.getByText(i18n.t('characterCreate.chooser.eyebrow'))).toBeDefined()
+    fireEvent.click(screen.getByTestId('chooser-back'))
+    expect(await screen.findByTestId('campaign-surface-probe')).toBeDefined()
   })
 
   it('renders the guided builder when the guided path is picked', () => {
@@ -559,7 +570,11 @@ describe('CharacterNewRoute — player-input durability (the P0 fix)', () => {
     pickFreeform()
     typeConcept(CONCEPT)
     // Advance to grounding and type it (the draft must merge, not overwrite concept).
-    fireEvent.click(within(screen.getByTestId('freeform-prompt')).getByRole('button'))
+    fireEvent.click(
+      within(screen.getByTestId('freeform-prompt')).getByRole('button', {
+        name: /^(Skip|Continue)$/,
+      }),
+    )
     await screen.findByText(CHOSEN_INVITATION)
     fireEvent.change(within(screen.getByTestId('freeform-prompt')).getByRole('textbox'), {
       target: { value: GROUNDING },
@@ -571,7 +586,11 @@ describe('CharacterNewRoute — player-input durability (the P0 fix)', () => {
     renderRoute({ draftStore: store, fetchProgress: vi.fn().mockResolvedValue(progressWith('submitted')) })
     pickFreeform()
     expect(conceptFieldValue()).toBe(CONCEPT)
-    fireEvent.click(within(screen.getByTestId('freeform-prompt')).getByRole('button'))
+    fireEvent.click(
+      within(screen.getByTestId('freeform-prompt')).getByRole('button', {
+        name: /^(Skip|Continue)$/,
+      }),
+    )
     await screen.findByText(CHOSEN_INVITATION)
     expect(conceptFieldValue()).toBe(GROUNDING)
   })
@@ -613,7 +632,7 @@ describe('CharacterNewRoute — the back affordance (the reversible decision)', 
     renderRoute()
     pickFreeform()
     expect(screen.getByTestId('freeform-prompt')).toBeDefined()
-    fireEvent.click(screen.getByTestId('freeform-back'))
+    fireEvent.click(screen.getByTestId('freeform-prompt-back'))
     // Back on the chooser — the decision is reversible.
     expect(screen.getByTestId('chooser-freeform')).toBeDefined()
     expect(screen.queryByTestId('freeform-prompt')).toBeNull()
@@ -624,7 +643,7 @@ describe('CharacterNewRoute — the back affordance (the reversible decision)', 
     pickFreeform()
     answerAndContinue(CONCEPT)
     await screen.findByText(CHOSEN_INVITATION) // now on the grounding step
-    fireEvent.click(screen.getByTestId('freeform-back'))
+    fireEvent.click(screen.getByTestId('freeform-prompt-back'))
     // Back on the concept prompt — its words intact, the chooser not shown.
     expect(screen.getByText(i18n.t('characterCreate.freeform.conceptPrompt'))).toBeDefined()
     expect(conceptField().value).toBe(CONCEPT)
@@ -638,7 +657,7 @@ describe('CharacterNewRoute — the back affordance (the reversible decision)', 
     pickFreeform()
     fireEvent.change(conceptField(), { target: { value: CONCEPT } })
     // Reverse the decision, then re-enter freeform: the words come back.
-    fireEvent.click(screen.getByTestId('freeform-back'))
+    fireEvent.click(screen.getByTestId('freeform-prompt-back'))
     expect(screen.getByTestId('chooser-freeform')).toBeDefined()
     pickFreeform()
     expect(conceptField().value).toBe(CONCEPT)

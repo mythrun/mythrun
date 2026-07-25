@@ -52,33 +52,50 @@ import type { SeamlessInputProps } from '@mythrun/client-core/contract'
 // generated). Shared verbatim by the <input> and <textarea> arms so they read
 // and focus identically; the multiline arm appends its auto-grow classes.
 const FIELD_CLASS = cn(
-  'block w-full font-body text-2xl leading-[1.4] text-ink',
+  // Reading-scale serif (ux-run2 myth-x9ugl: 28px field text pushed the second
+  // question + the CTA under the fold; 22px keeps the literary register AND the
+  // 720px viewport budget — question 1 + question 2 + CTA all inside the fold).
+  'block w-full font-body text-xl leading-[1.4] text-ink',
   // A defined paper field: surface ground + a square (flat 1-bit) interactive-
   // grade border + breathing padding — the unmistakable "write here" area. Mirrors
   // the DS Input/TextArea affordance so this reads as a real field, not prose.
   'rounded-none border border-border-strong bg-surface',
-  'px-[var(--space-4)] py-[var(--space-3)]',
+  'px-[var(--space-4)]',
   // Branded ember caret — the FOREGROUND accent (--accent-fg) so the cursor reads
   // against the paper ground in BOTH themes (the fill --accent is too dark in dark).
   'caret-accent-fg',
   // Faint placeholder hint (never the label).
   'placeholder:text-ink-tertiary',
-  // The shared a11y focus ring (WCAG 2.4.13) — 2px square accent outline, 2px
-  // offset, theme-aware; identical to every other DS control.
-  'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
+  // Focus: ONE contiguous accent stroke (ux-run2 myth-1pzjw — the 2px-offset
+  // ring over the field's own border read as a pressed-button/error DOUBLE
+  // rule). The outline hugs the border (offset 0) and the border flips to the
+  // same accent, so both read as a single distinctive sienna stroke; still the
+  // 2px theme-aware accent indicator (WCAG 2.4.13).
+  'focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent-fg focus-visible:border-accent-fg',
   // Disabled: muted ink + non-interactive cursor, ground/edge held (a11y-exempt).
   'disabled:cursor-not-allowed disabled:text-ink-tertiary disabled:bg-surface disabled:border-border-strong',
 )
 
+// The single-line (title) arm: a TRUE one-line field (~48px — compact vertical
+// padding; ux-run2 myth-1pzjw: a ~70px tall single-line box implied a paragraph
+// answer), whose overflow resolves to an ellipsis when unfocused instead of
+// clipping mid-word flush against the border.
+const SINGLE_LINE_CLASS = 'py-[var(--space-2)] text-ellipsis'
+
 // Multiline auto-grow: `field-sizing-content` (Tailwind v4 / native) sizes the
 // textarea to its content so long world-creation prose grows the field instead
-// of scrolling; `resize-none overflow-hidden` keeps it a clean ghost surface
-// (no resize handle, no inner scrollbar) since the height tracks the text. A
+// of scrolling — up to a CAP of ~8 visible lines (ux-run2 myth-x9ugl: unbounded
+// growth walked the CTA off the fold), past which the field scrolls internally
+// (`overflow-y-auto` — the scrollbar only appears once the cap is hit).
+// `resize-none` keeps the clean ghost surface (no resize handle). A
 // prose-inviting FLOOR (`min-h` of ~4 lines + the field's own vertical padding,
 // tracked in `1lh`/token units so it follows the type scale) keeps an empty
 // concept field from collapsing to a single-line box — the box should look like
 // it wants a paragraph, not a search bar (ux-run1 0xao0 / screen 009).
-const MULTILINE_CLASS = 'field-sizing-content resize-none overflow-hidden min-h-[calc(4*1lh+2*var(--space-3))]'
+const MULTILINE_CLASS = cn(
+  'field-sizing-content resize-none overflow-y-auto py-[var(--space-3)]',
+  'min-h-[calc(4*1lh+2*var(--space-3))] max-h-[calc(8*1lh+2*var(--space-3))]',
+)
 
 // `field-sizing: content` is the CSS path (Chrome/Safari). Firefox doesn't support
 // it yet, so without a fallback the textarea stays its default height and the
@@ -149,9 +166,10 @@ export const SeamlessInput = forwardRef<SeamlessInputElement, SeamlessInputProps
 
     // Firefox fallback for the multiline auto-grow (no CSS field-sizing): the
     // classic resize — reset to `auto`, then set height to the full scrollHeight
-    // so the field grows to fit ALL content, UNBOUNDED (no max-height cap) and
-    // with NO scrollbar (overflow stays hidden). Only runs for `multiline` AND
-    // when field-sizing is unsupported, so Chrome/Safari pay nothing.
+    // so the field grows to fit the content. The CSS `max-h` cap clamps the
+    // rendered height on both paths (the inline height may exceed it; CSS wins),
+    // past which `overflow-y-auto` scrolls internally. Only runs for `multiline`
+    // AND when field-sizing is unsupported, so Chrome/Safari pay nothing.
     const innerRef = useRef<HTMLTextAreaElement | null>(null)
     const resizeToContent = useCallback(() => {
       const el = innerRef.current
@@ -201,7 +219,7 @@ export const SeamlessInput = forwardRef<SeamlessInputElement, SeamlessInputProps
             ref={ref as Ref<HTMLInputElement>}
             type="text"
             {...shared}
-            className={FIELD_CLASS}
+            className={cn(FIELD_CLASS, SINGLE_LINE_CLASS)}
             {...rest}
           />
         )}

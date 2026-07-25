@@ -1,5 +1,6 @@
-import { forwardRef } from 'react'
+import { forwardRef, Fragment } from 'react'
 import type { DmMessageProps } from '@mythrun/client-core/contract'
+import { Divider } from '../Divider/Divider.tsx'
 import { StreamingProse } from '../StreamingProse/StreamingProse.tsx'
 import { HighlightedProse } from './HighlightedProse.tsx'
 
@@ -42,25 +43,57 @@ import { HighlightedProse } from './HighlightedProse.tsx'
 // narration read as one undifferentiated wall. pre-wrap keeps the breaks while still
 // soft-wrapping long lines, and rides the same single text node so the streaming
 // append + zero-reflow handoff are untouched.
+//
+// myth-6e0ao — SETTLED prose maps a bare markdown horizontal-rule paragraph
+// (---/***) to the design system's divider: the token is a serialization artifact
+// that must never print verbatim on the flagship reading surface (structural
+// validation — squarely inside the ZFC exceptions). While `streaming` the text
+// stays ONE append-only node (no mid-stream splitting; a transient raw token
+// resolves into the divider at settle). An edge rule (leading/trailing) strips
+// outright — no dangling divider.
+//
+// myth-304gc — every direct child rides the same centred measure column
+// (`w-full max-w mx-auto`): the prose measure no longer sits crammed against the
+// card's left edge with a slab of slack on the right, and every paragraph +
+// divider shares one left grid line.
+const RULE_PARAGRAPH = /(?:^|\n)[ \t]*(?:-{3,}|\*{3,})[ \t]*(?:\n|$)/
+
+/** Split settled prose at bare rule paragraphs; drop edge/empty segments (and a
+ *  defensive stray rule token) so a divider only ever stands BETWEEN prose. */
+function splitAtRules(text: string): readonly string[] {
+  return text
+    .split(RULE_PARAGRAPH)
+    .map((seg) => seg.replace(/^\n+|\n+$/g, ''))
+    .filter((seg) => seg.trim() !== '' && !/^[-*]{3,}$/.test(seg.trim()))
+}
+
 export const DmMessage = forwardRef<HTMLDivElement, DmMessageProps>(function DmMessage(
   { text, streaming, writingLabel, highlight, onEntityOpen, highlightLabels },
   ref,
 ) {
+  const canHighlight = !streaming && highlight !== undefined && highlightLabels !== undefined
+  const segments = streaming ? [text] : splitAtRules(text)
   return (
     <div
       ref={ref}
       data-dm-message=""
-      className="rounded-none bg-surface px-[var(--space-5)] py-[var(--space-4)] [&>p]:max-w-[34em] [&>p]:whitespace-pre-wrap [&>p]:text-[1.1875rem]"
+      className="flex flex-col gap-[var(--space-3)] rounded-none bg-surface px-[var(--space-5)] py-[var(--space-4)] [&>*]:mx-auto [&>*]:w-full [&>*]:max-w-[34em] [&>p]:whitespace-pre-wrap [&>p]:text-[1.1875rem]"
     >
-      {!streaming && highlight !== undefined && highlightLabels !== undefined ? (
-        <HighlightedProse text={text} highlight={highlight} labels={highlightLabels} onEntityOpen={onEntityOpen} />
-      ) : (
-        <StreamingProse
-          text={text}
-          writing={streaming}
-          {...(writingLabel !== undefined ? { writingLabel } : {})}
-        />
-      )}
+      {segments.map((seg, i) => (
+        // Settled static content — the position IS the identity here.
+        <Fragment key={i}>
+          {i > 0 ? <Divider /> : null}
+          {canHighlight ? (
+            <HighlightedProse text={seg} highlight={highlight} labels={highlightLabels} onEntityOpen={onEntityOpen} />
+          ) : (
+            <StreamingProse
+              text={seg}
+              writing={streaming}
+              {...(writingLabel !== undefined ? { writingLabel } : {})}
+            />
+          )}
+        </Fragment>
+      ))}
     </div>
   )
 })

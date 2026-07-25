@@ -161,6 +161,13 @@ export interface FtTurnContext {
    *  when this is set — a deterministic guard, not a prompt hope. Absent (falsy)
    *  on every normal turn. */
   readonly correctionTurn?: boolean
+  /** myth-aiiao — true on a PLAYER-LESS turn (correction / farewell). No player
+   *  is waiting on first-token latency, so the audit gate (AuditedFastThinker)
+   *  renders these through a BUFFERED emitter and releases frames to the live
+   *  channel only after the audit verdict — a puppeteer attempt 1 on a
+   *  correction turn is then never player-visible (the run-2 "Sable: I hold the
+   *  sliver…" leak). Absent (falsy) on every player-triggered turn. */
+  readonly playerlessTurn?: boolean
 }
 
 /** Payload of a skill_check frame + transcript row (§3.5 step 6 — carries

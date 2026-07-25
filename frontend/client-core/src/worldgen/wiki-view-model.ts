@@ -161,14 +161,27 @@ function indexKernelsByEntity(snapshot: WorldSnapshot): Map<string, string> {
   return byEntity
 }
 
-/** The glossary rows, term-sorted (id as no tiebreak exists — a duplicate term
- *  keeps wire order under the stable sort). Empty when the snapshot carries no
- *  `world` — the defensive posture every optional collection here follows. */
+/** The SORT key for a glossary term (ux-run2 myth-lbxfe): lower-cased, with a
+ *  leading English article stripped, so "the black tide" files under B — no
+ *  dictionary sorts it under T. Display text is untouched; mechanical string
+ *  work (ZFC-safe), no semantics. */
+function glossarySortKey(term: string): string {
+  return term.toLowerCase().replace(/^(?:the|an|a)\s+/, '')
+}
+
+/** The glossary rows, sorted on the first significant word of each term (the
+ *  article-stripped key; the full term as tiebreak, so a duplicate key stays
+ *  deterministic). Empty when the snapshot carries no `world` — the defensive
+ *  posture every optional collection here follows. */
 function toGlossary(snapshot: WorldSnapshot): readonly WikiGlossaryEntry[] {
   const entries = snapshot.world?.vocabularyRegistry.entries ?? []
   return entries
     .map((e) => ({ term: e.term, definition: e.definition }))
-    .sort((a, b) => a.term.localeCompare(b.term))
+    .sort(
+      (a, b) =>
+        glossarySortKey(a.term).localeCompare(glossarySortKey(b.term)) ||
+        a.term.localeCompare(b.term),
+    )
 }
 
 /** De-snake a snake_case relationship type into a display label: underscores →

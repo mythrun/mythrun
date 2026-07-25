@@ -19,9 +19,12 @@ export type ButtonType = 'button' | 'submit'
  * callback (web maps it to `onClick`), and the surface carries no
  * `className`/`style`/DOM events.
  *
- * `loading` shows a Spinner alongside the (still-visible) label, sets
- * `aria-busy`, and makes the control non-interactive. `disabled` does the same
- * minus the spinner, with token-swap muted styling.
+ * `busy` shows a Spinner beside the label (swapped to `busyLabel` when given),
+ * sets `aria-busy`, and makes the control non-interactive. `disabled` does the
+ * same minus the spinner. Both wear the muted non-interactive treatment — a
+ * disabled or busy button NEVER carries the accent fill; the full accent is
+ * reserved for an enabled primary, so "clickable" and "accent" stay synonymous
+ * (myth-skbzw). `loading` is the legacy alias of `busy`; both keep working.
  *
  * `icon` is a native LEADING-icon slot (the contained-button-with-icon
  * convention): a ~18-20px decorative element rendered before the label with the
@@ -40,7 +43,16 @@ export interface ButtonProps extends BaseProps {
    * (the label carries the meaning); supply an already-sized mark/glyph.
    */
   icon?: ReactNode
-  /** Busy state: Spinner + `aria-busy`, label stays visible, non-interactive. */
+  /**
+   * Busy state: Spinner + `aria-busy`, non-interactive, muted (no accent fill —
+   * the control visibly stands down while the system works, and snaps back to
+   * its full treatment when re-enabled). The label stays visible (`busyLabel`
+   * replaces it when given, e.g. "Saving" while a form submits).
+   */
+  busy?: boolean
+  /** Label shown in place of `children` while `busy`. Ignored when idle. */
+  busyLabel?: string
+  /** Legacy alias of `busy` (pre-myth-skbzw call sites). Prefer `busy`. */
   loading?: boolean
   /** Disabled state: the native `disabled` attribute + muted token styling. */
   disabled?: boolean

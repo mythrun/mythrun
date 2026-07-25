@@ -1,5 +1,6 @@
 import { BUOY_BOB, LABEL_TEXT_OFFSET_X, type VirtualDims } from '@mythrun/client-core/worldgen'
 import type { FogFieldEntity, GraphEdge, GraphNode } from '@mythrun/client-core/contract'
+import type { LabelSide } from '../WorldGenFog/fog-obstacles.ts'
 
 // Pure Canvas-2D draw helpers for the world-gen streaming graph (MYT-89 C5). The
 // brand register is FLAT 1-BIT PAPER: every entity is a SQUARE ink glyph (never a
@@ -133,6 +134,7 @@ export function fogEntitiesFrom(
   t: number | null,
   virtual: VirtualDims,
   labeled?: ReadonlySet<string>,
+  sides?: ReadonlyMap<string, LabelSide>,
 ): FogFieldEntity[] {
   const out: FogFieldEntity[] = []
   for (const node of nodes) {
@@ -146,6 +148,8 @@ export function fogEntitiesFrom(
       kind: node.kind,
       name: node.name,
       labeled: labeled === undefined || labeled.has(node.displayId),
+      // The worn label's side (myth-uis1p) — the fog mirrors its keep-out to it.
+      side: sides?.get(node.displayId) ?? 'e',
     })
   }
   return out
@@ -210,6 +214,9 @@ export interface NodeDecoration {
    *  (the pre-tiering behaviour; the tuning stories can force it). Only consulted when
    *  `showLabels` is on. */
   labeled: ReadonlySet<string> | undefined
+  /** Per-node label SIDE (myth-uis1p — the collision-relief mirror). Absent ids
+   *  (and an absent map) draw east, the reference default. */
+  sides: ReadonlyMap<string, LabelSide> | undefined
   /** The CURRENT pane-adaptive virtual dims (the bob phase seeds off the node's
    *  top-left-virtual position, shared with the fog's obstacle mapping). */
   virtual: VirtualDims
@@ -246,8 +253,15 @@ export function drawNodes(
     const selected = node.displayId === deco.selectedKey
     const showLabel =
       deco.showLabels && (deco.labeled === undefined || deco.labeled.has(node.displayId))
+    // A tier-DEMOTED node (labels are on as a system, this one's name retired)
+    // renders HOLLOW (ux-run2 myth-uis1p): an outline-only glyph reads as "a
+    // place that exists, name in the list", where a solid anonymous square read
+    // as a rendering bug. Labels-off mode (`showLabels` false) keeps every glyph
+    // solid — hollow encodes per-node demotion, never the mode.
+    const hollow = deco.showLabels && !showLabel
+    const side = deco.sides?.get(node.displayId) ?? 'e'
     const bob = bobFor(p, deco.t, deco.virtual)
-    drawNode(ctx, node, { x: p.x + bob.x, y: p.y + bob.y }, raised, selected, showLabel, deco)
+    drawNode(ctx, node, { x: p.x + bob.x, y: p.y + bob.y }, raised, selected, showLabel, hollow, side, deco)
   }
 }
 
@@ -266,6 +280,8 @@ function drawNode(
   hovered: boolean,
   selected: boolean,
   showLabel: boolean,
+  hollow: boolean,
+  side: LabelSide,
   deco: NodeDecoration,
 ): void {
   const half = GLYPH_HALF * (hovered ? HOVER_SCALE : 1)
@@ -274,8 +290,8 @@ function drawNode(
   if (selected) {
     ctx.strokeRect(-(half + SELECT_FRAME_PAD), -(half + SELECT_FRAME_PAD), (half + SELECT_FRAME_PAD) * 2, (half + SELECT_FRAME_PAD) * 2)
   }
-  drawGlyph(ctx, node.kind, half)
-  if (showLabel) drawLabel(ctx, node.name, deco.labelFont, deco.paper)
+  drawGlyph(ctx, node.kind, half, hollow)
+  if (showLabel) drawLabel(ctx, node.name, deco.labelFont, deco.paper, side)
   ctx.restore()
 }
 
@@ -283,26 +299,36 @@ function drawNode(
  *  1px edge line out from under the text. */
 const LABEL_HALO_WIDTH = 3
 
-/** The quiet entity name to the right of the glyph — low-alpha ink, in the design-system
+/** The quiet entity name beside the glyph — low-alpha ink, in the design-system
  *  label font (`labelFont`, resolved from `--font-body`/`--text-sm`), over a PAPER halo
  *  (`paper` — `--bg`): the name is stroked in paper first, so a lighter edge line crossing
  *  under the text is knocked out around the letterforms and the name always reads (the
  *  density redesign; empty `paper` skips the halo). Drawn at the SHARED
  *  `LABEL_TEXT_OFFSET_X` (NOT a hover-scaled offset), so the label sits at one fixed x the
- *  collision box + fog keep-out reserve to exactly — the box's right edge is that offset plus
- *  this same-font `measureText` width, a hard no-overlap bound in every hover/select state. */
-function drawLabel(ctx: CanvasRenderingContext2D, name: string, labelFont: string, paper: string): void {
+ *  collision box + fog keep-out reserve to exactly — the box's outer edge is that offset plus
+ *  this same-font `measureText` width, a hard no-overlap bound in every hover/select state.
+ *  A WEST label (myth-uis1p) mirrors: right-aligned text ending at `-LABEL_TEXT_OFFSET_X`,
+ *  exactly the mirrored box `labelBoxExtents` reserves. */
+function drawLabel(
+  ctx: CanvasRenderingContext2D,
+  name: string,
+  labelFont: string,
+  paper: string,
+  side: LabelSide,
+): void {
   ctx.save()
   ctx.font = labelFont
   ctx.textBaseline = 'middle'
+  ctx.textAlign = side === 'e' ? 'left' : 'right'
+  const x = side === 'e' ? LABEL_TEXT_OFFSET_X : -LABEL_TEXT_OFFSET_X
   if (paper.length > 0) {
     ctx.strokeStyle = paper
     ctx.lineWidth = LABEL_HALO_WIDTH
     ctx.lineJoin = 'round'
-    ctx.strokeText(name, LABEL_TEXT_OFFSET_X, 0)
+    ctx.strokeText(name, x, 0)
   }
   ctx.globalAlpha = LABEL_ALPHA
-  ctx.fillText(name, LABEL_TEXT_OFFSET_X, 0)
+  ctx.fillText(name, x, 0)
   ctx.restore()
 }
 
@@ -313,8 +339,12 @@ function drawLabel(ctx: CanvasRenderingContext2D, name: string, labelFont: strin
  *  - npc/pc         → a stacked pair (pc gets an outline ring)
  *  - item           → a small filled square
  *  - location/other → a filled square
+ *
+ * `hollow` (ux-run2 myth-uis1p) renders the OUTLINE-only variant of the same
+ * shape — the tier-demoted "present, name in the list" marker. The container
+ * kinds (world/campaign) are already stroked frames, unchanged either way.
  */
-function drawGlyph(ctx: CanvasRenderingContext2D, kind: string, half: number): void {
+function drawGlyph(ctx: CanvasRenderingContext2D, kind: string, half: number, hollow = false): void {
   const s = half * 2
   switch (kind) {
     case 'world':
@@ -323,38 +353,47 @@ function drawGlyph(ctx: CanvasRenderingContext2D, kind: string, half: number): v
       ctx.strokeRect(-half / 2, -half / 2, s / 2, s / 2)
       return
     case 'faction':
-      drawDiamond(ctx, half)
+      drawDiamond(ctx, half, hollow)
       return
     case 'pc':
       ctx.strokeRect(-half - PC_RING_PAD, -half - PC_RING_PAD, s + PC_RING_PAD * 2, s + PC_RING_PAD * 2)
-      drawStack(ctx, half)
+      drawStack(ctx, half, hollow)
       return
     case 'npc':
-      drawStack(ctx, half)
+      drawStack(ctx, half, hollow)
       return
     case 'item':
-      ctx.fillRect(-half / 2, -half / 2, s / 2, s / 2)
+      if (hollow) ctx.strokeRect(-half / 2, -half / 2, s / 2, s / 2)
+      else ctx.fillRect(-half / 2, -half / 2, s / 2, s / 2)
       return
     default:
-      ctx.fillRect(-half, -half, s, s)
+      if (hollow) ctx.strokeRect(-half, -half, s, s)
+      else ctx.fillRect(-half, -half, s, s)
   }
 }
 
-/** A filled diamond — a square rotated 45°, still hard-edged 1-bit ink. */
-function drawDiamond(ctx: CanvasRenderingContext2D, half: number): void {
+/** A diamond — a square rotated 45°, still hard-edged 1-bit ink. Filled when the
+ *  node wears its name; stroked (hollow) when tier-demoted. */
+function drawDiamond(ctx: CanvasRenderingContext2D, half: number, hollow: boolean): void {
   ctx.beginPath()
   ctx.moveTo(0, -half)
   ctx.lineTo(half, 0)
   ctx.lineTo(0, half)
   ctx.lineTo(-half, 0)
   ctx.closePath()
-  ctx.fill()
+  if (hollow) ctx.stroke()
+  else ctx.fill()
 }
 
 /** Two stacked squares — a small "head" square over a larger "body" square (the head
- *  sized by STACK_HEAD_RATIO). */
-function drawStack(ctx: CanvasRenderingContext2D, half: number): void {
+ *  sized by STACK_HEAD_RATIO). Filled normally; outline-only when tier-demoted. */
+function drawStack(ctx: CanvasRenderingContext2D, half: number, hollow: boolean): void {
   const head = half * STACK_HEAD_RATIO
+  if (hollow) {
+    ctx.strokeRect(-head, -half - head, head * 2, head * 2)
+    ctx.strokeRect(-half, -head + 1, half * 2, half + head)
+    return
+  }
   ctx.fillRect(-head, -half - head, head * 2, head * 2)
   ctx.fillRect(-half, -head + 1, half * 2, half + head)
 }

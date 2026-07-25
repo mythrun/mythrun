@@ -1,5 +1,5 @@
 import { sheetViewModel, type CharacterSheetSource, type SheetSpell } from './sheet-view-model.ts'
-import { CLASSES, CLASS_SAVES, type Ability, type ClassName } from '../srd/index.ts'
+import { CLASS_SAVES, resolveClassName, type Ability, type ClassName } from '../srd/index.ts'
 import type { CharacterFull } from '../api/characters.ts'
 import type { CuratedSheet, FullSheet, SheetEntry, SheetSkill } from '../contract/index.ts'
 
@@ -55,16 +55,6 @@ function abilityModifier(score: number): number {
 /** A signed modifier with the typographic minus, matching the reveal's ability tiles. */
 function signed(value: number): string {
   return value >= 0 ? `+${String(value)}` : `−${String(Math.abs(value))}`
-}
-
-/** Resolve the free backend `class` string to a canonical SRD class id for the
- *  CLASS_SAVES lookup — an EXACT, case-insensitive membership check against the
- *  closed 12-class set (schema-style validation, not a heuristic prose parse). An
- *  unrecognized class (e.g. a freeform "Fighter (Champion)") resolves to undefined,
- *  and its saves fall back to the bare ability modifiers (graceful, ZFC-safe). */
-function resolveClassName(raw: string): ClassName | undefined {
-  const normalized = raw.trim().toLowerCase()
-  return (CLASSES as readonly string[]).includes(normalized) ? (normalized as ClassName) : undefined
 }
 
 /** One backend skill row → the sheet's proficiency flags. `expertise` (double

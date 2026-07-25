@@ -43,3 +43,13 @@ export type ClassName = (typeof CLASS_OPTIONS)[number]['id']
 
 /** The 12 class ids, in canonical menu order. */
 export const CLASSES: readonly ClassName[] = CLASS_OPTIONS.map((option) => option.id)
+
+/** Resolve a free class string to the canonical SRD class id — an EXACT,
+ * case-insensitive membership check against the closed 12-class set
+ * (schema-style structural validation, never a heuristic prose parse; ZFC-safe).
+ * An unrecognized class (e.g. a freeform "Fighter (Champion)") resolves to
+ * undefined and the caller degrades gracefully. */
+export function resolveClassName(raw: string): ClassName | undefined {
+  const normalized = raw.trim().toLowerCase()
+  return (CLASSES as readonly string[]).includes(normalized) ? (normalized as ClassName) : undefined
+}

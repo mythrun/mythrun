@@ -36,6 +36,14 @@ export function markerSize(kind: string): number {
  *  reference `[-16, +9]` window (16 + 9 = 25). */
 const CLEAR_HEIGHT = LABEL_CLEAR_PAD.yTop + LABEL_CLEAR_PAD.yBottom
 
+/** Which side of its marker a label sits on (ux-run2 myth-uis1p): `e` (east —
+ *  the reference default, text to the RIGHT of the icon) or `w` (west — the
+ *  collision-relief mirror, text to the LEFT, right-aligned toward the icon).
+ *  The side threads through EVERY consumer of the shared box geometry (the
+ *  draw, the force-sim collision, the fog keep-out), so the three can never
+ *  disagree about where a label lives. */
+export type LabelSide = 'e' | 'w'
+
 /**
  * The icon+label box for one entity kind + measured text width, as SIGNED extents RELATIVE
  * to the marker anchor (the icon centre) — the box the fog reserves AND the box the graph's
@@ -45,17 +53,21 @@ const CLEAR_HEIGHT = LABEL_CLEAR_PAD.yTop + LABEL_CLEAR_PAD.yBottom
  * RIGHT edge (`LABEL_TEXT_OFFSET_X + textWidth` — the SHARED constant `canvas-draw` draws the
  * label at, so the reserved box bounds the label exactly where it lands; the old `sz +
  * textWidth` modelled the reference's `+sz` start and under-reserved the ~7px to the real
- * `+18` draw offset). It is centred on the capsule midline `-LABEL_CAP_Y_OFFSET` (slightly
+ * `+18` draw offset). A WEST label (myth-uis1p) mirrors the horizontal extents about the
+ * anchor — the icon edge on the RIGHT, the text extending LEFT — matching the mirrored draw
+ * exactly. It is centred on the capsule midline `-LABEL_CAP_Y_OFFSET` (slightly
  * ABOVE the anchor), its top/bottom encoding the ~`[-16, +9]` clear window — a 25px band that
  * comfortably contains the design-system label (`--text-sm` ≈ 14px, middle-baselined). Pure —
  * no anchor, no motion — so both consumers translate it by their own position.
  */
-export function labelBoxExtents(kind: string, textWidth: number): NodeBox {
+export function labelBoxExtents(kind: string, textWidth: number, side: LabelSide = 'e'): NodeBox {
   const sz = markerSize(kind)
   const midY = -LABEL_CAP_Y_OFFSET
+  const iconEdge = -sz / 2
+  const textEdge = LABEL_TEXT_OFFSET_X + textWidth
   return {
-    left: -sz / 2,
-    right: LABEL_TEXT_OFFSET_X + textWidth,
+    left: side === 'e' ? iconEdge : -textEdge,
+    right: side === 'e' ? textEdge : -iconEdge,
     top: midY - CLEAR_HEIGHT / 2,
     bottom: midY + CLEAR_HEIGHT / 2,
   }
@@ -84,10 +96,15 @@ export function iconBoxExtents(): NodeBox {
 }
 
 /** The keep-out box for one node at its CURRENT label state: the full icon+label box
- *  when the name is worn, the icon-only box when it isn't. The single fork both the
- *  collision measure and the fog obstacle go through. */
-export function nodeBoxExtents(kind: string, textWidth: number, labeled: boolean): NodeBox {
-  return labeled ? labelBoxExtents(kind, textWidth) : iconBoxExtents()
+ *  (on its worn side — myth-uis1p) when the name is worn, the icon-only box when it
+ *  isn't. The single fork both the collision measure and the fog obstacle go through. */
+export function nodeBoxExtents(
+  kind: string,
+  textWidth: number,
+  labeled: boolean,
+  side: LabelSide = 'e',
+): NodeBox {
+  return labeled ? labelBoxExtents(kind, textWidth, side) : iconBoxExtents()
 }
 
 /**
@@ -96,16 +113,17 @@ export function nodeBoxExtents(kind: string, textWidth: number, labeled: boolean
  * wake-drag when a label moves). Output is bit-identical to the pre-refactor box: `x`/`y`
  * is the box top-left, `w`/`h` its size. For a LABELED entity the box midline lands on the
  * reference capsule and its top/bottom encode the ~`[-16, +9]` clear window (see module
- * note); an UNLABELED entity (label tiering — `labeled: false`) reserves only the
- * icon-only box, so fog may roll where its unworn name would sit.
+ * note), mirrored west when the label wears that side (myth-uis1p); an UNLABELED entity
+ * (label tiering — `labeled: false`) reserves only the icon-only box, so fog may roll
+ * where its unworn name would sit.
  */
 export function entityObstacle(
-  entity: { x: number; y: number; kind: string; labeled?: boolean },
+  entity: { x: number; y: number; kind: string; labeled?: boolean; side?: LabelSide },
   textWidth: number,
   vx: number,
   vy: number,
 ): FogObstacle {
-  const b = nodeBoxExtents(entity.kind, textWidth, entity.labeled !== false)
+  const b = nodeBoxExtents(entity.kind, textWidth, entity.labeled !== false, entity.side ?? 'e')
   return {
     x: entity.x + b.left,
     y: entity.y + b.top,

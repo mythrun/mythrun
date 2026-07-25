@@ -9,6 +9,7 @@ import {
   HttpError,
   type ApiContext,
   type CampaignSummary,
+  type SessionRecapResponse,
   type SseStatusClient,
 } from '@mythrun/client-core'
 import { i18n } from '../i18n/config.ts'
@@ -135,6 +136,7 @@ function renderPage(
   fetchCampaigns: (ctx: ApiContext) => Promise<readonly CampaignSummary[]>,
   campaignId = 'c1',
   inviteDeps: InvitePanelDeps = DEFAULT_INVITE_DEPS,
+  fetchRecap?: (campaignId: string, ctx: ApiContext) => Promise<SessionRecapResponse>,
 ): void {
   render(
     <ThemeProvider>
@@ -146,6 +148,7 @@ function renderPage(
               fetchCampaigns={fetchCampaigns}
               characterDeps={characterDeps}
               inviteDeps={inviteDeps}
+              {...(fetchRecap !== undefined && { fetchRecap })}
             />
           </MemoryRouter>
         </I18nextProvider>
@@ -244,5 +247,66 @@ describe('CampaignPage — world identity + MYT-90/91 seams', () => {
     renderPage(() => Promise.reject(new Error('boom')))
     expect(await screen.findByTestId('campaign-cover-ghost')).toBeDefined()
     expect(screen.queryByTestId('seam-invite')).toBeNull()
+  })
+})
+
+// ux-run2 myth-8x3uh: a played campaign's hub surfaces the last session's open
+// threads (the recap's referable index) + a quiet link to the recap, so re-entry
+// says "continue where you left off" instead of a generic setup page. The read
+// is the same SECRET-FREE recap endpoint the recap page polls — injected here.
+describe('CampaignPage — last-session threads (myth-8x3uh)', () => {
+  const PLAYED: CampaignSummary = {
+    ...CAMPAIGN,
+    status: 'active',
+    cardPhase: 'played',
+    sessionCount: 1,
+    lastPlayedAt: '2026-07-24T02:00:00.000Z',
+  }
+
+  const READY_RECAP = {
+    recap: {
+      sessionNumber: 1,
+      endedAt: '2026-07-24T02:00:00.000Z',
+      status: 'ready' as const,
+      summary: 'You crossed the causeway at low tide.',
+      emergingThreads: ['The middle gate was unbarred.', 'Halix expects her price.'],
+    },
+  }
+
+  it('renders the thread index + a read-the-recap link for a played campaign with a ready recap', async () => {
+    renderPage(() => Promise.resolve([PLAYED]), 'c1', DEFAULT_INVITE_DEPS, () =>
+      Promise.resolve(READY_RECAP),
+    )
+    const block = await screen.findByTestId('campaign-last-session')
+    expect(block.textContent).toContain('The middle gate was unbarred.')
+    expect(block.textContent).toContain('Halix expects her price.')
+    // The recap page's numbered-index treatment, shared verbatim.
+    expect(screen.getByTestId('recap-thread-marker-1').textContent).toBe('01')
+    const link = screen.getByTestId('campaign-read-recap')
+    expect(link.getAttribute('href')).toBe('/campaigns/c1/recap')
+  })
+
+  it('never fetches the recap for an unplayed campaign', async () => {
+    const fetchRecap = vi.fn()
+    renderPage(() => Promise.resolve([CAMPAIGN]), 'c1', DEFAULT_INVITE_DEPS, fetchRecap)
+    await screen.findByTestId('campaign-world-name')
+    expect(fetchRecap).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('campaign-last-session')).toBeNull()
+  })
+
+  it('renders no block while the analysis is still pending', async () => {
+    renderPage(() => Promise.resolve([PLAYED]), 'c1', DEFAULT_INVITE_DEPS, () =>
+      Promise.resolve({ recap: { sessionNumber: 1, endedAt: null, status: 'pending' as const } }),
+    )
+    await screen.findByTestId('campaign-world-name')
+    expect(screen.queryByTestId('campaign-last-session')).toBeNull()
+  })
+
+  it('settles calmly (no block) when the recap fetch fails', async () => {
+    renderPage(() => Promise.resolve([PLAYED]), 'c1', DEFAULT_INVITE_DEPS, () =>
+      Promise.reject(new Error('boom')),
+    )
+    await screen.findByTestId('campaign-world-name')
+    expect(screen.queryByTestId('campaign-last-session')).toBeNull()
   })
 })

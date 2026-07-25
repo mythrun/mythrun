@@ -23,6 +23,7 @@ const divider = cva('', {
     },
     tone: {
       border: 'bg-border',
+      strong: 'bg-border-strong',
       ink: 'bg-paper-900',
     },
   },

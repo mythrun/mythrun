@@ -29,7 +29,10 @@ const REVEAL_LABELS = {
   confirm: 'This is me',
   seeFull: 'See full sheet',
   hideFull: 'Hide full sheet',
-  startOver: 'Begin again',
+  startOver: 'Start over',
+  startOverPrompt: 'Start over? This discards this character.',
+  startOverConfirm: 'Yes, start over',
+  startOverKeep: 'Keep them',
   panelFeatures: 'What they can do',
   panelEquipment: 'What they carry',
   panelSpells: 'What they can cast',
@@ -177,6 +180,9 @@ function Reveal({
   startExpanded?: boolean
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(startExpanded)
+  // The two-step start-over confirm (ux-run2 myth-fca4y) — parent-controlled,
+  // exercised live in the story.
+  const [confirming, setConfirming] = useState(false)
   return (
     <div className="bg-bg p-[var(--space-6)]">
       <CharacterSheetReveal
@@ -188,6 +194,13 @@ function Reveal({
           setExpanded((v) => !v)
         }}
         onConfirm={noop}
+        startOverConfirming={confirming}
+        onRequestStartOver={() => {
+          setConfirming(true)
+        }}
+        onCancelStartOver={() => {
+          setConfirming(false)
+        }}
         onStartOver={noop}
       />
     </div>

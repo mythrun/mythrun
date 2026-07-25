@@ -198,6 +198,8 @@ interface ScribeHarness {
   redis: Redis
   workingSetLoad: () => Promise<WorkingSetItem[]>
   enqueuedTurns: TurnJobPayload[]
+  /** myth-g4hf3 — every durable tripwire-verdict row the job persisted. */
+  persistedVerdicts: { secretRef: string | null; severity: string }[]
 }
 
 // ioredis-mock shares ONE in-memory backing store across `new RedisMock()`
@@ -212,12 +214,21 @@ function makeScribeHarness(
   const redis: Redis = new RedisMock()
   const repo = makeWorkingSetRepo(redis, `leaktest-${String(harnessSeq++)}:`)
   const enqueuedTurns: TurnJobPayload[] = []
+  const persistedVerdicts: { secretRef: string | null; severity: string }[] = []
 
   const deps: ScribeProcessorDeps = {
     repo: {
       sessions: { getActiveByCampaign: () => Promise.resolve({ sessionNumber: 3 }) },
       sessionPreps: {
         getBy: () => Promise.resolve({ sdPlaybook: SD_PLAYBOOK, ftContext: 'Public tavern scene.' }),
+      },
+      // myth-g4hf3 — verdict persistence: recorded so the leak matrix can assert
+      // no durable row ever carries raw secret content (see case (c2)).
+      tripwireVerdicts: {
+        insert: (v) => {
+          persistedVerdicts.push({ ...v })
+          return Promise.resolve()
+        },
       },
     },
     triggerState: { getRespondedSeq: () => Promise.resolve(7) },
@@ -246,7 +257,7 @@ function makeScribeHarness(
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   }
 
-  return { deps, redis, workingSetLoad: () => repo.load(CAMPAIGN), enqueuedTurns }
+  return { deps, redis, workingSetLoad: () => repo.load(CAMPAIGN), enqueuedTurns, persistedVerdicts }
 }
 
 function scribeJob(over: Partial<ScribeJobPayload> = {}): { data: ScribeJobPayload } {
@@ -352,6 +363,30 @@ describe('MYT-73 T12 leak matrix — (c) the working set holds no raw secret', (
     expect(retcon?.subjectName).toBe('[SECRET-1]')
     expect(retcon?.content).toBe(cleanZ)
     expect(retcon?.supersededContent).toBeUndefined()
+
+    // myth-g4hf3 — the DURABLE verdict row is handle-only too: severity + the
+    // opaque handle, never secret content (the worker sanitizes before insert).
+    expect(h.persistedVerdicts).toHaveLength(1)
+    const verdictJson = JSON.stringify(h.persistedVerdicts)
+    expect(verdictJson).not.toContain(SECRET)
+    expect(verdictJson).not.toContain('Vex201-the-hidden-heir')
+    expect(verdictJson).not.toContain('Obsidian-Cabal-XYZZY')
+    expect(h.persistedVerdicts[0]?.secretRef).toBe('[SECRET-1]')
+  })
+
+  it('myth-g4hf3 — a verdict whose secretRef ECHOES secret content persists as [UNRECOGNIZED], never the raw text', async () => {
+    const leakyRef: SecretTripwireOutput = {
+      result: { severity: 'hard_reveal', confidence: 0.4, secretRef: `the innkeeper is ${SECRET}` },
+      usage: { totalTokens: 5 } as unknown as SecretTripwireOutput['usage'],
+      repairAttempted: false,
+    }
+    const h = makeScribeHarness(vi.fn().mockResolvedValue(leakyRef), vi.fn())
+
+    await processScribeJob(h.deps, scribeJob())
+
+    expect(h.persistedVerdicts).toHaveLength(1)
+    expect(h.persistedVerdicts[0]?.secretRef).toBe('[UNRECOGNIZED]')
+    expect(JSON.stringify(h.persistedVerdicts)).not.toContain(SECRET)
   })
 })
 

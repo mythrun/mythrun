@@ -87,7 +87,11 @@ export interface RevealTransitionProps extends Omit<BaseProps, 'children'> {
  */
 export interface RevealPanesProps extends Omit<BaseProps, 'children'> {
   moment: RevealMoment
-  /** The world pane (the graph) — full width before `resolve`, the left half after. */
+  /** The world pane — full width before `resolve`, the left half after. A flex
+   *  COLUMN cell (ux-run2 myth-ma8yv): compose the whole left column here (a
+   *  grow Stack of title / graph / Continue row) so both panes share their top
+   *  and bottom alignment edges; a bare graph child still fills via its own
+   *  `fillHost` h-full chain. */
   stage: ReactNode
   /** The arriving pane (the wiki) — hidden before `resolve`, slides in at it. */
   panel: ReactNode

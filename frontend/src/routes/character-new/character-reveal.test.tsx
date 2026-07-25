@@ -184,16 +184,38 @@ describe('CharacterRevealSurface — actions', () => {
     expect(confirmCharacter).toHaveBeenCalledWith(expect.anything(), CAMPAIGN_ID)
   })
 
-  it('"Start over" resets then calls onReset', async () => {
+  it('"Start over" arms the inline confirm; the confirm verb resets then calls onReset', async () => {
+    const resetCharacterConcept = vi.fn().mockResolvedValue(undefined)
+    const onReset = vi.fn()
+    renderSurface({ resetCharacterConcept, onReset })
+    await screen.findByTestId('character-sheet-reveal')
+    // Two-step (ux-run2 myth-fca4y): the first press only arms the confirm.
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('characterCreate.reveal.startOver') }))
+    expect(resetCharacterConcept).not.toHaveBeenCalled()
+    fireEvent.click(
+      screen.getByRole('button', { name: i18n.t('characterCreate.reveal.startOverConfirm') }),
+    )
+    await waitFor(() => {
+      expect(onReset).toHaveBeenCalledTimes(1)
+    })
+    expect(resetCharacterConcept).toHaveBeenCalledWith(expect.anything(), CAMPAIGN_ID)
+  })
+
+  it('"Keep them" dismisses the start-over confirm without resetting', async () => {
     const resetCharacterConcept = vi.fn().mockResolvedValue(undefined)
     const onReset = vi.fn()
     renderSurface({ resetCharacterConcept, onReset })
     await screen.findByTestId('character-sheet-reveal')
     fireEvent.click(screen.getByRole('button', { name: i18n.t('characterCreate.reveal.startOver') }))
-    await waitFor(() => {
-      expect(onReset).toHaveBeenCalledTimes(1)
-    })
-    expect(resetCharacterConcept).toHaveBeenCalledWith(expect.anything(), CAMPAIGN_ID)
+    fireEvent.click(
+      screen.getByRole('button', { name: i18n.t('characterCreate.reveal.startOverKeep') }),
+    )
+    expect(resetCharacterConcept).not.toHaveBeenCalled()
+    expect(onReset).not.toHaveBeenCalled()
+    // The plain control is back — the confirm disarmed.
+    expect(
+      screen.getByRole('button', { name: i18n.t('characterCreate.reveal.startOver') }),
+    ).toBeDefined()
   })
 
   it('"See full sheet" expands the mechanical sheet with NO network', async () => {
@@ -228,6 +250,9 @@ describe('CharacterRevealSurface — actions', () => {
     renderSurface({ resetCharacterConcept, onReset })
     await screen.findByTestId('character-sheet-reveal')
     fireEvent.click(screen.getByRole('button', { name: i18n.t('characterCreate.reveal.startOver') }))
+    fireEvent.click(
+      screen.getByRole('button', { name: i18n.t('characterCreate.reveal.startOverConfirm') }),
+    )
     await screen.findByTestId('character-reveal-action-error')
     expect(onReset).not.toHaveBeenCalled()
   })

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Stack, Text, Button, SeamlessInput } from '@mythrun/ui'
+import { Stack, Text, Button, SeamlessInput, HatchLine } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import { createCampaign, useApiContext, isHttpError } from '@mythrun/client-core'
 
@@ -131,14 +131,14 @@ export function FreeformScreen({
         >
           {t('campaignNew.freeform.begin')}
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onPress={onGuided}
+        {/* The mode-switch hatch — same affordance class as the guided screen's
+            (ux-run2 myth-vjl7d): quiet prompt, underlined actionable phrase. */}
+        <HatchLine
           data-testid="freeform-switch"
-        >
-          {t('campaignNew.freeform.switchToGuided')}
-        </Button>
+          prompt={t('campaignNew.freeform.switchPrompt')}
+          action={t('campaignNew.freeform.switchAction')}
+          onPress={onGuided}
+        />
       </Stack>
     </Stack>
   )

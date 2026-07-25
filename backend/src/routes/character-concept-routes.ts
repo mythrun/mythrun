@@ -15,17 +15,25 @@ import { createRepo, ROLLBACK } from '../repo/index.js'
 import { uuidv7 } from '../repo/uuidv7.js'
 import { requireCampaignMember } from '../auth/access-control.js'
 import { requireDbUser } from '../auth/require-db-user.js'
+import { GuidedChoicesSchema } from '../llm/schemas/character-concept.js'
 import type { Opts } from './campaign-characters.js'
 
-// T15 body. `conceptText` and `guidedChoices` are individually optional;
-// v1 is freeform-only — both texts required. The guided-mode follow-on
-// bead reshapes this schema when it ships (adds guidedChoices). Bounded
-// 20..2000 / 20..4000 to mirror the DB CHECK constraints in migration 016
-// — keeps the failure mode at the route boundary (400 bad_body) rather
+// T15 body. Both texts required; the guided builder ALSO flattens its picks
+// into conceptText, so freeform and guided submissions share one shape. Texts
+// bounded 20..4000 / 20..2000 to mirror the DB CHECK constraints in migration
+// 016 — keeps the failure mode at the route boundary (400 bad_body) rather
 // than a 500 from Postgres rejecting the row.
+//
+// myth-4jhrk: `guidedChoices` carries the builder's STRUCTURED picks (the
+// run-2 forensics anomaly: the picks used to travel only as flattened prose,
+// so the subclass died at the first schema boundary and the sheet stage
+// invented a non-SRD one). Optional — a freeform submission omits it and
+// behaves exactly as before; guided persists it into
+// character_concepts.guided_choices for the concept stage to pin.
 const PostCharacterBodySchema = z.object({
   conceptText: z.string().min(20).max(4000),
   situationGroundingText: z.string().min(20).max(2000),
+  guidedChoices: GuidedChoicesSchema.optional(),
 })
 
 // FastifyPluginAsync requires an async function shape; the body has no
@@ -108,7 +116,7 @@ export const characterConceptRoutes: FastifyPluginAsync<Opts> = async (app, opts
           userId: dbUser.id,
           conceptText: body.conceptText,
           situationGroundingText: body.situationGroundingText,
-          guidedChoices: {},
+          guidedChoices: body.guidedChoices ?? {},
         })
         const flipped = await tx.characterConcepts.flipSubmittedToProcessing(
           req.params.campaignId,

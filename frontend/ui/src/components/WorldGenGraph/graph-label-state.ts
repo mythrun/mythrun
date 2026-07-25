@@ -7,7 +7,7 @@ import {
 } from '@mythrun/client-core/worldgen'
 import type { ForceSim } from '@mythrun/client-core/worldgen'
 import type { GraphNode } from '@mythrun/client-core/contract'
-import { nodeBoxExtents } from '../WorldGenFog/fog-obstacles.ts'
+import { nodeBoxExtents, type LabelSide } from '../WorldGenFog/fog-obstacles.ts'
 import { cardKeepOut } from './canvas-util.ts'
 
 // Label-tier state for the WorldGenGraph Canvas (MYT-89 density redesign), split from
@@ -57,17 +57,19 @@ export function refreshLabeled(refs: LabelStateRefs): void {
 }
 
 /** Measure each node's keep-out box (keyed by `displayId` for `ForceSim.setBoxes`) at
- *  its CURRENT label state. Labeled → the icon+label box, its text width measured at
- *  the resolved DS label font (the SAME string the fog measures and the label is drawn
- *  in) and memoized by name; unlabeled → the icon-only box (no text measure needed).
- *  Both go through the fog-shared `nodeBoxExtents`, so the graph collides on the EXACT
- *  box the fog reserves. */
+ *  its CURRENT label state. Labeled → the icon+label box on its worn SIDE (east, or
+ *  the west mirror chosen by `chooseLabelSides` — myth-uis1p), its text width measured
+ *  at the resolved DS label font (the SAME string the fog measures and the label is
+ *  drawn in) and memoized by name; unlabeled → the icon-only box (no text measure
+ *  needed). Both go through the fog-shared `nodeBoxExtents`, so the graph collides on
+ *  the EXACT box the fog reserves. */
 export function measureNodeBoxes(
   ctx: CanvasRenderingContext2D,
   nodes: readonly GraphNode[],
   labeled: ReadonlySet<string>,
   widthCache: Map<string, number>,
   labelFont: string,
+  sides?: ReadonlyMap<string, LabelSide>,
 ): Map<string, NodeBox> {
   ctx.font = labelFont
   const out = new Map<string, NodeBox>()
@@ -79,7 +81,10 @@ export function measureNodeBoxes(
       width = cached ?? ctx.measureText(node.name).width
       if (cached === undefined) widthCache.set(node.name, width)
     }
-    out.set(node.displayId, nodeBoxExtents(node.kind, width, wearsLabel))
+    out.set(
+      node.displayId,
+      nodeBoxExtents(node.kind, width, wearsLabel, sides?.get(node.displayId) ?? 'e'),
+    )
   }
   return out
 }

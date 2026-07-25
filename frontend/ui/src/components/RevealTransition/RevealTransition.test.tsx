@@ -303,6 +303,15 @@ describe('RevealPanes', () => {
     expect(slideOf()?.style.transition).toBe('none')
   })
 
+  it('makes the stage cell a flex column so a composed left column fills the pane height (myth-ma8yv)', () => {
+    // The consumer seats title / graph / Continue INSIDE the stage so both panes
+    // share top and bottom alignment edges; the cell must be a definite-height
+    // flex column for that composition (and the graph's h-full) to fill.
+    renderPanes(moment('done'))
+    const stageCell = screen.getByTestId('stage-content').parentElement
+    expect(stageCell?.className).toContain('flex-col')
+  })
+
   it('owns the vertical space: a viewport-derived row height, full-height panel chain (audit v3)', () => {
     // The row (not the graph pane) carries the height, so BOTH halves get one
     // definite height: the graph fills it (fillHost) and the wiki caps to it

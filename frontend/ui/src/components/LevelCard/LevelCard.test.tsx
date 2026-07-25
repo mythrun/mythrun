@@ -81,6 +81,17 @@ describe('LevelCard', () => {
     expect(btn).toHaveAttribute('aria-pressed', 'false')
   })
 
+  // ux-run2 myth-nyjtl: accent means "chosen" and "act" only — the eyebrow rests
+  // in muted ink and takes ember exclusively through the selected group state.
+  it('mutes the eyebrow at rest and reserves ember for the selected card', () => {
+    const { getByText } = render(
+      <LevelCard eyebrow="Level" level={3} grantGloss="Your subclass." selected={false} onSelect={vi.fn()} />,
+    )
+    const eyebrow = getByText('Level')
+    expect(eyebrow.className).toContain('text-ink-tertiary')
+    expect(eyebrow.className).toContain('group-data-[state=selected]:text-accent-fg')
+  })
+
   it('is flat 1-bit / square (0px radius, no circles)', () => {
     const { getByRole } = render(
       <LevelCard eyebrow="Level" level={4} grantGloss="First ASI or feat." selected={false} onSelect={vi.fn()} />,

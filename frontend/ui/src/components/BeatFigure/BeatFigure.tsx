@@ -22,17 +22,22 @@ import { useBeatCanvas, type BeatMode } from './use-beat-canvas.ts'
 // The canvas is inert under jsdom (no 2D context), so the figure is a plain aria-hidden box in
 // tests; `data-beat-mode` / `data-beat-level` expose the target for inspection without pixels.
 
-/** Which token pair the figure paints with. */
-type BeatTone = 'paper' | 'token'
+/** Which token pair the figure paints with. `muted` keeps the theme-flipping
+ *  ink cells but frames with the panel-weight `border-border` stroke — for a
+ *  figure INSIDE a bordered card, where the ink frame would out-weigh its
+ *  containing panel (ux-run2 myth-zyk6o). */
+type BeatTone = 'paper' | 'token' | 'muted'
 
 const TONE_CLASS: Record<BeatTone, string> = {
   paper: 'border-paper-900 bg-paper-50',
   token: 'border-ink bg-surface',
+  muted: 'border-border bg-surface',
 }
 
 const TONE_INK_VAR: Record<BeatTone, string> = {
   paper: '--color-paper-900',
   token: '--ink',
+  muted: '--ink',
 }
 
 export interface BeatFigureProps {

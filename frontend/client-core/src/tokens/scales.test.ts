@@ -29,9 +29,9 @@ describe('token scale data (single source for web @theme + future native)', () =
     expect(MOTION.easing.out).toBe('cubic-bezier(0.2, 0, 0, 1)')
     expect(MOTION.easing.linear).toBe('linear')
   })
-  it('exposes the nine typography roles', () => {
+  it('exposes the ten typography roles', () => {
     expect(Object.keys(TYPE_ROLES)).toEqual([
-      'display', 'heading', 'title', 'prose-body', 'subtitle',
+      'display', 'headline', 'heading', 'title', 'prose-body', 'subtitle',
       'ui-label', 'ui-caption', 'data', 'meta',
     ])
   })

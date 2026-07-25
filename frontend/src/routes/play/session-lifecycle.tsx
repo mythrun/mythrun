@@ -27,12 +27,20 @@ export interface EndSessionLabels {
   readonly confirm: string
   /** The dismiss action ("Keep playing"). */
   readonly cancel: string
+  /** The credit disclosure shown AT the confirm (myth-xxyo9) — the cost statement
+   *  belongs before the decision, not on the post-end receipt. The credit is
+   *  debited at session START (POST /start), so this reads as record, not a fresh
+   *  charge ("This session used one credit."). */
+  readonly credit: string
 }
 
 /** A persistent, low-emphasis end-session control. Resting: a quiet ghost button.
- *  Pressed: a one-line inline confirm (prompt + Keep playing / End session) — a
- *  single beat, no modal. `disabled` covers the window after the end is already
- *  in flight (the farewell is rendering). */
+ *  Pressed: a one-beat inline confirm — no modal. myth-xxyo9: BOTH confirm
+ *  affordances are bordered `secondary` buttons ("two square outline buttons side
+ *  by side is fully in-register" — bare mono text next to a bordered button reads
+ *  as a label, not an option), and the credit disclosure sits under the confirm
+ *  row, before the decision. `disabled` covers the window after the end is
+ *  already in flight (the farewell is rendering). */
 export function EndSessionControl({
   labels,
   onEnd,
@@ -63,21 +71,26 @@ export function EndSessionControl({
   }
 
   return (
-    <Stack direction="row" gap={2} align="center" justify="end" wrap data-testid="end-session-confirm">
-      <Text role="meta">{labels.prompt}</Text>
-      <Button
-        variant="ghost"
-        size="sm"
-        onPress={() => {
-          setConfirming(false)
-        }}
-        data-testid="end-session-cancel"
-      >
-        {labels.cancel}
-      </Button>
-      <Button variant="secondary" size="sm" onPress={onEnd} disabled={disabled} data-testid="end-session-do">
-        {labels.confirm}
-      </Button>
+    <Stack gap={1} align="end" data-testid="end-session-confirm">
+      <Stack direction="row" gap={2} align="center" justify="end" wrap>
+        <Text role="meta">{labels.prompt}</Text>
+        <Button
+          variant="secondary"
+          size="sm"
+          onPress={() => {
+            setConfirming(false)
+          }}
+          data-testid="end-session-cancel"
+        >
+          {labels.cancel}
+        </Button>
+        <Button variant="secondary" size="sm" onPress={onEnd} disabled={disabled} data-testid="end-session-do">
+          {labels.confirm}
+        </Button>
+      </Stack>
+      <Text role="meta" data-testid="end-session-credit">
+        {labels.credit}
+      </Text>
     </Stack>
   )
 }

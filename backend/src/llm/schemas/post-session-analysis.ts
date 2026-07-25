@@ -53,7 +53,11 @@ export const SessionHandoffSchema = z.object({
   keyLocations: z.array(KeyLocationHandoffSchema).max(8),
 })
 export const PostSessionAnalysisSchema = z.object({
-  // SECRET-FREE recap: player-witnessed only.
+  // SECRET-FREE recap: player-witnessed only. May carry blank-line paragraph
+  // breaks — the prompt asks for 1-4 short paragraphs broken on narrative beats
+  // (ux-run2 myth-3lgh5) — which the recap surface renders as paragraphs. Still
+  // one string on the wire (the recap endpoint's contract is unchanged); breaks
+  // pass through verbatim.
   summary: z.string().min(1),
   // SECRET-FREE recap: player-witnessed only.
   emergingThreads: z.array(z.string().min(1)),

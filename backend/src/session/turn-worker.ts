@@ -52,8 +52,11 @@ import { randomUUID } from 'node:crypto'
 import type { Redis } from 'ioredis'
 import type { Pool } from 'pg'
 import { createRepo, expectCommitted } from '../repo/index.js'
+import type { SessionMessage } from '../repo/types.js'
 import { makeSessionState, type SessionState } from '../redis/session-state.js'
 import { SessionController, type TranscriptStore } from './session-controller.js'
+import { rowToReplayFrame } from './replay-frames.js'
+import { DEPARTED_AUTHOR_NAME } from './attribution.js'
 import { createSessionLock, type SessionLock } from './session-lock.js'
 import { SonnetFastThinker } from './tiers/fast-thinker.js'
 import { AuditedFastThinker } from './tiers/audited-fast-thinker.js'
@@ -145,6 +148,9 @@ export interface TurnWorkerRepo {
     turnRowsExist(turnId: string): Promise<boolean>
     /** §4.7 post-turn re-mature: the unanswered-rows probe. */
     listAfterSeq(sessionId: string, afterSeq: number): Promise<readonly { messageType: string }[]>
+    /** myth-aiiao — ONE turn's persisted rows (turn_ordinal order), read by the
+     *  corrected-turn whole-turn-replace push to rebuild the replay frames. */
+    listByTurn(turnId: string): Promise<readonly SessionMessage[]>
   }
   readonly sessions: {
     getById(id: string): Promise<{ sessionNumber: number } | null>
@@ -163,6 +169,10 @@ export interface TurnWorkerRepo {
    *  closure, never the FT-side surface). */
   readonly campaigns: {
     getWorldId(id: string): Promise<string | null>
+    /** myth-aiiao — the campaign roster's display names, resolved once on the
+     *  (rare) corrected-turn replace push so the frame's ParticipantSummary
+     *  carries real bylines. The real repo's richer row satisfies this. */
+    listMembers(id: string): Promise<readonly { userId: string; displayName: string }[]>
   }
   readonly characters: Pick<MechanicalReads, 'findSessionParticipantCharacterByName'> & {
     /** MYT-68: the FT prompt roster + the per-turn player-attribution map, off
@@ -238,6 +248,10 @@ interface TierTurnArgs {
    *  render. The FT skill-check/lore tools read it to refuse acting for a silent
    *  player character. */
   readonly actingCharacters: Set<string>
+  /** myth-aiiao — fired by the audit gate when a violation was corrected on the
+   *  silent retry (streamed ≠ durable). The processor arms the post-persist
+   *  whole-turn-replace push off it. */
+  readonly onAuditCorrected: () => void
 }
 
 export interface TurnProcessorDeps {
@@ -574,6 +588,13 @@ export async function processTurnJob(
     // execute time to refuse rolling/recalling for a silent player character.
     const actingCharacters = new Set<string>()
 
+    // myth-aiiao — set by the audit gate (via TierTurnArgs.onAuditCorrected)
+    // when the durable turn is the silent RETRY: the live client's streamed
+    // attempt 1 diverges from what persisted, so the post-flush block below
+    // pushes the whole-turn-replace. Read through a function like lockState —
+    // the flip happens inside the render's callbacks.
+    const auditState = { corrected: false }
+
     const tiers = deps.makeTiers({
       sessionId,
       turnId,
@@ -586,6 +607,9 @@ export async function processTurnJob(
       partyLedger,
       participantNames: participants,
       actingCharacters,
+      onAuditCorrected: () => {
+        auditState.corrected = true
+      },
     })
 
     const controller = new SessionController(
@@ -625,6 +649,49 @@ export async function processTurnJob(
     if (isLockLost()) throw new LockLostError()
     await controller.persistTurn()
     await controller.flushToRedis()
+    // myth-aiiao — the corrected-turn WHOLE-TURN-REPLACE push. The audit gate's
+    // silent retry made the DURABLE turn diverge from the streamed attempt 1;
+    // until now the live client's canon was the discarded attempt (repaired only
+    // on reconnect — false for a player sitting mid-session). Rebuild the turn's
+    // replay frames from the just-persisted rows (the SAME rowToReplayFrame the
+    // reconnect uses, seqs and all) and publish one live `session_reconnect`
+    // frame; the client's transcript reducer whole-turn-replaces on the frame's
+    // turnIds. Skipped for playerless turns (the gate buffers those and only
+    // ever releases the winning render, so live == durable by construction).
+    // OWN try/catch — the turn already persisted; a push hiccup logs, the
+    // reconnect path remains the backstop.
+    if (auditState.corrected && !isPlayerless) {
+      try {
+        const rows = await deps.repo.sessionMessages.listByTurn(turnId)
+        const members = await deps.repo.campaigns.listMembers(campaignId)
+        const displayByUser = new Map(members.map((m) => [m.userId, m.displayName]))
+        const characterByUser = new Map(sessionPcs.map((p) => [p.userId, p.name]))
+        const messages = rows.flatMap((r) =>
+          rowToReplayFrame(r, displayByUser, characterByUser, deps.logger),
+        )
+        const participantSummaries = sessionPcs.map((p) => ({
+          userId: p.userId,
+          displayName: displayByUser.get(p.userId) ?? DEPARTED_AUTHOR_NAME,
+          characterName: p.name,
+        }))
+        const liveState = await deps.sessionState.getState(campaignId)
+        await deps.publisher.turnReplace(
+          campaignId,
+          messages,
+          participantSummaries,
+          liveState?.mode ?? 'exploration',
+        )
+        deps.logger.info?.(
+          { campaignId, turnId, frames: messages.length },
+          'audit-corrected turn: whole-turn-replace pushed to the live channel',
+        )
+      } catch (replaceErr) {
+        deps.logger.error(
+          { err: replaceErr, campaignId, turnId },
+          'failed to push the corrected-turn whole-turn-replace',
+        )
+      }
+    }
     // MYT-75 T7 — post-turn combat application (the post-flush side-effect seam).
     // The combat tools recorded into `tiers.combatEvents` (D12: pure execute — no
     // session-state write there); the durable ledger writes + the CombatState blob
@@ -1101,6 +1168,7 @@ export function buildSessionTurnWorker(
       partyLedger,
       participantNames,
       actingCharacters,
+      onAuditCorrected,
     }) => {
       const mech: MechanicalReads = {
         findSessionParticipantCharacterByName: (sid, name) =>
@@ -1192,6 +1260,9 @@ export function buildSessionTurnWorker(
           audit: auditTurn,
           enabled: TURN_AUDIT_ENABLED,
           logger,
+          // myth-aiiao — arm the processor's whole-turn-replace push when the
+          // durable turn is the silent corrected retry.
+          onCorrected: onAuditCorrected,
         }),
         combatEvents,
       }

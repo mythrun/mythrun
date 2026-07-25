@@ -34,6 +34,8 @@ import {
   syncCardKeepOut,
   type LabelStateRefs,
 } from './graph-label-state.ts'
+import { chooseLabelSides, graphSyncKey, pinSettledLabels } from './graph-stability.ts'
+import type { LabelSide } from '../WorldGenFog/fog-obstacles.ts'
 import {
   resolveEdgeInk,
   resolveInk,
@@ -315,10 +317,21 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   }, [canvasRef, keepOutElRef, cameraCtl])
 
 
+  // Per-node label SIDES (myth-uis1p): the sticky east/west memory the draw, the
+  // collision boxes, and the fog keep-outs all read — one map, three surfaces.
+  const sidesRef = useRef<Map<string, LabelSide>>(new Map())
+  // The pin memory (myth-uis1p pin-on-settle): which displayIds have been frozen
+  // at their settled positions. Owned here (above applyBoxes — the side chooser
+  // reads it); written by `pinSettled` below.
+  const pinnedRef = useRef<Set<string>>(new Set())
+
   // Measure every node's CURRENT keep-out box (the SAME box the fog reserves —
-  // `measureNodeBoxes` → `nodeBoxExtents`: icon+label when the name is worn, icon-only
-  // when it isn't) and hand it to the sim's rectangular collide. A no-op under jsdom (no
-  // 2D context → nothing renders, nothing to collide); re-measured on every sync (memoized).
+  // `measureNodeBoxes` → `nodeBoxExtents`: icon+label ON ITS WORN SIDE when the name
+  // is worn, icon-only when it isn't) and hand it to the sim's rectangular collide.
+  // Sides are (re)chosen first — `chooseLabelSides` prunes retired labels and picks
+  // east/west for any label worn by a PINNED node that lacks one — so the pushed
+  // boxes always match what will be drawn. A no-op under jsdom (no 2D context →
+  // nothing renders, nothing to collide); re-measured on every sync (memoized).
   const applyBoxes = useCallback((): void => {
     const sim = simRef.current
     const canvas = canvasRef.current
@@ -328,10 +341,39 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     // `applySize`'s passive effect fills the ref, and the box must be measured at the exact
     // font the label is drawn in. Idempotent — whoever runs first caches it.
     labelFontRef.current ||= resolveLabelFont(canvas)
+    const widthOf = (name: string): number => {
+      const cached = boxWidthCacheRef.current.get(name)
+      if (cached !== undefined) return cached
+      ctx.font = labelFontRef.current
+      const width = ctx.measureText(name).width
+      boxWidthCacheRef.current.set(name, width)
+      return width
+    }
+    chooseLabelSides({
+      nodes: nodesRef.current,
+      positions: sim.positions(),
+      labeled: labeledRef.current,
+      pinned: pinnedRef.current,
+      widthOf,
+      sides: sidesRef.current,
+    })
     sim.setBoxes(
-      measureNodeBoxes(ctx, nodesRef.current, labeledRef.current, boxWidthCacheRef.current, labelFontRef.current),
+      measureNodeBoxes(ctx, nodesRef.current, labeledRef.current, boxWidthCacheRef.current, labelFontRef.current, sidesRef.current),
     )
   }, [canvasRef])
+
+  // Pin-on-settle (ux-run2 myth-uis1p — graph-stability.ts): once the field has
+  // cooled, freeze every labeled-but-unpinned node at its current position. A
+  // no-op while hot, so the motion loop calls it every frame and the reduced-
+  // motion path right after its settle. Fresh pins re-run the box pass — the
+  // side chooser commits east/west for the newly-frozen labels and the sim +
+  // fog pick the mirrored geometry up immediately.
+  const pinSettled = useCallback((): void => {
+    const sim = simRef.current
+    if (sim === null) return
+    const fresh = pinSettledLabels(sim, labeledRef.current, pinnedRef.current)
+    if (fresh > 0) applyBoxes()
+  }, [applyBoxes])
 
   // Reduced motion: settle the sim to convergence ONCE per graph change, idempotently —
   // whoever reads first (the fog's static settle via getFogEntities, or the graph's own
@@ -342,7 +384,8 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     if (sim === null || !reducedRef.current || settledRef.current) return
     settle(sim)
     settledRef.current = true
-  }, [])
+    pinSettled() // the settled constellation locks (myth-uis1p)
+  }, [pinSettled])
 
   // Live fog obstacles (C5 decision 3): the current node positions (+ render-only bob,
   // disabled under reduced motion) in the fog's VIRTUAL space — the SAME positions the
@@ -352,7 +395,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     if (sim === null) return []
     if (reducedRef.current) ensureSettled()
     const t = reducedRef.current ? null : clockRef.current
-    return fogEntitiesFrom(nodesRef.current, sim.positions(), t, virtualRef.current, labeledRef.current)
+    return fogEntitiesFrom(nodesRef.current, sim.positions(), t, virtualRef.current, labeledRef.current, sidesRef.current)
   }, [ensureSettled])
 
   // Size the backing store to the pane AND cache the theme ink — the once-per-mount/resize
@@ -409,6 +452,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
           t: reducedRef.current ? null : clockRef.current,
           showLabels: showLabelsRef.current,
           labeled: labeledRef.current,
+          sides: sidesRef.current,
           labelFont: labelFontRef.current,
           paper: paperRef.current,
           virtual,
@@ -449,7 +493,15 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   // dims change also re-sizes the backing store (the view→pane transform moved) via
   // `applySize` under motion; the reduced-motion static repaint effect below re-sizes
   // through its own path.
+  const syncKeyRef = useRef('')
   useLayoutEffect(() => {
+    // Identity-only re-render guard (ux-run2 myth-uis1p — graph-stability.ts):
+    // the parent re-renders on unrelated state (wiki pane, selection) with fresh
+    // array identities but identical content; a re-sync would inject reheat and
+    // jitter the settled constellation. Same content → skip everything.
+    const key = graphSyncKey(nodes, edges)
+    if (key === syncKeyRef.current) return
+    syncKeyRef.current = key
     const dimsChanged = syncVirtual()
     getSim().sync(nodes, edges)
     syncKeepOuts()
@@ -541,9 +593,10 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
       edgesRef,
       drawInRef,
       inkRef,
+      pinSettled,
       advanceCamera: (frameMs) => cameraCtl.source.current(frameMs),
     })
-  }, [reducedMotion, canvasRef, applySize, paintFrame, getSim, cameraCtl])
+  }, [reducedMotion, canvasRef, applySize, paintFrame, getSim, cameraCtl, pinSettled])
 
   // Pointer interaction. FINE pointer + motion: hover-raise + drag-to-pin are LIVE
   // (MYT-89 audit #5 — dragging a node through the fog is the toy), a click focuses
@@ -779,6 +832,8 @@ interface MotionLoopDeps {
   edgesRef: React.RefObject<GraphEdge[]>
   drawInRef: React.RefObject<DrawInState>
   inkRef: React.RefObject<string>
+  /** Pin labeled nodes once the field cools (myth-uis1p) — a no-op while hot. */
+  pinSettled: () => void
   /** Step the T1b camera's auto-follow drift for this frame's timestamp (idempotent
    *  per timestamp — the fog loop calls the same source with the same rAF time). */
   advanceCamera: (frameMs: number) => void
@@ -829,7 +884,7 @@ function recordEdgeAppearances(
  *  Canvas (the one surface Tailwind can't reach) still tracks the theme, without the
  *  per-frame cost. */
 function startMotionLoop(ctx: CanvasRenderingContext2D, deps: MotionLoopDeps): () => void {
-  const { getSim, paintFrame, clockRef, edgesRef, drawInRef, inkRef, advanceCamera } = deps
+  const { getSim, paintFrame, clockRef, edgesRef, drawInRef, inkRef, pinSettled, advanceCamera } = deps
   let raf = 0
   const frame = (now: number): void => {
     const state = drawInRef.current
@@ -840,6 +895,7 @@ function startMotionLoop(ctx: CanvasRenderingContext2D, deps: MotionLoopDeps): (
     recordEdgeAppearances(edgesRef.current, state.edgeAppear, elapsedMs)
     advanceCamera(now) // the auto-follow drift for THIS frame (paintFrame reads it)
     getSim().tick()
+    pinSettled() // labeled nodes lock once the field cools (myth-uis1p)
     paintFrame(ctx, inkRef.current)
     raf = window.requestAnimationFrame(frame)
   }

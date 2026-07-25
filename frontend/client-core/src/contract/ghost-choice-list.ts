@@ -25,10 +25,10 @@ export interface GhostChoiceItem {
  * LevelCard standard (ux-run1 myth-occld). Renders each item as a real `<button>`
  * (native keyboard activation + a11y) that is a whole SELECTABLE CARD: a 1px
  * interactive `--border-strong` edge on the `--surface` fill, comfortable padding,
- * a docked ember "enter" arrow vertically centred against the card, and a decisive
+ * a docked ember "enter" arrow on the title's line, and a decisive
  * hover (edge darkens to full ink + the neutral surface token-swap). The ENTIRE
  * card is the click target — one tab-stop, one focus ring. Cards are separated by
- * a gap (not hairline rules). Single column at every width; flat (`rounded-none`).
+ * a gap (not hairline rules); flat (`rounded-none`).
  * Used for the campaign-create fork and the character-create path chooser.
  *
  * Platform-neutral (§9): each item's `onSelect` is a neutral callback, never a DOM
@@ -37,4 +37,11 @@ export interface GhostChoiceItem {
 export interface GhostChoiceListProps extends BaseProps {
   /** The choices, top to bottom. Each is a real, keyboard-activable button. */
   items: readonly GhostChoiceItem[]
+  /**
+   * Column count at comfortable widths. Default `1` — the stacked strip list.
+   * `2` seats the choices SIDE BY SIDE as two taller, chunkier cards (a true
+   * binary fork reads as two doors, not a stack of bars — ux-run2 myth-ma8yv,
+   * critique 024); collapses back to one column on narrow viewports.
+   */
+  columns?: 1 | 2
 }
