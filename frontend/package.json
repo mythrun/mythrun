@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && pnpm copy-workbench:check",
+    "copy-workbench:check": "tsc --noEmit -p copy-workbench/tsconfig.check.json",
     "lint": "eslint . --no-error-on-unmatched-pattern",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage --exclude '**/config-wiring.test.ts' --exclude '**/*.wiring.test.ts'",

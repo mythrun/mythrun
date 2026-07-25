@@ -24,6 +24,7 @@ describe('reviseConcept', () => {
   it('revises the prior concept per the change note and returns the parsed output', async () => {
     const mockResult = {
       output: {
+        title: 'The Dry Canals',
         concept:
           'A drought-stricken city of dry canals where memory-keepers trade forgotten names for water rights, and every well runs on borrowed recollection rather than rain.',
         intentSummary: {
@@ -38,12 +39,16 @@ describe('reviseConcept', () => {
     vi.mocked(ai.generateText).mockResolvedValueOnce(mockResult)
 
     const result = await reviseConcept(
-      'a drowned city of black canals where the rain never stops',
+      {
+        title: 'The Black Canals',
+        concept: 'a drowned city of black canals where the rain never stops',
+      },
       'less water, more forgetting',
     )
 
     expect(result.concept).toContain('memory-keepers')
     expect(result.intentSummary.themes).toContain('forgetting as currency')
+    expect(result.title).toBe('The Dry Canals')
 
     const callArgs = vi.mocked(ai.generateText).mock.calls[0]?.[0] as unknown as Record<
       string,
@@ -51,11 +56,15 @@ describe('reviseConcept', () => {
     >
     expect(callArgs.prompt).toContain('a drowned city of black canals')
     expect(callArgs.prompt).toContain('less water, more forgetting')
+    // myth-z3icr: the prior TITLE is in the prompt too — a revision cannot keep
+    // a name it was never shown.
+    expect(callArgs.prompt).toContain('The Black Canals')
   })
 
   it('throws when the model output violates the concept schema (under-length)', async () => {
     const mockResult = {
       output: {
+        title: 'The Short One',
         concept: 'too short', // below SynthesizerOutput concept min(50)
         intentSummary: {
           aesthetics: ['a'],
@@ -69,7 +78,7 @@ describe('reviseConcept', () => {
     vi.mocked(ai.generateText).mockResolvedValueOnce(mockResult)
 
     await expect(
-      reviseConcept('a prior concept', 'a change note'),
+      reviseConcept({ title: 'A Prior Title', concept: 'a prior concept' }, 'a change note'),
     ).rejects.toThrow()
   })
 
@@ -79,6 +88,7 @@ describe('reviseConcept', () => {
     const longConcept = 'y'.repeat(6000)
     const mockResult = {
       output: {
+        title: 'The Long Coast',
         concept: longConcept,
         intentSummary: { aesthetics: ['a'], themes: ['b'], sourcesInternal: ['c'] },
       },
@@ -87,7 +97,10 @@ describe('reviseConcept', () => {
     } as never
     vi.mocked(ai.generateText).mockResolvedValueOnce(mockResult)
 
-    const result = await reviseConcept('a prior concept', 'a change note')
+    const result = await reviseConcept(
+      { title: 'A Prior Title', concept: 'a prior concept' },
+      'a change note',
+    )
     expect(result.concept).toBe(longConcept)
   })
 })

@@ -97,6 +97,9 @@ function makeFakeHub(): {
 function makeFakeRepo(): { repo: WsSessionDeps['repo']; getAppends: () => number } {
   const state = { appends: 0 }
   const repo = {
+    // myth-ficc: handleInbound gates every frame on the suspension predicate.
+    // These fixtures are all users in good standing.
+    users: { isSuspended: vi.fn().mockResolvedValue(false) },
     sessionMessages: {
       append: vi.fn(() => {
         state.appends += 1

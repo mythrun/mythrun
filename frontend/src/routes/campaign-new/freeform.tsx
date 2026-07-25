@@ -1,32 +1,53 @@
 import { useRef, useState } from 'react'
 import { Stack, Text, Button, SeamlessInput, HatchLine } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
-import { createCampaign, useApiContext, isHttpError } from '@mythrun/client-core'
+import {
+  startSynthesisStream,
+  useApiContext,
+  isHttpError,
+  type SynthesisStream,
+} from '@mythrun/client-core'
 
 // The campaign-create FREEFORM screen (spec §1, "Start from an idea") — the
-// player writes a world concept in one borderless prose field and commits it. A
+// player writes a world concept in one borderless prose field and sends it on. A
 // quiet eyebrow, the serif question-that-IS-the-label over a `SeamlessInput
-// multiline`, a faint hint, then the text-forward Begin + a quiet switch-to-guided
-// line. Pure presentation with ONE side effect: Begin calls `createCampaign` and
-// fires a neutral intent on success — the screen never navigates itself; the
-// controller maps `onCommitted` to the generating route. Composes @mythrun/ui only
-// (no ad-hoc UI); every string is an i18n key (R5).
+// multiline`, a faint hint, then the text-forward primary + a quiet
+// switch-to-brainstorm line.
+//
+// myth-6t06f: the primary no longer commits ~10 minutes of world generation. It
+// opens the SAME synthesis stream the brainstorm path opens (`startSynthesisStream`
+// with the concept instead of picks), so this path lands on the proposal
+// checkpoint — read it back, adjust it once, then Begin — instead of buying the
+// whole world sight-unseen. That makes this screen's error surface identical to
+// the brainstorm screen's: the gate verdict is now a TERMINAL FRAME the
+// synthesizing screen routes to the rejection screen, so only the pre-stream
+// guard trips (429 cooldown, 403 credits, transient) stay here as calm inline
+// notices.
+//
+// Pure presentation with ONE side effect: the primary opens the stream and fires
+// a neutral intent — the screen never navigates itself; the controller owns the
+// stream handle and the screens. Composes @mythrun/ui only (no ad-hoc UI); every
+// string is an i18n key (R5).
 
-// The freeform floor mirrors the contract's `FreeformSourceSchema.concept.min(20)`
-// (a shorter concept is a body-shape bug, not a gate concern): Begin stays disabled
-// below it, QUIETLY — no red error, the action simply isn't offered yet.
+// The freeform floor mirrors the contract's `SynthesizeConceptRequestSchema.concept
+// .min(20)` (a shorter concept is a body-shape bug, not a gate concern): the
+// primary stays disabled below it, QUIETLY — no red error, the action simply isn't
+// offered yet.
 const MIN_CONCEPT_CHARS = 20
 
-// What B3 renders inline below the field after a failed commit. `rejected` carries
-// a calm, already-resolved message (the server's `rejectionMessage`, or a fallback);
-// `retry` is the calm try-again nudge for a transient failure. B5 lifts the full
-// rejection screen (edit-as-freeform, guided synthesizedConcept) to the controller;
-// B3 keeps it minimal + inline and re-enables Begin either way.
-type Notice = { kind: 'rejected'; message: string } | { kind: 'retry' }
+// A transient, calm inline notice after a failed OPEN — the brainstorm screen's
+// exact set (myth-6t06f), because the two screens now open the same stream and
+// meet the same guard chain: `retry` for a transient failure, `cooldown` after a
+// rejection-storm rate limit, `credits` when the balance can't cover world-gen.
+interface Notice {
+  kind: 'retry' | 'cooldown' | 'credits'
+}
 
 export interface FreeformScreenProps {
-  /** Committed a concept (HTTP 201) → the controller advances to the generating route. */
-  onCommitted: (campaignId: string) => void
+  /** The synthesis stream OPENED (200 head) → the controller advances to the
+   *  synthesizing screen, which renders the arriving proposal and routes the
+   *  terminals (complete → preview, rejected/content_filtered → rejection). */
+  onStreaming: (stream: SynthesisStream) => void
   /** Chose the quiet switch line → the controller advances to `guided`. */
   onGuided: () => void
   /**
@@ -45,17 +66,20 @@ export interface FreeformScreenProps {
   onConceptChange?: (concept: string) => void
 }
 
-/** Pull a non-empty `rejectionMessage` off an HttpError body (nullable per contract). */
-function rejectionMessageOf(body: unknown): string | null {
-  if (typeof body === 'object' && body !== null && 'rejectionMessage' in body) {
-    const message = (body as { rejectionMessage?: unknown }).rejectionMessage
-    if (typeof message === 'string' && message.length > 0) return message
+/** Map an OPEN failure to its calm inline notice — the brainstorm screen's
+ *  `noticeFor`, verbatim. The gate verdicts (concept_rejected /
+ *  content_filtered) can no longer arrive here: the gate runs after the stream
+ *  opens, so those are the synthesizing screen's terminals. */
+function noticeFor(err: unknown): Notice {
+  if (isHttpError(err)) {
+    if (err.code === 'rejection_storm_cooldown') return { kind: 'cooldown' }
+    if (err.code === 'insufficient_credits') return { kind: 'credits' }
   }
-  return null
+  return { kind: 'retry' }
 }
 
 export function FreeformScreen({
-  onCommitted,
+  onStreaming,
   onGuided,
   initialConcept = '',
   onConceptChange,
@@ -71,34 +95,27 @@ export function FreeformScreen({
   const [notice, setNotice] = useState<Notice | null>(null)
   // Synchronous double-submit guard (the character-creation submit's pattern):
   // `busy`/`disabled` are async state, so two clicks in the same tick both pass
-  // the disabled check and fire TWO createCampaign calls — a real double-charge
-  // on a money-adjacent CTA (2 campaigns + 2 world-gen credits). The ref is set
-  // synchronously, so the second click returns immediately.
+  // the disabled check and fire TWO synthesis streams — two Sonnet burns, and a
+  // second stream handle the controller would leak past the first. The ref is
+  // set synchronously, so the second click returns immediately.
   const committing = useRef(false)
 
   const trimmed = concept.trim()
   const ready = trimmed.length >= MIN_CONCEPT_CHARS
 
-  // Map a failed commit to the inline notice. A concept/content rejection shows the
-  // server's calm message (or the fallback); anything else — the 503 upstream case
-  // AND any unexpected failure — is a calm try-again (Begin re-enables in `finally`).
-  const noticeFor = (err: unknown): Notice => {
-    if (isHttpError(err) && (err.code === 'concept_rejected' || err.code === 'content_filtered')) {
-      return { kind: 'rejected', message: rejectionMessageOf(err.body) ?? t('campaignNew.freeform.rejectedFallback') }
-    }
-    return { kind: 'retry' }
-  }
-
-  const begin = async (): Promise<void> => {
+  const draft = async (): Promise<void> => {
     if (committing.current) return
     committing.current = true
     setNotice(null)
     setBusy(true)
     try {
-      const res = await createCampaign(ctx, {
-        world: { kind: 'new', source: { mode: 'freeform', concept: trimmed } },
-      })
-      onCommitted(res.campaignId)
+      // The concept IS the synthesis input (myth-6t06f) — same endpoint, same
+      // stream, same terminals as the brainstorm path's picks.
+      const stream = await startSynthesisStream(ctx, { concept: trimmed })
+      // The draft is NOT cleared here: it survives synthesize → proposal so a
+      // "start over" (or a rejection) returns the player to their own words.
+      // The controller clears it only once a campaign is actually committed.
+      onStreaming(stream)
     } catch (err) {
       setNotice(noticeFor(err))
     } finally {
@@ -131,7 +148,7 @@ export function FreeformScreen({
         </Text>
         {notice ? (
           <Text role="ui-caption" data-testid="freeform-notice">
-            {notice.kind === 'rejected' ? notice.message : t('campaignNew.freeform.retry')}
+            {t(`campaignNew.freeform.${notice.kind}`)}
           </Text>
         ) : null}
       </Stack>
@@ -142,15 +159,16 @@ export function FreeformScreen({
             variant="primary"
             loading={busy}
             disabled={!ready || busy}
-            onPress={() => { void begin() }}
-            data-testid="freeform-begin"
+            onPress={() => { void draft() }}
+            data-testid="freeform-draft"
           >
-            {t('campaignNew.freeform.begin')}
+            {t('campaignNew.freeform.draft')}
           </Button>
-          {/* The commit disclosure at the generation trigger (ux-run3
-              myth-g3mt6): Begin commits a full credit-metered world build with
-              zero scent of consequence otherwise — the preview screen's exact
-              quiet line, at this path's trigger too. */}
+          {/* The disclosure at the trigger (ux-run3 myth-g3mt6). Since
+              myth-6t06f this act drafts a proposal rather than buying the
+              world, so it wears the brainstorm trigger's line — a minute, and
+              everything is still revisable. The world-build disclosure now sits
+              where the world is actually bought: the proposal's Begin. */}
           <Text role="meta" data-testid="freeform-cost">
             {t('campaignNew.freeform.cost')}
           </Text>

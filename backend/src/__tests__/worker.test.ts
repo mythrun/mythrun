@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // the myth-jykft ordering assertions read its invocationCallOrder.
 import { Worker as BullmqWorkerCtor } from 'bullmq'
 import * as queueEventsModule from '../session/session-turn-queue-events.js'
+// Resolves to the mocked `probeVoyageAtBoot` from the factory below — the
+// myth-ha6qr boot-failure test drives it to reject.
+import { probeVoyageAtBoot } from '../boot/voyage-probe.js'
 
 vi.mock('../config/env.js', () => ({
   loadEnv: () => ({
@@ -283,6 +286,7 @@ describe('worker.main()', () => {
     const { main } = await import('../worker.js')
     const { logger } = await import('../llm/logger.js')
     const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => undefined)
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
     const baseUnhandled = process.listenerCount('unhandledRejection')
     startHealthServerMock.mockRejectedValueOnce(
       Object.assign(new Error('listen EADDRINUSE: address already in use 127.0.0.1:3001'), {
@@ -290,7 +294,11 @@ describe('worker.main()', () => {
       }),
     )
 
-    await expect(main()).rejects.toThrow(/EADDRINUSE/)
+    void main() // never awaited — myth-ha6qr routes the throw to a non-zero exit
+
+    await vi.waitFor(() => {
+      expect(exitSpy).toHaveBeenCalledWith(1)
+    })
 
     // The whole point: nothing consumed a queue before the port check.
     expect(workerInstances).toHaveLength(0)
@@ -302,5 +310,65 @@ describe('worker.main()', () => {
     // The bind precedes the escape-guard install, so the EADDRINUSE throw fails
     // the process instead of being contained into a consumer-less zombie.
     expect(process.listenerCount('unhandledRejection')).toBe(baseUnhandled)
+  })
+
+  // myth-ha6qr: a boot-phase failure — a bad Voyage key, an unreachable Redis,
+  // an unreadable cost-cap row — must EXIT NON-ZERO. Before the fix the escape
+  // guard was installed at the TOP of main(), and it is keep-alive by default,
+  // so the probe's rejection was contained: the process sat half-live and
+  // silent (health bound but never armed, zero queue consumers, no crash). In
+  // ECS the health check eventually noticed; locally it just hung.
+  it('exits non-zero on a boot-probe failure, closing every partial client', async () => {
+    const { main } = await import('../worker.js')
+    const { logger } = await import('../llm/logger.js')
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => undefined)
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+    const baseUnhandled = process.listenerCount('unhandledRejection')
+    const baseUncaught = process.listenerCount('uncaughtException')
+
+    // Captured INSIDE the probe: the escape guard must not be installed while a
+    // boot probe is in flight, or the rejection below is swallowed keep-alive.
+    let unhandledListenersDuringProbe = -1
+    vi.mocked(probeVoyageAtBoot).mockImplementationOnce(() => {
+      unhandledListenersDuringProbe = process.listenerCount('unhandledRejection')
+      return Promise.reject(
+        Object.assign(new Error('voyage returned dimension 512, expected 1024'), {
+          code: 'voyage_config',
+        }),
+      )
+    })
+
+    void main() // never awaited — the boot catch exits the process
+
+    await vi.waitFor(() => {
+      expect(exitSpy).toHaveBeenCalledWith(1)
+    })
+
+    expect(unhandledListenersDuringProbe).toBe(baseUnhandled)
+    // The probe runs before any worker registration, so nothing consumed a queue.
+    expect(workerInstances).toHaveLength(0)
+    // Loud, and the logged error is the SECRET-FREE descriptor — the stable
+    // scalars only, no `stack`, no `cause`, no `diagnostic.rawTextSnippet`.
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'worker.boot_failed',
+        err: {
+          name: 'Error',
+          code: 'voyage_config',
+          terminal: false,
+          message: 'voyage returned dimension 512, expected 1024',
+        },
+      }),
+      expect.stringContaining('boot failed'),
+    )
+    // Partial cleanup: the bound health socket is released (so a restart can
+    // rebind it) and pg + both Redis clients are closed.
+    expect(healthCloseMock).toHaveBeenCalledTimes(1)
+    expect(pgEndMock).toHaveBeenCalledTimes(1)
+    expect(batchQuitMock).toHaveBeenCalledTimes(1)
+    expect(realtimeQuitMock).toHaveBeenCalledTimes(1)
+    // No leaked process listeners from the failed boot.
+    expect(process.listenerCount('unhandledRejection')).toBe(baseUnhandled)
+    expect(process.listenerCount('uncaughtException')).toBe(baseUncaught)
   })
 })

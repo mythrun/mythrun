@@ -1,8 +1,11 @@
 // The one-shot synthesize-preview stream client (myth-umggn): opens
 // POST /api/campaigns/synthesize-preview/stream and folds its
-// `SynthesizeStreamEvent` frames into a small observable store the guided
-// create flow renders — the world brief writing itself, then exactly one
-// terminal state.
+// `SynthesizeStreamEvent` frames into a small observable store the create flow
+// renders — the world brief writing itself, then exactly one terminal state.
+//
+// myth-6t06f: BOTH funnel paths open this stream. The body is either the
+// brainstorm path's 3 picks or the freeform path's own concept text; the frames,
+// the store, and every screen that reads it are identical either way.
 //
 // Shape notes (why this is NOT the reconnecting SseStatusClient):
 //   - The stream is a NON-IDEMPOTENT POST — a reconnect would re-run the
@@ -49,7 +52,13 @@ export type SynthesisFailureCode = SynthesizeStreamErrorCode | 'stream_interrupt
  *  failure notice instead of vanishing (streamed-text honesty). */
 export type SynthesisStreamState =
   | { readonly status: 'streaming'; readonly text: string }
-  | { readonly status: 'complete'; readonly previewId: string; readonly concept: string }
+  | {
+      readonly status: 'complete'
+      readonly previewId: string
+      /** The world's name (myth-z3icr) — the proposal screen headlines it. */
+      readonly title: string
+      readonly concept: string
+    }
   | { readonly status: 'rejected'; readonly rejection: ConceptRejection }
   | { readonly status: 'failed'; readonly code: SynthesisFailureCode; readonly text: string }
 
@@ -134,7 +143,12 @@ export async function startSynthesisStream(
         return 'ok'
       case 'complete':
         store.setState(
-          { status: 'complete', previewId: event.previewId, concept: event.concept },
+          {
+            status: 'complete',
+            previewId: event.previewId,
+            title: event.title,
+            concept: event.concept,
+          },
           true,
         )
         return 'close'

@@ -141,6 +141,9 @@ function makeFakeRepo(
   rows: { seq: number; userId: string | null; messageType: string; content: string }[] = [],
 ): WsSessionDeps['repo'] {
   return {
+    // myth-ficc: handleInbound gates every frame on the suspension predicate.
+    // These fixtures are all users in good standing.
+    users: { isSuspended: vi.fn().mockResolvedValue(false) },
     sessionMessages: {
       listAfterSeq: vi.fn().mockResolvedValue(rows),
       append: vi.fn().mockResolvedValue(undefined),

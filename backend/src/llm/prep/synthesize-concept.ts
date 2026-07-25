@@ -9,6 +9,15 @@
 //
 // Routes through the canonical `generateObject` wrapper (myth-t1qz):
 // schema-repair fallback + structured diagnostic logging on failure.
+//
+// myth-6t06f: the stage now has TWO inputs and one output. The brainstorm
+// path feeds three media picks (`synthesizeConcept` / `streamSynthesizeConcept`);
+// the FREEFORM path feeds the player's own concept text
+// (`synthesizeFromConcept` / `streamSynthesizeFromConcept`) so it lands on the
+// same proposal checkpoint before ~10 minutes of world generation. Different
+// prompt template, identical schema/temperature/repair semantics — so the
+// preview store, the SSE wire, and the proposal UI are shape-identical on
+// both paths.
 
 import { generateObject, streamObject, type LanguageModelUsage } from '../ai.js'
 import { readFileSync } from 'node:fs'
@@ -17,10 +26,11 @@ import { resolve, dirname } from 'node:path'
 import { z } from 'zod'
 import { SONNET } from '../models.js'
 
-const PROMPT_TEMPLATE = readFileSync(
-  resolve(dirname(fileURLToPath(import.meta.url)), '../prompts/prep/synthesize-concept.txt'),
-  'utf8',
-)
+const promptPath = (file: string): string =>
+  resolve(dirname(fileURLToPath(import.meta.url)), `../prompts/prep/${file}`)
+
+const PROMPT_TEMPLATE = readFileSync(promptPath('synthesize-concept.txt'), 'utf8')
+const FREEFORM_PROMPT_TEMPLATE = readFileSync(promptPath('synthesize-freeform.txt'), 'utf8')
 
 export const SynthesizerPick = z.object({
   title: z.string().min(1).max(200),
@@ -29,6 +39,13 @@ export const SynthesizerPick = z.object({
 export type SynthesizerPick = z.infer<typeof SynthesizerPick>
 
 export const SynthesizerOutput = z.object({
+  // myth-z3icr: the world's working NAME, so the proposal page can headline the
+  // world instead of leaving its name buried in the first words of body prose
+  // (extracting it client-side would be a ZFC violation). A short LABEL, not
+  // prose — so a `.max()` is legal here per the no-max-on-prose rule, and 120
+  // chars sits far above the 2-5 words the prompt asks for (the ceiling exists
+  // to catch a model that answers with a sentence, not to clip a real title).
+  title: z.string().min(1).max(120),
   // No .max() on the concept: it is LLM prose, and a max ceiling terminal-fails
   // an over-length generation instead of accepting it. The .min() floor stays
   // (a too-short brief is malformed). Its destination — worlds.concept — is a
@@ -61,6 +78,28 @@ function buildPrompt(picks: readonly SynthesizerPick[]): string {
   return PROMPT_TEMPLATE.replace(/\{\{#picks\}\}[\s\S]*?\{\{\/picks\}\}/, () => picksBlock)
 }
 
+/** myth-6t06f: the freeform prompt — the player's own concept text is the
+ *  input. Same function-replacer discipline: the concept is raw user text. */
+function buildFreeformPrompt(concept: string): string {
+  return FREEFORM_PROMPT_TEMPLATE.replace('{{concept}}', () => concept)
+}
+
+/** The single generateObject call both input shapes run through — one model,
+ *  one schema, one temperature, one repair chain; only the prompt and the
+ *  diagnostic callSite differ. */
+async function runSynthesis(prompt: string, callSite: string): Promise<SynthesizerResult> {
+  const result = await generateObject({
+    model: SONNET,
+    schema: SynthesizerOutput,
+    prompt,
+    temperature: 0.9,
+    maxRetries: 3,
+    callSite,
+    schemaName: 'SynthesizerOutput',
+  })
+  return { ...result.output, usage: result.usage }
+}
+
 export async function synthesizeConcept(
   picks: readonly SynthesizerPick[],
 ): Promise<SynthesizerResult> {
@@ -71,16 +110,16 @@ export async function synthesizeConcept(
     throw new Error(`synthesizeConcept requires exactly 3 picks, got ${String(picks.length)}`)
   }
   /* c8 ignore stop */
-  const result = await generateObject({
-    model: SONNET,
-    schema: SynthesizerOutput,
-    prompt: buildPrompt(picks),
-    temperature: 0.9,
-    maxRetries: 3,
-    callSite: 'synthesize-concept',
-    schemaName: 'SynthesizerOutput',
-  })
-  return { ...result.output, usage: result.usage }
+  return runSynthesis(buildPrompt(picks), 'synthesize-concept')
+}
+
+/**
+ * myth-6t06f: the FREEFORM twin of `synthesizeConcept`. The player's own world
+ * description becomes the proposal the checkpoint screen shows — same output
+ * contract, so the preview store and the proposal wire are unchanged.
+ */
+export async function synthesizeFromConcept(concept: string): Promise<SynthesizerResult> {
+  return runSynthesis(buildFreeformPrompt(concept), 'synthesize-freeform')
 }
 
 // myth-umggn: wall-clock budget for the streamed synthesis — covers the whole
@@ -121,13 +160,36 @@ export function streamSynthesizeConcept(
     throw new Error(`streamSynthesizeConcept requires exactly 3 picks, got ${String(picks.length)}`)
   }
   /* c8 ignore stop */
+  return runSynthesisStream(buildPrompt(picks), 'synthesize-concept-stream', opts)
+}
+
+/**
+ * myth-6t06f: the FREEFORM twin of `streamSynthesizeConcept` — the player's own
+ * concept text streams into the same proposal the brainstorm path produces, so
+ * the SSE wire and the screen that renders it are unchanged.
+ */
+export function streamSynthesizeFromConcept(
+  concept: string,
+  opts?: { readonly abortSignal?: AbortSignal },
+): SynthesizerStream {
+  return runSynthesisStream(buildFreeformPrompt(concept), 'synthesize-freeform-stream', opts)
+}
+
+/** The single streamObject call both input shapes run through (mirrors
+ *  `runSynthesis`): prose deltas off the growing `concept` field, plus the
+ *  authoritative validated output. */
+function runSynthesisStream(
+  prompt: string,
+  callSite: string,
+  opts?: { readonly abortSignal?: AbortSignal },
+): SynthesizerStream {
   const result = streamObject({
     model: SONNET,
     schema: SynthesizerOutput,
-    prompt: buildPrompt(picks),
+    prompt,
     temperature: 0.9,
     maxRetries: 3,
-    callSite: 'synthesize-concept-stream',
+    callSite,
     schemaName: 'SynthesizerOutput',
     timeoutMs: STREAM_TIMEOUT_MS,
     ...(opts?.abortSignal !== undefined ? { abortSignal: opts.abortSignal } : {}),

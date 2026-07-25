@@ -24,6 +24,7 @@ const PREFIX = 'test:local:'
 
 function makeRecord(overrides: Partial<PreviewRecord> = {}): PreviewRecord {
   return {
+    title: 'The Standing Tide',
     concept: 'A rain-soaked harbor town where the tide never fully goes out.',
     intentSummary: {
       aesthetics: ['grey stone', 'wet rope'],

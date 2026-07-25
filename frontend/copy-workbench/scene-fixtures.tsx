@@ -62,6 +62,7 @@ import type {
   LockupProps,
   LogomarkProps,
   MessageStreamProps,
+  PackGrant,
   PackListProps,
   PartyRosterProps,
   PlayerMessageProps,
@@ -217,15 +218,22 @@ const gEdge = (synthKey: string, from: string, to: string, relationship: string)
 // 1. RollCard
 // ═════════════════════════════════════════════════════════════════════════════
 
-/** The resolved [ph:] label bundle — every field is i18n chrome (tool-filled). */
+/** The resolved [ph:] label bundle — every field is i18n chrome (tool-filled).
+ *  `explainerFor` is a resolver rather than a string (the DS stays
+ *  interpolation-free; the shell resolves `play.roll.explainer` with the skill +
+ *  modifier), so its placeholder is a function returning the same 'TEXT'. */
 const ROLL_LABELS: RollCardLabels = {
   roll: 'TEXT',
   continue: 'TEXT',
   tier: { fail: 'TEXT', success: 'TEXT', great_success: 'TEXT' },
   dc: 'TEXT',
+  beats: 'TEXT',
+  misses: 'TEXT',
   advantage: 'TEXT',
   disadvantage: 'TEXT',
   dieResult: 'TEXT',
+  explainerFor: () => 'TEXT',
+  dcExplainer: 'TEXT',
 }
 
 export const rollCardFixture = {
@@ -244,9 +252,13 @@ export const rollCardTextProps: TextProp[] = [
   { prop: 'labels.tier.success', note: 'i18n — outcome-tier word for a success' },
   { prop: 'labels.tier.great_success', note: 'i18n — outcome-tier word for a great success' },
   { prop: 'labels.dc', note: 'i18n — the "DC" readout prefix' },
+  { prop: 'labels.beats', note: 'i18n — the verb joining roll to DC when the roll clears it' },
+  { prop: 'labels.misses', note: 'i18n — the verb joining roll to DC when the roll falls short' },
   { prop: 'labels.advantage', note: 'i18n — advantage posture tag' },
   { prop: 'labels.disadvantage', note: 'i18n — disadvantage posture tag' },
   { prop: 'labels.dieResult', note: 'i18n — SR label naming the stamped die result' },
+  { prop: 'labels.explainerFor()', note: 'i18n — newcomer pre-roll framing (resolves skill + modifier)' },
+  { prop: 'labels.dcExplainer', note: 'i18n — newcomer post-roll gloss on what the DC is' },
   { prop: 'item.frame.characterName', note: 'DATA — the roller (LLM/session data)' },
   { prop: 'item.frame.skill', note: 'DATA — the skill being checked' },
   { prop: 'item.frame.context', note: 'DATA — the situational context line' },
@@ -557,21 +569,30 @@ export const characterLoadingBeatTextProps: TextProp[] = [
   { prop: 'countdownLabel', note: 'i18n/DATA — the resolved "~M:SS left" estimate' },
 ]
 
+// `startOverConfirming: false` shows the resting state (the start-over control,
+// not the inline confirm). The confirm's own three strings are still authored
+// through `labels` below, so they stay reviewable even when unmounted here.
 export const characterSheetRevealFixture = {
   curated: CURATED_SHEET,
   full: FULL_SHEET,
   expanded: false,
+  startOverConfirming: false,
   labels: {
     confirm: 'This is me',
     seeFull: 'See full sheet',
     hideFull: 'Hide full sheet',
     startOver: 'Begin again',
+    startOverPrompt: 'Start over? This character will be discarded.',
+    startOverConfirm: 'Yes, start over',
+    startOverKeep: 'Keep them',
     panelFeatures: 'What they can do',
     panelEquipment: 'What they carry',
     panelSpells: 'What they can cast',
   },
   onToggleExpand: noop,
   onConfirm: noop,
+  onRequestStartOver: noop,
+  onCancelStartOver: noop,
   onStartOver: noop,
 } satisfies CharacterSheetRevealProps
 
@@ -583,6 +604,9 @@ export const characterSheetRevealTextProps: TextProp[] = [
   { prop: 'curated.features[].name / .gloss', note: 'DATA — class/feature rows' },
   { prop: 'curated.equipment[].name / .gloss', note: 'DATA — equipment rows' },
   { prop: 'full.skills[].name / savingThrows[] / equipment[] / spells[]', note: 'DATA — expanded mechanical sheet' },
+  { prop: 'labels.startOverPrompt', note: 'i18n — the inline confirm before discarding the character' },
+  { prop: 'labels.startOverConfirm', note: 'i18n — confirm verb on the start-over prompt (the destructive one)' },
+  { prop: 'labels.startOverKeep', note: 'i18n — dismiss verb on the start-over prompt' },
 ]
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -741,15 +765,37 @@ export const seamlessInputTextProps: TextProp[] = [
 // 14. PackList / PurchasePrompt / CreditBalance / PurchaseHistory
 // ═════════════════════════════════════════════════════════════════════════════
 
-const PACK_TIERS: SubscriptionTierView[] = [
-  { lookupKey: 'wayfarer', displayName: 'Wayfarer', priceLabel: '$8 / mo', cta: 'subscribe', isCurrent: false },
-  { lookupKey: 'sojourner', displayName: 'Sojourner', priceLabel: '$12 / mo', cta: 'manage', isCurrent: true },
-  { lookupKey: 'mythwright', displayName: 'Mythwright', priceLabel: '$16 / mo', cta: 'upgrade', isCurrent: false },
+// The grant ledger every tier/pack card renders. DATA, not chrome: the shell
+// composes these rows from the Stripe-probed SKU payload's own sessionsGranted /
+// worldsGranted (see makeFormatters in src/routes/settings/sessions-billing.tsx),
+// so the sample mirrors that shape. The row LABELS are `billing.grantSessions` /
+// `billing.grantWorlds` and the per-month value wrapper is `billing.grantPerMonth`
+// — reproduced here at their current catalog values so the card reads truthfully.
+// Sessions lead, then worlds, in EVERY card; a zero grant renders no row at all.
+const perMonthGrants = (sessions: number, worlds: number): PackGrant[] => [
+  { label: 'Sessions', value: `${String(sessions)} / month` },
+  { label: 'Worlds', value: `${String(worlds)} / month` },
 ]
 
+const PACK_TIERS: SubscriptionTierView[] = [
+  { lookupKey: 'wayfarer', displayName: 'Wayfarer', priceLabel: '$8 / mo', grants: perMonthGrants(4, 1), cta: 'subscribe', isCurrent: false },
+  { lookupKey: 'sojourner', displayName: 'Sojourner', priceLabel: '$12 / mo', grants: perMonthGrants(8, 2), cta: 'manage', isCurrent: true },
+  { lookupKey: 'mythwright', displayName: 'Mythwright', priceLabel: '$16 / mo', grants: perMonthGrants(16, 4), cta: 'upgrade', isCurrent: false },
+]
+
+// The world pack grants a world AND a session, so a bought world arrives playable —
+// the ledger is where a reader learns that.
 const PACK_ALACARTE: AlaCarteView[] = [
-  { lookupKey: 'session_pack', displayName: 'Session', unitPriceLabel: '$5 each' },
-  { lookupKey: 'world_pack', displayName: 'World', unitPriceLabel: '$9 each' },
+  { lookupKey: 'session_pack', displayName: 'Session', unitPriceLabel: '$5 each', grants: [{ label: 'Sessions', value: '1' }] },
+  {
+    lookupKey: 'world_pack',
+    displayName: 'World',
+    unitPriceLabel: '$9 each',
+    grants: [
+      { label: 'Sessions', value: '1' },
+      { label: 'Worlds', value: '1' },
+    ],
+  },
 ]
 
 export const packListFixture = {
@@ -758,10 +804,24 @@ export const packListFixture = {
   quantityPresets: [1, 4, 8, 16],
   onTierCta: noop,
   onBuyAlaCarte: noop,
-  labels: { subscribe: 'TEXT', upgrade: 'TEXT', manage: 'TEXT', current: 'TEXT', buy: 'TEXT' },
+  labels: {
+    plansTitle: 'TEXT',
+    plansHelp: 'TEXT',
+    alaCarteTitle: 'TEXT',
+    alaCarteHelp: 'TEXT',
+    subscribe: 'TEXT',
+    upgrade: 'TEXT',
+    manage: 'TEXT',
+    current: 'TEXT',
+    buy: 'TEXT',
+  },
 } satisfies PackListProps
 
 export const packListTextProps: TextProp[] = [
+  { prop: 'labels.plansTitle', note: 'i18n — heading over the recurring-plan column' },
+  { prop: 'labels.plansHelp', note: 'i18n — the quiet line explaining what a plan is' },
+  { prop: 'labels.alaCarteTitle', note: 'i18n — heading over the one-off packs' },
+  { prop: 'labels.alaCarteHelp', note: 'i18n — the quiet line explaining a one-off pack' },
   { prop: 'labels.subscribe', note: 'i18n — subscribe CTA verb' },
   { prop: 'labels.upgrade', note: 'i18n — upgrade CTA verb' },
   { prop: 'labels.manage', note: 'i18n — manage CTA verb' },
@@ -769,8 +829,10 @@ export const packListTextProps: TextProp[] = [
   { prop: 'labels.buy', note: 'i18n — à-la-carte buy verb' },
   { prop: 'tiers[].displayName', note: 'DATA — tier name (server data)' },
   { prop: 'tiers[].priceLabel', note: 'DATA — shell-formatted recurring price' },
+  { prop: 'tiers[].grants[]', note: 'DATA — grant-ledger label·value rows (billing.grantSessions / grantWorlds / grantPerMonth)' },
   { prop: 'alaCarte[].displayName', note: 'DATA — pack name (server data)' },
   { prop: 'alaCarte[].unitPriceLabel', note: 'DATA — shell-formatted unit price' },
+  { prop: 'alaCarte[].grants[]', note: 'DATA — grant-ledger rows; this is where the world pack states it carries a session' },
 ]
 
 export const purchasePromptFixture = {
@@ -791,16 +853,28 @@ export const purchasePromptTextProps: TextProp[] = [
   { prop: 'dismissLabel', note: 'i18n — accessible name for the dismiss control' },
 ]
 
+// Each explainer lives WITH its number rather than in a block below the pair, so
+// neither line can be read against the wrong currency. The `*ZeroHelp` variants
+// are what the bucket says once it is empty (a different job from the stocked
+// line: it has to tell the reader what to do next).
 export const creditBalanceFixture = {
   session: 12,
   sessionLabel: 'TEXT',
+  sessionHelp: 'TEXT',
+  sessionZeroHelp: 'TEXT',
   worldGen: 3,
   worldGenLabel: 'TEXT',
+  worldGenHelp: 'TEXT',
+  worldGenZeroHelp: 'TEXT',
 } satisfies CreditBalanceProps
 
 export const creditBalanceTextProps: TextProp[] = [
   { prop: 'sessionLabel', note: 'i18n — label for the session-credit bucket' },
+  { prop: 'sessionHelp', note: 'i18n — what a session credit buys, beside the number' },
+  { prop: 'sessionZeroHelp', note: 'i18n — the same line once the session bucket is empty' },
   { prop: 'worldGenLabel', note: 'i18n — label for the world-gen bucket' },
+  { prop: 'worldGenHelp', note: 'i18n — what a world credit buys, beside the number' },
+  { prop: 'worldGenZeroHelp', note: 'i18n — the same line once the world bucket is empty' },
 ]
 
 const PURCHASE_ROWS: PurchaseHistoryRow[] = [
@@ -830,10 +904,16 @@ const ROSTER_MEMBERS: RosterMember[] = [
   { userId: 'u4', displayName: 'Onwe', status: 'gathering', isViewer: false },
 ]
 
+// The partial-begin strings arrive COUNT-RESOLVED (the DS stays interpolation-free;
+// the shell resolves them). ROSTER_MEMBERS is 2 ready of 4, so the two interpolated
+// lines are resolved at those counts here — the sample has to agree with its own
+// roster or the exhibit reads as a bug. `beginConfirm` is pluralised in the catalog
+// (`_one` / `_other`); 2 not-ready selects the `_other` form.
 export const partyRosterFixture = {
   members: ROSTER_MEMBERS,
   viewerIsOwner: true,
   canBegin: false,
+  beginConfirming: false,
   labels: {
     partyHeading: 'Your party',
     inviteSub: 'share a link · they join here',
@@ -842,15 +922,24 @@ export const partyRosterFixture = {
     waiting: 'waiting for the party to gather…',
     beginSolo: 'begin the adventure →',
     beginParty: "everyone's ready, begin →",
+    beginPartial: 'Begin with 2 of 4 ready →',
+    beginConfirmPrompt: "2 players aren't ready. Start anyway?",
+    beginConfirmYes: 'Start anyway',
+    beginConfirmNo: 'Keep waiting',
   },
   onBegin: noop,
+  onRequestBegin: noop,
+  onCancelBegin: noop,
   onInvite: noop,
 } satisfies PartyRosterProps
 
 export const partyRosterTextProps: TextProp[] = [
   { prop: 'members[].displayName', note: 'DATA — the human player handle' },
   { prop: 'members[].characterName', note: 'DATA — the character name (present once ready)' },
-  { prop: '—', note: 'No i18n text props: begin/invite copy is not a prop on this contract' },
+  { prop: 'labels.beginPartial', note: 'i18n — the begin verb when only some of the party is ready (count-resolved)' },
+  { prop: 'labels.beginConfirmPrompt', note: 'i18n — the inline confirm asking before beginning short-handed (count-resolved, pluralised)' },
+  { prop: 'labels.beginConfirmYes', note: 'i18n — confirm verb on the partial-begin prompt' },
+  { prop: 'labels.beginConfirmNo', note: 'i18n — dismiss verb on the partial-begin prompt' },
 ]
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -907,6 +996,9 @@ export const invitePanelFixture = {
     copied: 'Copied',
     share: 'Share',
     replace: 'Replace link',
+    replacePrompt: 'Replace this link? The old link stops working.',
+    replaceConfirm: 'Replace',
+    replaceCancel: 'Keep',
     limit: "You've reached the invite limit. Replace the existing link instead.",
     error: 'Something went wrong. Try again.',
   },
@@ -915,7 +1007,9 @@ export const invitePanelFixture = {
 
 export const invitePanelTextProps: TextProp[] = [
   { prop: 'inviteUrl', note: 'DATA — the share link (null while loading / post-revoke)' },
-  { prop: '—', note: 'No i18n text props on this contract (chrome is internal)' },
+  { prop: 'labels.replacePrompt', note: 'i18n — the inline confirm before minting a link that kills the old one' },
+  { prop: 'labels.replaceConfirm', note: 'i18n — confirm verb on the replace prompt' },
+  { prop: 'labels.replaceCancel', note: 'i18n — dismiss verb on the replace prompt' },
 ]
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -968,6 +1062,10 @@ const SESSION_OVERLAY: CharacterOverlay = {
   maxHp: 28,
   gold: null,
   conditionLog: ['A hobgoblin blade opens a gash along her ribs.'],
+  // Folded from ledger_update frames but not rendered yet — how the active set
+  // reads in the paper register is still an open design call. `null` = no frame
+  // has spoken; `[]` = the character currently has none.
+  activeConditions: [],
 }
 
 export const sessionSheetFixture = {

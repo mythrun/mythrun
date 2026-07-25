@@ -395,6 +395,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
       const gatedConcept =
         'A rain-soaked archipelago where lighthouses are sentient and remember every shipwreck they have ever witnessed.'
       const previewId = await putPreview(redis, REDIS_KEY_PREFIX, userId, {
+        title: 'The Parked Proposal',
         concept: gatedConcept,
         intentSummary: STUB_INTENT,
         reworkCount: 0,
@@ -470,6 +471,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
       const owner = await seedUserWithCredits(pool, scope, 1, 0)
       const other = await seedUserWithCredits(pool, scope, 1, 1)
       const previewId = await putPreview(redis, REDIS_KEY_PREFIX, owner.userId, {
+        title: 'The Private Proposal',
         concept: 'A private concept only the owner previewed.',
         intentSummary: STUB_INTENT,
         reworkCount: 0,

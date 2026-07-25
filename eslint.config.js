@@ -1,3 +1,4 @@
+import { defineConfig } from 'eslint/config'
 import tseslint from 'typescript-eslint'
 import eslintConfigPrettier from 'eslint-config-prettier'
 import { createRequire } from 'node:module'
@@ -7,7 +8,26 @@ const noStripePriceMutations = require('./backend/eslint-rules/no-stripe-price-m
 const noStripeSubscriptionPriceMutation = require('./backend/eslint-rules/no-stripe-subscription-price-mutation.cjs')
 const noRawDbAccess = require('./backend/eslint-rules/no-raw-db-access.cjs')
 
-export default tseslint.config(
+// myth-2fq: `defineConfig()` (ESLint core, `eslint/config`) replaces the
+// deprecated `tseslint.config()` — typescript-eslint 8.59 deprecated its own
+// helper in favour of the core one. `tseslint` itself is still imported: only
+// the WRAPPER moved, the shared rulesets (`tseslint.configs.*`) did not.
+//
+// The migration is a rename and nothing else, and that is a property of HOW
+// this file is written: every ruleset here is SPREAD into the top-level list
+// (`...tseslint.configs.strictTypeChecked`), never pulled in through an
+// `extends` key. `extends` is the one place the two helpers genuinely differ —
+// they disagree about how a parent's `files`/`ignores` propagate into an
+// extended config — so a config with no `extends` passes through `defineConfig`
+// unchanged. Keep it that way, or re-prove equivalence: `eslint --print-config`
+// on a file per override block, plus a per-package `eslint -f json` sweep
+// diffed file-for-file and message-for-message (a config that silently stops
+// matching some files looks identical until you compare the file LIST).
+//
+// `frontend/eslint.config.js` spreads this module's default export, so it must
+// stay a plain flat-config ARRAY. It does: `defineConfig` resolves `extends`
+// eagerly and returns the flattened array.
+export default defineConfig(
   {
     ignores: [
       '**/dist/**',

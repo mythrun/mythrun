@@ -89,6 +89,7 @@ export const FreeformPrompt = forwardRef<HTMLDivElement, FreeformPromptProps>(fu
     backLabel,
     compact = false,
     placeholder,
+    aside,
   },
   ref,
 ) {
@@ -143,6 +144,11 @@ export const FreeformPrompt = forwardRef<HTMLDivElement, FreeformPromptProps>(fu
         // forbids handing an explicit `undefined` to an optional `string` prop.
         {...(placeholder !== undefined && { placeholder })}
       />
+      {/* The optional quiet aside (myth-gdycq): a secondary ask that belongs to
+          this step, seated between the answer and the act. Inside the
+          composition — never under the commit control, where an optional
+          question reads as an afterthought nobody sees. */}
+      {aside !== undefined && <div data-testid="freeform-prompt-aside">{aside}</div>}
       {/* The action row: the optional quiet Back holds the bottom-left (one Back,
           one position — ux-run2 myth-80an1); the commit control — a primary
           Button (real <button>: native click + keyboard) — right-aligned so the

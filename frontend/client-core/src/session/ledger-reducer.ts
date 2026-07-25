@@ -15,33 +15,39 @@
 //
 // Design pins:
 //  - Fold by FIELD PRESENCE, not by `kind`: any frame carrying `hp`/`maxHp`/
-//    `gold` SETS it. This is deliberately broader than a `kind:'hp'`-only switch
-//    because `kind:'rest'` ALSO carries authoritative `hp`/`maxHp` (a long rest
-//    restores HP — a kind-switch would leave the live sheet stale after a rest;
-//    see `buildRestPayloads` in backend `rules-lawyer-vitals.ts`). Only the
-//    hp/gold resolvers populate these fields (contract), so presence == authority.
-//  - Conditions: this reducer still folds only the chronological `conditionLog`
-//    of summaries, which the sheet renders as recent changes.
-//
-//    STALE-COMMENT WARNING, READ BEFORE EXTENDING (myth-hlydp): the original
-//    reason for the log — "the frame carries no add/remove flag, so an active
-//    SET is not derivable without parsing prose" — NO LONGER HOLDS. The
-//    `ledger_update` frame now carries `activeConditions`: the character's FULL
-//    post-mutation set as `{ condition, level }` pairs, authoritative rather
-//    than a delta, present on the `hp` and `rest` frames too (a long rest moves
-//    two conditions at once; every HP write syncs the derived `unconscious`).
-//    Folding a real `activeConditions` onto this overlay is now a pure SET by
-//    field presence, exactly like `hp`/`gold` below — no prose parsing, no ZFC
-//    violation. It is deliberately NOT done here yet: `CharacterOverlay` gaining
-//    a required field ripples into every literal typed as it across
-//    frontend/ui, frontend/src/routes/play and copy-workbench, which wanted a
-//    quiet window rather than a race with the in-flight UX batch.
+//    `gold`/`activeConditions` SETS it. This is deliberately broader than a
+//    `kind:'hp'`-only switch because `kind:'rest'` ALSO carries authoritative
+//    `hp`/`maxHp` (a long rest restores HP — a kind-switch would leave the live
+//    sheet stale after a rest; see `buildRestPayloads` in backend
+//    `rules-lawyer-vitals.ts`). Only the hp/gold resolvers populate these fields
+//    (contract), so presence == authority.
+//  - Conditions are folded TWO ways, and both are load-bearing (myth-hlydp +
+//    myth-k2mkw):
+//      * `conditionLog` — the chronological list of `kind:'condition'` summary
+//        prose, which the sheet renders as recent changes. Append-only.
+//      * `activeConditions` — the character's FULL post-mutation set as
+//        `{ condition, level }` pairs, authoritative rather than a delta. It
+//        rides the `hp` and `rest` frames too, not just `kind:'condition'` (a
+//        long rest moves two conditions at once; every HP write syncs the
+//        HP-derived `unconscious`), which is why a per-frame direction flag was
+//        rejected upstream. Folding it is a pure SET by field presence exactly
+//        like `hp`/`gold` — no prose parsing, no ZFC violation.
+//    ABSENT AND EMPTY ARE DIFFERENT, and getting it backwards silently wipes a
+//    player's conditions on every gold spend. A frame whose tool cannot touch
+//    conditions (gold, item, feature, spell_slot) OMITS the field: that is "no
+//    statement", so the overlay holds its last known set. An EMPTY ARRAY is a
+//    statement — "this character currently has none" — and clears it. `null` is
+//    the third state: no frame has spoken yet, so the base sheet stands (the
+//    same meaning `hp: null` carries).
+//  - RENDERING the active set is a separate, still-open design call (the paper
+//    register bans chips/badges/dots — state is prose), so `SessionSheet` reads
+//    only `conditionLog` today. The data is folded and ready for it.
 //  - `seq` is IGNORED: the live intra-turn frame has none; the reconnect replay
 //    carries it. The fold must be indifferent, so it never reads `seq`.
 //  - The caller filters to the VIEWER's own character (matching `characterName`)
 //    before folding — this stays a pure, transport-agnostic fold.
 
-import type { ServerFrame } from '@mythrun/contract/events'
+import type { ActiveCondition, ServerFrame } from '@mythrun/contract/events'
 
 /** The `ledger_update` frame, narrowed from the shipped `ServerFrame` union
  *  (contract `events/session-events.ts`). Consumed, never redeclared. */
@@ -56,6 +62,10 @@ export interface CharacterOverlay {
   readonly maxHp: number | null
   readonly gold: number | null
   readonly conditionLog: readonly string[]
+  /** The character's current active-condition set, or `null` when no frame has
+   *  carried one yet (base sheet stands). An EMPTY ARRAY is not `null`: it means
+   *  the character currently has no conditions. See the header. */
+  readonly activeConditions: readonly ActiveCondition[] | null
 }
 
 /** The zero overlay — nothing folded yet, so the base sheet's own values stand. */
@@ -64,11 +74,13 @@ export const emptyOverlay: CharacterOverlay = {
   maxHp: null,
   gold: null,
   conditionLog: [],
+  activeConditions: null,
 }
 
 /** Fold one `ledger_update` frame into the overlay. Pure + allocation-light: SET
- *  any authoritative value the frame carries; append a condition summary to the
- *  chronological log. Never reads `seq` (replay-indifferent). */
+ *  any authoritative value the frame carries (`hp`/`maxHp`/`gold`/
+ *  `activeConditions`); append a condition summary to the chronological log.
+ *  Never reads `seq` (replay-indifferent). */
 export function reduceLedger(overlay: CharacterOverlay, frame: LedgerUpdateFrame): CharacterOverlay {
   return {
     hp: frame.hp ?? overlay.hp,
@@ -78,5 +90,8 @@ export function reduceLedger(overlay: CharacterOverlay, frame: LedgerUpdateFrame
       frame.kind === 'condition'
         ? [...overlay.conditionLog, frame.summary]
         : overlay.conditionLog,
+    // `??`, not `||`/a length check: an empty array is a real statement ("none
+    // right now") and must survive, while an absent field holds the last set.
+    activeConditions: frame.activeConditions ?? overlay.activeConditions,
   }
 }

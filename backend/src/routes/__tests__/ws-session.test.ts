@@ -372,6 +372,20 @@ describe('ws-session route (integration)', () => {
     await expect(connect(`/ws/session/${sessionId}?ticket=${ticket}`)).rejects.toThrow(/403/)
   })
 
+  // myth-ficc: a suspended user must not be able to act. The HTTP surface has
+  // enforced this since MYT-39 (requireOnboarded → 403 account_suspended), but
+  // the WS handshake did not — and a ticket minted BEFORE the suspension stays
+  // valid for its 30s TTL, so without this gate a just-banned player could still
+  // open a socket and play. The owner here is a fully accepted member with a
+  // character: the ONLY reason this connect fails is the suspension.
+  it('rejects (403) a SUSPENDED member, even holding a valid ticket + membership', async () => {
+    const ticket = await mint() // minted while still in good standing
+    await pool.query('UPDATE users SET suspended_at = now() WHERE id = $1', [userId])
+    await expect(connect(`/ws/session/${sessionId}?ticket=${ticket}`)).rejects.toThrow(/403/)
+    // Fails CLOSED at the handshake — no socket, so nothing registered locally.
+    expect(hub.hasLocal(campaignId)).toBe(false)
+  })
+
   it('replies 503 (not 500) when the ticket-store consume THROWS (transient Redis)', async () => {
     // A throwing GETDEL (Redis wobble) must surface as 503 — operationally
     // distinct from a stale-ticket 401 — and still fail closed (no socket).
@@ -1693,6 +1707,7 @@ describe('ws-session route (integration)', () => {
       deregister: (c, connId) => {
         hub.deregister(c, connId)
       },
+      closeUser: (u) => hub.closeUser(u),
       hasLocal: (c) => hub.hasLocal(c),
       close: () => hub.close(),
       publish: (c, frame) => {
@@ -1946,6 +1961,7 @@ function makeStubSessionState(): {
 function makeStubHub(): {
   register: ReturnType<typeof vi.fn>
   deregister: ReturnType<typeof vi.fn>
+  closeUser: ReturnType<typeof vi.fn>
   publish: ReturnType<typeof vi.fn>
   hasLocal: ReturnType<typeof vi.fn>
   close: ReturnType<typeof vi.fn>
@@ -1953,6 +1969,7 @@ function makeStubHub(): {
   return {
     register: vi.fn(),
     deregister: vi.fn(),
+    closeUser: vi.fn().mockReturnValue(0),
     publish: vi.fn().mockResolvedValue(undefined),
     hasLocal: vi.fn().mockReturnValue(false),
     close: vi.fn().mockResolvedValue(undefined),
@@ -1979,7 +1996,12 @@ function makeStubRepo(over: Record<string, unknown> = {}): {
       join: vi.fn().mockResolvedValue(undefined),
       list: vi.fn().mockResolvedValue([]),
     },
-    users: { getById: vi.fn().mockResolvedValue({ displayName: 'Dee' }) },
+    // myth-ficc: handleInbound gates every frame on the suspension predicate;
+    // this harness's user is in good standing.
+    users: {
+      getById: vi.fn().mockResolvedValue({ displayName: 'Dee' }),
+      isSuspended: vi.fn().mockResolvedValue(false),
+    },
     characters: {
       findUserCharacterForCampaign: vi.fn().mockResolvedValue({ name: 'Char' }),
       listForCampaign: vi.fn().mockResolvedValue([]),

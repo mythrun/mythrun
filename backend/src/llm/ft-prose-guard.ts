@@ -18,6 +18,7 @@ export type FtProseViolationKind =
   | 'fused_sentence'
   | 'internal_term'
   | 'structure_token'
+  | 'leading_fragment'
 
 export interface FtProseViolation {
   readonly kind: FtProseViolationKind
@@ -52,6 +53,39 @@ const STRUCTURE_TOKEN = /^[ \t]*(-{3,}|\*{3,}|_{3,})[ \t]*$/m
 // guard excludes initials / acronyms ("V. L. K.", "U.S.A.", "J.R.R.") whose letter
 // before the period is itself a capital, while still catching "once.Hast" / "it.You".
 const FUSED_SEAM = /[a-z][.!?]["'”’)]?[A-Z]/
+
+// A rendered segment that OPENS MID-WORD (myth-q9for artifact #2). The 2026-07-18
+// playtest saw a response begin `oss described. Wiry, amber button…` — the tail of a
+// prior beat's "V-oss", surfacing as if it were the start of the turn. The transport
+// causes were closed since (myth-uhr0f aligned live/replay segmentation; the turn
+// worker's §5 order refuses to re-stream an already-streamed turnId), but nothing
+// DETECTED the shape, so a recurrence would reach a reader before anyone noticed.
+//
+// Granularity: every FT text part becomes its own dm_text row and renders as its own
+// paragraph, and `joinNarration` joins parts with a blank line — so the blank-line
+// split below is exactly the set of openings a reader sees. Legitimate narration opens
+// with a capital, a quotation mark, or a bracket. Two openings are DELIBERATE devices
+// that legitimately precede a lowercase word — a leading ellipsis ("…and then the
+// light was gone") and a leading dash ("— and the door gives, finally") — so both are
+// exempt rather than stripped. They are the cases that make a naive "segment starts
+// lowercase" rule wrong.
+const SEGMENT_SPLIT = /\n[ \t]*\n/
+/** Opening punctuation a segment may legitimately lead with, skipped before the test.
+ *  Deliberately EXCLUDES dashes — see DELIBERATE_OPENING. */
+const OPENING_PUNCTUATION = /^[\s"'“”‘’(\[{]+/
+/** A device opening (ellipsis or dash) that may correctly be followed by lowercase. */
+const DELIBERATE_OPENING = /^\s*(?:…|\.{3}|[—–-])/
+
+/** The first segment whose visible opening is a lowercase letter, or undefined. */
+function findLeadingFragment(narration: string): string | undefined {
+  for (const segment of narration.split(SEGMENT_SPLIT)) {
+    if (segment.trim() === '') continue
+    if (DELIBERATE_OPENING.test(segment)) continue
+    const opening = segment.replace(OPENING_PUNCTUATION, '')
+    if (/^\p{Ll}/u.test(opening)) return opening.slice(0, 32).trim()
+  }
+  return undefined
+}
 
 // Detect an emphasis marker that the client renderer would leave as a LITERAL on the
 // page. The renderer converts balanced `*em*` / `**strong**`; it does NOT handle `_`.
@@ -99,6 +133,9 @@ export function checkFtProse(narration: string): FtProseViolation[] {
   if (structure !== null) {
     violations.push({ kind: 'structure_token', detail: sliceAround(narration, structure.index) })
   }
+
+  const fragment = findLeadingFragment(narration)
+  if (fragment !== undefined) violations.push({ kind: 'leading_fragment', detail: fragment })
 
   return violations
 }

@@ -95,16 +95,19 @@ const SHEET: CuratedSheet = {
   features: [{ name: 'Second Wind', gloss: 'Catch her breath: recover a burst of HP once per rest.' }],
   equipment: [{ name: 'Longsword', gloss: "Versatile · her father's." }],
 }
+// `activeConditions` is folded on the overlay but not yet rendered (presentation
+// is an open design call). `null` = no frame has spoken; `[]` = currently none.
 const OVERLAY_LIVE: CharacterOverlay = {
   hp: 9,
   maxHp: 28,
   gold: null,
   conditionLog: ['A hobgoblin blade opens a gash along her ribs.'],
+  activeConditions: [],
 }
 const SHEET_STATE: SessionSheetState = { sheet: SHEET, overlay: OVERLAY_LIVE, loading: false, failed: false }
 const SHEET_STATE_EMPTY: SessionSheetState = {
   sheet: null,
-  overlay: { hp: null, maxHp: null, gold: null, conditionLog: [] },
+  overlay: { hp: null, maxHp: null, gold: null, conditionLog: [], activeConditions: null },
   loading: false,
   failed: true,
 }

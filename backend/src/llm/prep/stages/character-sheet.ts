@@ -394,6 +394,15 @@ function renderPrompt(args: CharacterSheetArgs): string {
     args.narrative.subclass !== undefined
       ? `Subclass (FIXED, do not change): ${args.narrative.subclass}`
       : ''
+  // myth-gdycq: the concept's resolved pronouns ride into the sheet as a FIXED
+  // constraint, exactly as the subclass does. Stage 3 writes real prose (feature
+  // descriptions), so it is one of the places a "he" can appear for a character
+  // whose player asked for something else. Absent (a legacy concept row that
+  // predates the field) collapses to empty and the prompt reads as it did.
+  const pronounsLine =
+    args.narrative.pronouns !== undefined
+      ? `Pronouns (FIXED, use these in every sentence about this character): ${args.narrative.pronouns}`
+      : ''
   // Function replacers for the narrative/world fields: each is user/LLM-derived,
   // so a `$&`/`$'`-style sequence must splice in literally rather than being read
   // as a special replacement pattern.
@@ -401,6 +410,7 @@ function renderPrompt(args: CharacterSheetArgs): string {
     .replace('{{race}}', () => args.narrative.race)
     .replace('{{class}}', () => args.narrative.class)
     .replace('{{subclassLine}}', () => subclassLine)
+    .replace('{{pronounsLine}}', () => pronounsLine)
     .replace('{{srdSubclassTable}}', () => renderSrdSubclassTable())
     .replace('{{background}}', () => args.narrative.background)
     .replace('{{alignment}}', () => args.narrative.alignment)

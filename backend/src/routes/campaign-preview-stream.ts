@@ -6,16 +6,17 @@
 // same guard chain, same gate, same Redis parking — but the response is a
 // one-shot SSE stream so the player watches the world brief write itself
 // instead of staring at a spinner. The synchronous route stays (the dev-tool
-// panel and any non-streaming client drive it); the web guided flow calls this
-// one. Kept as its own module so campaign-preview.ts stays under the size cap;
-// the shared pieces (body schema, rate-limit shape, cost guards) are imported
-// from there — one copy, two transports.
+// panel and any non-streaming client drive it); the web create flow calls this
+// one on BOTH funnel paths (myth-6t06f). Kept as its own module so
+// campaign-preview.ts stays under the size cap; the shared pieces (body schema,
+// rate-limit shape, cost guards) are imported from there — one copy, two
+// transports.
 //
 // Guard order (identical to the JSON route; every guard runs BEFORE the reply
 // is hijacked, so a trip is a plain JSON status the client handles exactly
 // like the non-streaming endpoint's errors — and a cooling-down or 0-credit
 // user burns ZERO Sonnet tokens):
-//   1. Zod body parse (guided-only, exactly 3 picks)                → 400
+//   1. Zod body parse (3 picks, or a 20..4000 concept)              → 400
 //   2. rate-limit (5/min per user, route-level)                     → 429
 //   3. rejection-storm cooldown (read-only Redis peek)              → 429
 //   4. credit balance peek (NON-charging, BEFORE any LLM call)      → 403
@@ -27,7 +28,10 @@
 // (shared `recordGateRejection` — storm increment + server-only reasoning log
 // included); `complete` mirrors its 201. The gate judges (and the store
 // parks) the VALIDATED output — authoritative over the streamed text, which a
-// post-stream schema repair can rewrite.
+// post-stream schema repair can rewrite. On the freeform path the gate runs on
+// the player's RAW words BEFORE any streaming starts, so a rejected concept
+// costs one cheap gate call and the player never watches prose arrive that is
+// about to be thrown away.
 //
 // Cost control on disconnect: the SSE sink's onClose aborts the Sonnet stream
 // (threaded via streamSynthesizeConcept's abortSignal), so a closed tab stops
@@ -41,8 +45,12 @@ import type { SynthesizeStreamEvent, SynthesizeStreamErrorCode } from '@mythrun/
 
 import { createRepo } from '../repo/index.js'
 import { requireDbUser } from '../auth/require-db-user.js'
-import { streamSynthesizeConcept, type SynthesizerPick } from '../llm/prep/synthesize-concept.js'
-import { runInputGate } from '../llm/prep/input-gate.js'
+import {
+  streamSynthesizeConcept,
+  streamSynthesizeFromConcept,
+  type SynthesizerPick,
+} from '../llm/prep/synthesize-concept.js'
+import { runInputGate, type InputGateVerdict } from '../llm/prep/input-gate.js'
 import { LlmContentFilteredError } from '../llm/errors.js'
 import { createRejectionStormCounter } from '../auth/rejection-storm.js'
 import { putPreview } from '../preview/preview-store.js'
@@ -87,7 +95,9 @@ function emit(sink: SseSink, event: SynthesizeStreamEvent): void {
 interface StreamedSynthesisArgs {
   readonly sink: SseSink
   readonly signal: AbortSignal
-  readonly picks: readonly SynthesizerPick[]
+  /** The proposal input: the brainstorm path's 3 picks, or (myth-6t06f) the
+   *  freeform path's own concept text. */
+  readonly source: { readonly picks: readonly SynthesizerPick[] } | { readonly concept: string }
   readonly userId: string
   readonly redis: Redis
   readonly redisKeyPrefix: string
@@ -95,59 +105,97 @@ interface StreamedSynthesisArgs {
   readonly logger: PinoLogger
 }
 
-/** The post-hijack half of the route: stream deltas, gate the validated
- *  output, then terminal-frame (complete | rejected | error) and close.
- *  Every failure is caught here — the sink always gets a terminal. */
+/** Emit the terminal `rejected` frame with the JSON route's exact side-effects
+ *  (storm increment + server-only reasoning log) and payload. `judged` is the
+ *  text the gate ruled on — the synthesis on the brainstorm path, the player's
+ *  own words on the freeform path — and it always rides the frame so the
+ *  rejection screen can show it and seed "adjust it yourself". */
+async function emitRejection(
+  args: StreamedSynthesisArgs,
+  gate: InputGateVerdict,
+  judged: string,
+): Promise<void> {
+  const payload = await recordGateRejection({
+    gate,
+    echoJudgedConcept: true,
+    synthesizedConcept: judged,
+    stormIncrementer: args.incrementStorm,
+    logger: args.logger,
+  })
+  emit(args.sink, {
+    type: 'rejected',
+    code: 'concept_rejected',
+    // A reject verdict always carries a reason; the fallback mirrors
+    // the FE's own defensive default and satisfies the non-null wire type.
+    /* c8 ignore next */
+    reason: payload.reason ?? 'inappropriate',
+    rejectionMessage: payload.rejectionMessage,
+    synthesizedConcept: judged,
+  })
+}
+
+/** The post-hijack half of the route: stream deltas, gate, then terminal-frame
+ *  (complete | rejected | error) and close. Every failure is caught here — the
+ *  sink always gets a terminal.
+ *
+ *  Gate placement per path mirrors the JSON route exactly (see its header): the
+ *  freeform arm gates the player's RAW words FIRST — before a token of Sonnet
+ *  burns — and the brainstorm arm gates what it wrote. One gate call either way. */
 async function runStreamedSynthesis(args: StreamedSynthesisArgs): Promise<void> {
   const { sink, signal, logger } = args
-  const stream = streamSynthesizeConcept(args.picks, { abortSignal: signal })
-  // Guard the output promise: if the delta loop throws, `output` may also
-  // reject; pre-attaching a no-op handler keeps that from surfacing as an
-  // unhandled rejection. The `await stream.output` below still observes it.
-  stream.output.catch(() => undefined)
 
   try {
+    if ('concept' in args.source) {
+      const rawGate = await runInputGate({
+        concept: args.source.concept,
+        intentSummary: null,
+        abortSignal: signal,
+      })
+      if (rawGate.verdict === 'reject') {
+        await emitRejection(args, rawGate, args.source.concept)
+        return
+      }
+    }
+
+    const stream =
+      'concept' in args.source
+        ? streamSynthesizeFromConcept(args.source.concept, { abortSignal: signal })
+        : streamSynthesizeConcept(args.source.picks, { abortSignal: signal })
+    // Guard the output promise: if the delta loop throws, `output` may also
+    // reject; pre-attaching a no-op handler keeps that from surfacing as an
+    // unhandled rejection. The `await stream.output` below still observes it.
+    stream.output.catch(() => undefined)
+
     for await (const delta of stream.deltas) {
       emit(sink, { type: 'delta', text: delta })
     }
     const synth = await stream.output
 
-    const gate = await runInputGate({
-      concept: synth.concept,
-      intentSummary: synth.intentSummary,
-      // A disconnect during the gate beat cancels this call too.
-      abortSignal: signal,
-    })
-    if (gate.verdict === 'reject') {
-      // Same side-effects as the JSON route's 422 (storm increment +
-      // server-only reasoning log), same payload — as a terminal frame.
-      const payload = await recordGateRejection({
-        gate,
-        mode: 'guided',
-        synthesizedConcept: synth.concept,
-        stormIncrementer: args.incrementStorm,
-        logger,
-      })
-      emit(sink, {
-        type: 'rejected',
-        code: 'concept_rejected',
-        // A reject verdict always carries a reason; the fallback mirrors
-        // the FE's own defensive default and satisfies the non-null wire type.
-        /* c8 ignore next */
-        reason: payload.reason ?? 'inappropriate',
-        rejectionMessage: payload.rejectionMessage,
-        synthesizedConcept: synth.concept,
-      })
-    } else {
-      // Gate pass: park EXACTLY as the JSON route parks (same store, same
-      // record shape, reworkCount:0, IDOR-safe user-keyed, non-charging).
-      const previewId = await putPreview(args.redis, args.redisKeyPrefix, args.userId, {
+    // The brainstorm path judges its own synthesis; the freeform path already
+    // judged the input it was built from, so re-gating would be a second
+    // Sonnet call on text the player could not have altered.
+    if (!('concept' in args.source)) {
+      const gate = await runInputGate({
         concept: synth.concept,
         intentSummary: synth.intentSummary,
-        reworkCount: 0,
+        // A disconnect during the gate beat cancels this call too.
+        abortSignal: signal,
       })
-      emit(sink, { type: 'complete', previewId, concept: synth.concept })
+      if (gate.verdict === 'reject') {
+        await emitRejection(args, gate, synth.concept)
+        return
+      }
     }
+
+    // Gate pass: park EXACTLY as the JSON route parks (same store, same
+    // record shape, reworkCount:0, IDOR-safe user-keyed, non-charging).
+    const previewId = await putPreview(args.redis, args.redisKeyPrefix, args.userId, {
+      title: synth.title,
+      concept: synth.concept,
+      intentSummary: synth.intentSummary,
+      reworkCount: 0,
+    })
+    emit(sink, { type: 'complete', previewId, title: synth.title, concept: synth.concept })
   } catch (err) {
     logger.error({ err }, 'synthesize-preview stream failed')
     // Failure honesty: a clear terminal frame, never a hung half-brief.
@@ -205,7 +253,7 @@ export const campaignPreviewStreamRoutes: FastifyPluginAsync<CampaignPreviewStre
       await runStreamedSynthesis({
         sink,
         signal: abort.signal,
-        picks: parsed.data.picks,
+        source: parsed.data,
         userId: dbUser.id,
         redis: opts.redis,
         redisKeyPrefix: opts.redisKeyPrefix,

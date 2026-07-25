@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Stack, Text, Button, SeamlessInput, Divider, Box } from '@mythrun/ui'
+import { Stack, Text, Button, SeamlessInput, Divider, Box, Heading } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import {
   createCampaign,
@@ -13,20 +13,24 @@ import {
 } from '@mythrun/client-core'
 import type { RejectionState } from './rejection.tsx'
 
-// The campaign-create PREVIEW beat (spec §1) — the guided path's one moment of
-// judgement before ~10 minutes of world generation. The synthesizer parked a
-// gated concept under an opaque previewId; this screen renders that concept as
-// serif prose (NO world name — the wire carries previewId + concept only; the
-// name is minted later, during world-gen; we never fabricate one) and offers
-// three moves:
+// The campaign-create PROPOSAL beat (spec §1) — the flow's one moment of
+// judgement before ~10 minutes of world generation. Since myth-6t06f BOTH paths
+// arrive here: a brainstorm weave of three stories, or the player's own
+// paragraph rendered back to them. The synthesizer parked a gated concept under
+// an opaque previewId; this screen headlines the world's NAME (myth-z3icr — the
+// synthesize stage emits it; the page never mines it out of the prose) over that
+// concept as serif prose, and offers three moves:
 //
-//   - Begin       → commit the guided preview (`createCampaign` with the wrapped
-//                   `{mode:'guided', previewId}` body); the controller navigates.
+//   - Begin       → commit the parked proposal (`createCampaign` with the
+//                   wrapped `{mode:'guided', previewId}` body — the wire name of
+//                   "commit what the checkpoint parked", on either path); the
+//                   controller navigates.
 //   - Ask for one change → reveal a borderless change-note field; `Rework`
 //                   revises the parked concept ONCE (`reworkPreview`). On success
 //                   the revised concept replaces the shown one and the single
 //                   change is SPENT — Begin becomes the only action.
-//   - Start over  → discard the preview, back to the guided picks — behind a
+//   - Start over  → discard the proposal, back to the start of the path the
+//                   player came from (the controller decides which) — behind a
 //                   TWO-STEP inline confirm (see below).
 //
 // THE ACTION ROW CONTRACT (ux-run2 myth-fca4y): the commit and the discard must
@@ -62,20 +66,29 @@ interface Notice {
   kind: 'retry' | 'cooldown' | 'credits'
 }
 
-/** The synthesized preview the guided path parks under an opaque id. */
+/** The synthesized proposal, parked under an opaque id. */
 export interface PreviewPayload {
   previewId: string
+  /** The world's NAME (myth-z3icr) — the screen headlines it. */
+  title: string
   concept: string
 }
 
 export interface PreviewScreenProps {
-  /** The synthesized concept + its opaque previewId (carried from guided synthesis). */
+  /** The synthesized proposal + its opaque previewId (carried from synthesis). */
   payload: PreviewPayload
+  /** Which path produced this proposal (myth-6t06f). Only a BRAINSTORM proposal
+   *  carries the "woven from" credit — a freeform one was woven from the words
+   *  the player just wrote, so crediting them back would be noise (and reading
+   *  the brainstorm draft's stories here would be a lie). */
+  origin: 'freeform' | 'guided'
   /** Committed the preview (HTTP 201) → the controller advances to the generating route. */
   onCommitted: (campaignId: string) => void
-  /** CONFIRMED "start over" → the controller returns to the guided picks. */
+  /** CONFIRMED "start over" → the controller returns to the start of the
+   *  originating path. */
   onStartOver: () => void
-  /** The preview aged out at commit (410) → the controller restarts the guided flow. */
+  /** The preview aged out at commit (410) → the controller restarts the
+   *  originating path. */
   onPreviewExpired: () => void
   /** A rework was gate-rejected (or content-filtered) → the controller shows the rejection screen. */
   onRejected: (rejection: RejectionState) => void
@@ -118,10 +131,10 @@ function reworkOutcome(err: unknown): ReworkOutcome {
   return { notice: { kind: 'retry' } }
 }
 
-// A commit can end three ways: the preview expired (410 → restart guided), a
+// A commit can end three ways: the preview expired (410 → restart the path), a
 // blocking cost/rate condition (403/429 → calm inline notice), or a transient
-// failure (→ calm try-again). A guided commit does not re-run the gate (the
-// preview is already gated), so there is no concept-rejection branch here.
+// failure (→ calm try-again). A parked-proposal commit does not re-run the gate
+// (the proposal is already gated), so there is no concept-rejection branch here.
 interface CommitOutcome {
   expired?: boolean
   notice?: Notice
@@ -149,6 +162,7 @@ function usePreview(
   intents: Pick<PreviewScreenProps, 'onCommitted' | 'onPreviewExpired' | 'onRejected'>,
 ) {
   const ctx = useApiContext()
+  const [title, setTitle] = useState(payload.title)
   const [concept, setConcept] = useState(payload.concept)
   const [phase, setPhase] = useState<Phase>('view')
   const [spent, setSpent] = useState(false)
@@ -178,6 +192,9 @@ function usePreview(
     setBusy(true)
     try {
       const res = await reworkPreview(ctx, payload.previewId, { change: change.trim() })
+      // The revision carries its own name: a change note that moves the world
+      // can move what it should be called (myth-z3icr).
+      setTitle(res.title)
       setConcept(res.concept)
       setSpent(true)
       setPhase('view')
@@ -191,7 +208,20 @@ function usePreview(
     }
   }
 
-  return { concept, phase, setPhase, spent, busy, notice, setNotice, change, setChange, begin, rework }
+  return {
+    title,
+    concept,
+    phase,
+    setPhase,
+    spent,
+    busy,
+    notice,
+    setNotice,
+    change,
+    setChange,
+    begin,
+    rework,
+  }
 }
 
 // The compact keep-pair ABOVE the prose (ux-run2 myth-ia9v2): from the first
@@ -350,6 +380,7 @@ function SpentActions({ busy, onBegin }: { busy: boolean; onBegin: () => void })
 
 export function PreviewScreen({
   payload,
+  origin,
   onCommitted,
   onStartOver,
   onPreviewExpired,
@@ -360,12 +391,16 @@ export function PreviewScreen({
   // The weave acknowledges what it wove (ux-run2 myth-8u3h3): the player's own
   // three named stories, read from the guided draft that deliberately survives
   // synthesize → preview. Absent/empty draft (a reload after commit, a cleared
-  // tab) simply drops the line.
+  // tab) simply drops the line — as does a FREEFORM proposal (myth-6t06f), which
+  // was woven from the player's own paragraph and would otherwise be credited to
+  // whatever stories a previous brainstorm run left in the draft.
   const [wovenFrom] = useState(() =>
-    (readGuidedDraft()?.picks ?? [])
-      .map((pick) => pick.title.trim())
-      .filter((title) => title.length > 0)
-      .join(' · '),
+    origin !== 'guided'
+      ? ''
+      : (readGuidedDraft()?.picks ?? [])
+          .map((pick) => pick.title.trim())
+          .filter((title) => title.length > 0)
+          .join(' · '),
   )
   const trimmed = vm.change.trim()
   const changeReady = trimmed.length >= 1 && trimmed.length <= CHANGE_MAX
@@ -382,6 +417,13 @@ export function PreviewScreen({
         <Text role="ui-label" data-testid="preview-eyebrow">
           {t('campaignNew.preview.eyebrow')}
         </Text>
+        {/* The world's NAME (myth-z3icr) — the page's one framing heading, so
+            the proposal is a place with a name rather than an unlabelled block
+            of prose whose first words happen to be the name. A rework can
+            change it; the heading follows. */}
+        <Heading level={1} role="headline" data-testid="preview-title">
+          {vm.title}
+        </Heading>
         {wovenFrom !== '' && (
           <Text role="meta" as="p" data-testid="preview-woven-from">
             {t('campaignNew.preview.wovenFrom', { sources: wovenFrom })}

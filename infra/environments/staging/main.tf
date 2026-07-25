@@ -403,10 +403,27 @@ resource "aws_ecs_task_definition" "smoke_prep_pipeline" {
       # PARALLEL chain — +~3.4 min to the SLOWEST campaign, not ×3 — so the
       # 35min budget still has comfortable headroom; left unchanged.
       { name = "SMOKE_WALL_CLOCK_BUDGET_MS", value = "2100000" },
-      # MYT-64: prior $5 cap covered 3-campaign world-gen + character creation.
-      # This adds 3 session-prep streams at ~$0.52 each (measured) = +~$1.56,
-      # so the cap rises to $8 with headroom for LLM cost variance.
-      { name = "SMOKE_COST_CAP_USD", value = "8.00" },
+      # Cap history: $5 covered 3-campaign world-gen + character creation.
+      # MYT-64 raised it to $8 for 3 session-prep streams (~$0.52 each, measured).
+      #
+      # myth-4bpkg raises it to $15. The 2026-07-10 staging run was fully green
+      # on every pipeline barrier but spent $11.01 (~$3.67/world: bardsmoot 3.71,
+      # haunted-carnival 3.66, mountain-monastery 3.64), so the $8 cap failed a
+      # run that was otherwise correct. The growth was investigated before the
+      # bump rather than rubber-stamped, and it is ADDITIVE SCOPE, not a runaway —
+      # three things landed after the $8 calibration:
+      #   1. world_introduction (myth-zaqxh) — a NEW Opus stage, once per campaign.
+      #   2. Four characters per campaign, not three: the owner is a member and
+      #      gets a character too. That is +33% on both per-character Sonnet
+      #      stages (concept + sheet) and one more character inside the Opus
+      #      character_integration context.
+      #   3. Relationship counts roughly doubled (~110 vs the ~55 observed at
+      #      calibration), which inflates INPUT tokens for every downstream stage
+      #      that reads the woven graph — including the Opus ones.
+      # $15 leaves ~36% headroom over the observed $11.01 (a ~$5/world ceiling),
+      # which still trips on a genuine runaway — the reason this cap exists —
+      # while not failing a healthy run. Revisit if per-world cost passes ~$4.50.
+      { name = "SMOKE_COST_CAP_USD", value = "15.00" },
       # DB connection inputs. The smoke composes DATABASE_URL at startup
       # from these (T8' wires this in the script); pattern parallels the
       # serving module's common_env / common_secrets split.

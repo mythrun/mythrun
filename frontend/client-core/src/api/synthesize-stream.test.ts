@@ -154,6 +154,28 @@ describe('startSynthesisStream', () => {
     expect(opens).toHaveLength(0)
   })
 
+  // myth-6t06f: the freeform path opens this same stream with its own concept.
+  it('opens with a FREEFORM concept body', async () => {
+    const { chunks, end } = pushChunks()
+    const { opens } = installFake(200, chunks)
+    const body = { concept: 'A drowned harbour town of salvage guilds.' }
+
+    const stream = await startSynthesisStream(ctx, body)
+
+    expect(JSON.parse(opens[0]?.init.body ?? '')).toEqual(body)
+    end()
+    stream.close()
+  })
+
+  it('rejects a freeform concept under the contract floor before any network', async () => {
+    const { opens } = installFake(200, pushChunks().chunks)
+
+    await expect(startSynthesisStream(ctx, { concept: 'too short' })).rejects.toBeInstanceOf(
+      ContractValidationError,
+    )
+    expect(opens).toHaveLength(0)
+  })
+
   it('rejects with an HttpError carrying status/code/body on a non-200 open (guard trips)', async () => {
     const { chunks, push, end } = pushChunks()
     installFake(403, chunks)
@@ -188,12 +210,20 @@ describe('startSynthesisStream', () => {
     )
     expect(grown.status).toBe('streaming')
 
-    push(frame({ type: 'complete', previewId: 'p-1', concept: 'A quiet valley, revised.' }))
+    push(
+      frame({
+        type: 'complete',
+        previewId: 'p-1',
+        title: 'The Quiet Valley',
+        concept: 'A quiet valley, revised.',
+      }),
+    )
     end()
     const done = await waitForState(stream, (s) => s.status === 'complete')
     // The terminal concept is authoritative (a post-stream repair may diverge).
     expect(done).toEqual({
       status: 'complete',
+      title: 'The Quiet Valley',
       previewId: 'p-1',
       concept: 'A quiet valley, revised.',
     })
@@ -354,11 +384,16 @@ describe('startSynthesisStream', () => {
     push(':keepalive\n\n') // comment frame — parseSseFrame yields null
     push('event: ping\n\n') // a named event with no data — nothing to fold
     push(frame({ type: 'delta', text: 'Alive.' }))
-    push(frame({ type: 'complete', previewId: 'p-9', concept: 'Alive.' }))
+    push(frame({ type: 'complete', previewId: 'p-9', title: 'Alive Place', concept: 'Alive.' }))
     end()
 
     const done = await waitForState(stream, (s) => s.status === 'complete')
-    expect(done).toEqual({ status: 'complete', previewId: 'p-9', concept: 'Alive.' })
+    expect(done).toEqual({
+      status: 'complete',
+      previewId: 'p-9',
+      title: 'Alive Place',
+      concept: 'Alive.',
+    })
   })
 
   it('close() is idempotent', async () => {
@@ -396,7 +431,7 @@ describe('startSynthesisStream', () => {
 
     const stream = await startSynthesisStream(ctx, VALID_BODY)
     stream.close()
-    push(frame({ type: 'complete', previewId: 'p-1', concept: 'late' }))
+    push(frame({ type: 'complete', previewId: 'p-1', title: 'Late', concept: 'late' }))
     end()
 
     // Give the (stale) read loop a tick to observe the pushed frame.

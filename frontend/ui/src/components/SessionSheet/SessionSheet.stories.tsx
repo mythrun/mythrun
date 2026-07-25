@@ -86,7 +86,12 @@ const CASTER: CuratedSheet = {
 }
 
 // No live overlay yet — the resting sheet shows the static HP + the calm empty line.
-const RESTING: CharacterOverlay = { hp: null, maxHp: null, gold: null, conditionLog: [] }
+// `activeConditions: null` = no frame has spoken yet, distinct from `[]` ("none
+// right now"). The sheet renders the conditionLog prose only; the active set is
+// folded on the overlay but its presentation is still an open design call.
+const RESTING: CharacterOverlay = {
+  hp: null, maxHp: null, gold: null, conditionLog: [], activeConditions: null,
+}
 // Mid-combat — the ledger has folded a damage beat + condition notes.
 const MID_COMBAT: CharacterOverlay = {
   hp: 9,
@@ -96,6 +101,7 @@ const MID_COMBAT: CharacterOverlay = {
     'A hobgoblin blade opens a gash along her ribs.',
     'She staggers, breath ragged — the venom starts to bite.',
   ],
+  activeConditions: [{ condition: 'poisoned', level: null }],
 }
 
 // Fixed brand chrome labels are wired by the composing route from i18n; the stories

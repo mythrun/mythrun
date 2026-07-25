@@ -406,10 +406,12 @@ export function CharacterNewRoute({
     )
   }
 
-  // The guided path hands over its STRUCTURED picks alongside the flattened
-  // conceptText (myth-4jhrk: the backend persists the picks and pins the
-  // subclass end-to-end — prose alone loses it); the freeform path omits the
-  // field. Conditional spread keeps an absent payload absent, not undefined.
+  // Both paths hand over their STRUCTURED picks alongside the concept text
+  // (myth-4jhrk: the backend persists the picks and pins them end-to-end — prose
+  // alone loses them; myth-gdycq: the freeform path carries the pronoun pick on
+  // the same field). An EMPTY payload is dropped rather than sent as `{}` — "no
+  // picks" is the absence of the field, which is what a freeform submission
+  // whose optional asks went unanswered actually means.
   const submitBoth = (
     conceptText: string,
     situationGroundingText: string,
@@ -418,7 +420,9 @@ export function CharacterNewRoute({
     submit(ctx, id, {
       conceptText,
       situationGroundingText,
-      ...(guidedChoices !== undefined && { guidedChoices }),
+      ...(guidedChoices !== undefined && Object.keys(guidedChoices).length > 0
+        ? { guidedChoices }
+        : {}),
     }).then(() => undefined)
 
   let screen: React.JSX.Element

@@ -207,6 +207,9 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
       // shown quietly above the prompt so the player knows a second question
       // follows (ux-run3 myth-7ceqw named the steps).
       stepIndicator?: string
+      // myth-gdycq: the optional quiet aside between the field and the actions
+      // (the pronoun ask). A ReactNode SLOT — the shell owns what it holds.
+      aside?: ReactNode
       prompt: string
       whisper: string
       value: string

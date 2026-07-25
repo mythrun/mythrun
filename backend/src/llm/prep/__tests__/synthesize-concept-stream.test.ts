@@ -17,6 +17,7 @@ vi.mock('../../ai.js', async (importOriginal) => {
 import { streamObject } from '../../ai.js'
 import {
   streamSynthesizeConcept,
+  streamSynthesizeFromConcept,
   type SynthesizerOutput,
 } from '../synthesize-concept.js'
 
@@ -29,6 +30,7 @@ const PICKS = [
 ] as const
 
 const FINAL: SynthesizerOutput = {
+  title: 'The Tidebound Archive',
   concept: 'A tidebound archive-city.',
   intentSummary: {
     aesthetics: ['salt'],
@@ -139,6 +141,56 @@ describe('streamSynthesizeConcept', () => {
     mockStreamObject.mockReturnValueOnce(fakeStream({ partials: [], final: FINAL }))
 
     streamSynthesizeConcept(PICKS)
+
+    expect(mockStreamObject.mock.calls[0]?.[0]).not.toHaveProperty('abortSignal')
+  })
+})
+
+// myth-6t06f: the FREEFORM twin streams the player's own concept through the
+// identical machinery — same schema, same delta derivation, same abort
+// threading — so the proposal screen never learns which path opened it.
+describe('streamSynthesizeFromConcept', () => {
+  beforeEach(() => {
+    mockStreamObject.mockReset()
+  })
+
+  it('yields concept-growth deltas from the freeform prompt and resolves the validated tree', async () => {
+    mockStreamObject.mockReturnValueOnce(
+      fakeStream({
+        partials: [{}, { concept: 'A tide' }, { concept: 'A tidebound archive-city.' }],
+        final: FINAL,
+      }),
+    )
+
+    const stream = streamSynthesizeFromConcept('a drowned harbour town of salvage guilds')
+    const deltas = await collect(stream.deltas)
+    expect(deltas.join('')).toBe(FINAL.concept)
+    await expect(stream.output).resolves.toEqual(FINAL)
+  })
+
+  it('threads the player concept, its own callSite, and the abortSignal to the wrapper', () => {
+    mockStreamObject.mockReturnValueOnce(fakeStream({ partials: [], final: FINAL }))
+    const ac = new AbortController()
+
+    streamSynthesizeFromConcept('UNIQUE_PLAYER_CONCEPT_Z', { abortSignal: ac.signal })
+
+    const call = mockStreamObject.mock.calls[0]?.[0]
+    expect(call).toMatchObject({
+      // A distinct callSite so the cost/diagnostic logs can tell the two funnel
+      // paths apart without a second schema.
+      callSite: 'synthesize-freeform-stream',
+      schemaName: 'SynthesizerOutput',
+      temperature: 0.9,
+      abortSignal: ac.signal,
+    })
+    expect(call?.prompt).toContain('UNIQUE_PLAYER_CONCEPT_Z')
+    expect(call?.prompt).toContain("PLAYER'S DESCRIPTION")
+  })
+
+  it('omits abortSignal from the wrapper call when none is supplied', () => {
+    mockStreamObject.mockReturnValueOnce(fakeStream({ partials: [], final: FINAL }))
+
+    streamSynthesizeFromConcept('a drowned harbour town of salvage guilds')
 
     expect(mockStreamObject.mock.calls[0]?.[0]).not.toHaveProperty('abortSignal')
   })

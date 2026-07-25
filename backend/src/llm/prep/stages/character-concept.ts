@@ -18,6 +18,7 @@ import {
   GuidedChoicesSchema,
   type CharacterConceptOutput,
   type GuidedChoices,
+  type Pronouns,
 } from '../../schemas/character-concept.js'
 import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
 import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
@@ -69,15 +70,34 @@ function parseGuidedChoices(raw: Record<string, unknown>): GuidedChoices {
   return parsed.success ? parsed.data : {}
 }
 
+// myth-gdycq: the token → written-value map. The VALUE is what gets pinned into
+// the concept and read by every later prompt, so it is short and canonical; the
+// prompt line beside it (below) carries the instruction. `name_only` is a real
+// answer, not an absence: the character is referred to by name, never by a
+// pronoun.
+const PRONOUN_VALUE: Record<Pronouns, string> = {
+  she_her: 'she/her',
+  he_him: 'he/him',
+  they_them: 'they/them',
+  name_only: 'name only',
+}
+
 // Render the {{guidedChoices}} prompt block: one `field: value` line per
 // present pick, or the explicit none-marker so the template's framing text
-// reads coherently on freeform submissions.
+// reads coherently on submissions that carry no picks at all.
 function renderGuidedChoices(picks: GuidedChoices): string {
   const lines = [
     picks.class !== undefined ? `class: ${picks.class}` : null,
     picks.subclass !== undefined ? `subclass: ${picks.subclass}` : null,
     picks.species !== undefined ? `species: ${picks.species}` : null,
     picks.background !== undefined ? `background: ${picks.background}` : null,
+    // Spelled out rather than echoed as a bare token: the model has to WRITE in
+    // these terms, not just copy them into a field.
+    picks.pronouns !== undefined
+      ? picks.pronouns === 'name_only'
+        ? 'pronouns: name only — never use a pronoun for this character; use their name, or rewrite the sentence'
+        : `pronouns: ${PRONOUN_VALUE[picks.pronouns]} — use these in every sentence you write about this character`
+      : null,
   ].filter((line): line is string => line !== null)
   return lines.length > 0 ? lines.join('\n') : '(none — the player wrote a freeform concept)'
 }
@@ -126,10 +146,17 @@ export async function runCharacterConceptStage(
   // override in the processor). The run-2 forensics showed the model dropping
   // the pick under the canonical-vocabulary framing; the pin makes the drop
   // structurally impossible regardless of prompt compliance.
-  const concept: CharacterConceptOutput =
-    picks.subclass !== undefined
-      ? { ...result.output, subclass: picks.subclass }
-      : result.output
+  //
+  // myth-gdycq pins the player's PRONOUNS the same way and for the same reason:
+  // run 3 answered "he/his" for a character whose description never specified a
+  // gender, and a player who states how they want to be referred to must not
+  // depend on prompt compliance to be heard. No pick → the model's own value
+  // stands (the prompt's they/them default governs the unspecified case).
+  const concept: CharacterConceptOutput = {
+    ...result.output,
+    ...(picks.subclass !== undefined ? { subclass: picks.subclass } : {}),
+    ...(picks.pronouns !== undefined ? { pronouns: PRONOUN_VALUE[picks.pronouns] } : {}),
+  }
 
   return {
     concept,

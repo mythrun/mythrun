@@ -27,17 +27,38 @@ export const SynthesizerPickSchema = z.object({
 export type SynthesizerPick = z.infer<typeof SynthesizerPickSchema>
 
 /**
- * The synthesize-preview body: EXACTLY 3 media-picks (the guided flow always
- * carries three). A wrong count is a 400 at the backend Zod.
+ * The BRAINSTORM proposal body: EXACTLY 3 media-picks (that path always carries
+ * three). A wrong count is a 400 at the backend Zod.
  */
-export const SynthesizePreviewRequestSchema = z.object({
+export const SynthesizePicksRequestSchema = z.object({
   picks: z.array(SynthesizerPickSchema).length(3),
 })
+
+/**
+ * The FREEFORM proposal body (myth-6t06f): the player's own world description.
+ * Bounds mirror `FreeformSourceSchema` below — the same text that used to go
+ * straight to create now buys a proposal checkpoint first.
+ */
+export const SynthesizeConceptRequestSchema = z.object({
+  concept: z.string().min(20).max(4000),
+})
+
+/**
+ * The synthesize-preview body: one of the funnel's two inputs. Both synthesize
+ * into the same proposal, so the response, the SSE frames, and the proposal UI
+ * are shape-identical on either path.
+ */
+export const SynthesizePreviewRequestSchema = z.union([
+  SynthesizePicksRequestSchema,
+  SynthesizeConceptRequestSchema,
+])
 export type SynthesizePreviewRequest = z.infer<typeof SynthesizePreviewRequestSchema>
 
-/** 201 body: the opaque previewId the concept is parked under + the concept. */
+/** 201 body: the opaque previewId the concept is parked under, the world's name
+ *  (myth-z3icr — the proposal page headlines it), and the concept. */
 export const SynthesizePreviewResponseSchema = z.object({
   previewId: z.string(),
+  title: z.string(),
   concept: z.string(),
 })
 export type SynthesizePreviewResponse = z.infer<typeof SynthesizePreviewResponseSchema>
@@ -55,9 +76,11 @@ export const ReworkRequestSchema = z.object({
 })
 export type ReworkRequest = z.infer<typeof ReworkRequestSchema>
 
-/** 200 body: same shape as synthesize-preview — the (unchanged) previewId + the revised concept. */
+/** 200 body: same shape as synthesize-preview — the (unchanged) previewId + the
+ *  revised title + the revised concept. */
 export const ReworkResponseSchema = z.object({
   previewId: z.string(),
+  title: z.string(),
   concept: z.string(),
 })
 export type ReworkResponse = z.infer<typeof ReworkResponseSchema>
@@ -80,8 +103,11 @@ export type GateReason = z.infer<typeof GateReasonSchema>
  * `backend/src/routes/concept-gate.ts`). Nullability matches the backend's
  * declared response type: `rejectionMessage` may be null (the model can
  * decline to author a player-facing message), and `synthesizedConcept` is
- * present ONLY on guided-mode rejections (so the player can see what was
- * judged) — freeform rejections omit it.
+ * present whenever the rejection lands on the standalone rejection SCREEN,
+ * which needs it to show what was judged and to seed "adjust it yourself" —
+ * i.e. every proposal-checkpoint rejection, on both funnel paths. The create
+ * route's freeform 422 omits it: it answers the very screen the concept was
+ * typed on, which still holds the text.
  */
 export const ConceptRejectionSchema = z.object({
   code: z.literal('concept_rejected'),
@@ -99,6 +125,11 @@ export type ConceptRejection = z.infer<typeof ConceptRejectionSchema>
  * The freeform concept source — the player's own concept, gated at create.
  * `min(20)` keeps trivially-empty inputs out (an empty concept is a body-shape
  * bug, not a gate concern); `max(4000)` is the backend length cap.
+ *
+ * myth-6t06f: the WEB funnel no longer commits through this arm — the freeform
+ * path now synthesizes a proposal first and commits the parked preview, like
+ * the brainstorm path. The arm stays for the dev tool and for any client that
+ * wants to commit a concept without a checkpoint.
  */
 export const FreeformSourceSchema = z.object({
   mode: z.literal('freeform'),
@@ -106,10 +137,16 @@ export const FreeformSourceSchema = z.object({
 })
 
 /**
- * The guided concept source — an already-gated preview committed by its opaque
+ * The PARKED-PREVIEW source — an already-gated proposal committed by its opaque
  * previewId. `z.string()` (not a uuid) keeps the backend's 400-vs-410 split
  * clean: a malformed body 400s at Zod; a well-formed-but-absent/expired
  * previewId 410s at the preview-store load.
+ *
+ * The `'guided'` literal is the WIRE NAME of "commit what the checkpoint
+ * parked", not a claim about which path produced it: since myth-6t06f a
+ * freeform-originated proposal commits through this arm too. Renaming it is a
+ * five-surface ripple with no behavioural gain, so the name stayed and this
+ * note carries the meaning.
  */
 export const GuidedSourceSchema = z.object({
   mode: z.literal('guided'),

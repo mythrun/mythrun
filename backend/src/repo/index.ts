@@ -7,6 +7,7 @@ import { sessionParticipantsNs } from './session-participants.js'
 import { sessionMessagesNs } from './session-messages.js'
 import { transcriptSearchNs } from './transcript-search.js'
 import { sessionPrepsNs } from './session-preps.js'
+import { snapshotsNs } from './snapshots.js'
 import { tripwireVerdictsNs } from './tripwire-verdicts.js'
 import { creditsNs, selfManagingCredits } from './credits.js'
 import { invitesNs, selfManagingInvites } from './invites.js'
@@ -25,6 +26,7 @@ import { stripeEventsNs } from './stripe-events.js'
 import { billingHistoryNs } from './billing-history.js'
 import { pipelineRunsNs } from './pipeline-runs.js'
 import { randomTablesNs } from './random-tables.js'
+import { srdNs } from './srd.js'
 import { settingsNs } from './settings.js'
 import { healthNs } from './health.js'
 import { worldInventoryNs } from './world-inventory.js'
@@ -57,6 +59,10 @@ function bindTx(c: ClientLike) {
     sessionMessages: sessionMessagesNs(c),
     transcriptSearch: transcriptSearchNs(c),
     sessionPreps: sessionPrepsNs(c),
+    // myth-d1h: campaign-scoped world-state checkpoints (world_snapshots). The
+    // FK target of session_preps.snapshot_id; composable so a checkpoint can be
+    // written in the same tx as the state it captures.
+    snapshots: snapshotsNs(c),
     // myth-g4hf3: per-turn secret-tripwire verdict persistence (handle-only).
     tripwireVerdicts: tripwireVerdictsNs(c),
     credits: creditsNs(c),
@@ -82,6 +88,10 @@ function bindTx(c: ClientLike) {
     billingHistory: billingHistoryNs(c),
     pipelineRuns: pipelineRunsNs(c),
     randomTables: randomTablesNs(c),
+    // myth-5nb: SRD reference data (srd_monsters / srd_spells / srd_conditions).
+    // READS ONLY — the write primitive is deferred to the SRD content loader,
+    // whose upsert-vs-reload strategy decides its shape (see srd.ts header).
+    srd: srdNs(c),
     settings: settingsNs(c),
     // Liveness-probe namespace (`repo.health.ping()` → SELECT 1). Composable —
     // a single read — so it binds on both pool and tx surfaces.

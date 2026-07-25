@@ -2,23 +2,32 @@
 //
 // MYT-89 Task A3 — POST /api/campaigns/synthesize-preview.
 //
-// The guided world-creation flow's first backend call. The client posts 3
-// media-picks; this route synthesizes an ORIGINAL concept (Sonnet), runs the
-// content/quality input gate, and — on pass — parks the gated concept in
-// Redis under a `previewId` WITHOUT charging a credit. The credit is charged
-// later, at commit (the create route). So this is a NON-charging preview: a
-// user can synthesize and rework a concept before committing ~10 minutes of
-// world generation.
+// World creation's PROPOSAL checkpoint. The client posts either 3 media-picks
+// (the brainstorm path) or its own concept text (the freeform path, myth-6t06f);
+// this route synthesizes an ORIGINAL concept (Sonnet), runs the content/quality
+// input gate, and — on pass — parks the gated concept in Redis under a
+// `previewId` WITHOUT charging a credit. The credit is charged later, at commit
+// (the create route). So this is a NON-charging preview: a user can synthesize
+// and rework a concept before committing ~10 minutes of world generation.
 //
 // Guard order (cost-control, non-negotiable — a 0-credit user must hit ZERO
 // LLM calls):
-//   1. Zod body parse (guided-only, exactly 3 picks)                → 400
+//   1. Zod body parse (3 picks, or a 20..4000 concept)              → 400
 //   2. rate-limit (5/min per user, @fastify/rate-limit, route-level)→ 429
 //   3. rejection-storm cooldown (read-only Redis peek)              → 429
 //   4. credit balance peek (NON-charging, BEFORE any LLM call)      → 403
-//   5. synthesize (Sonnet)
-//   6. input gate (Sonnet)                                          → 422
-//   7. putPreview + 201 { previewId, concept }
+//   5. FREEFORM ONLY: input gate on the player's RAW words (Sonnet) → 422
+//   6. synthesize (Sonnet)
+//   7. BRAINSTORM ONLY: input gate on the synthesis (Sonnet)        → 422
+//   8. putPreview + 201 { previewId, title, concept }
+//
+// WHERE THE GATE SITS, per path (myth-6t06f). Brainstorm has no raw words worth
+// gating — its input is three media titles — so it gates what it wrote. Freeform
+// gates the player's OWN text, BEFORE the synthesis: that is the exact check the
+// create route ran on this text before the checkpoint existed (a synthesis in
+// between could launder a concept the gate would have rejected), and it keeps
+// the abusive-input path at one cheap call instead of a full synthesis. Each
+// path therefore runs exactly ONE gate call, as it always did.
 //
 // IDOR (load-bearing): the AUTHENTICATED user id (requireDbUser(request).id)
 // is baked into the preview key — never a client-supplied id — so a preview is
@@ -37,11 +46,20 @@ import { z } from 'zod'
 
 import { createRepo } from '../repo/index.js'
 import { requireDbUser } from '../auth/require-db-user.js'
-import { synthesizeConcept, SynthesizerPick } from '../llm/prep/synthesize-concept.js'
+import {
+  synthesizeConcept,
+  synthesizeFromConcept,
+  SynthesizerPick,
+} from '../llm/prep/synthesize-concept.js'
 import { runInputGate } from '../llm/prep/input-gate.js'
 import { reviseConcept } from '../llm/prep/revise-concept.js'
 import { createRejectionStormCounter } from '../auth/rejection-storm.js'
-import { getPreview, overwritePreview, putPreview } from '../preview/preview-store.js'
+import {
+  getPreview,
+  overwritePreview,
+  putPreview,
+  type PreviewRecord,
+} from '../preview/preview-store.js'
 import { checkRejectionStorm, handleGateRejection } from './concept-gate.js'
 
 export interface CampaignPreviewOpts {
@@ -50,13 +68,30 @@ export interface CampaignPreviewOpts {
   readonly redisKeyPrefix: string
 }
 
-// Guided-only body: the preview flow always carries exactly 3 media-picks.
-// Unknown shapes / wrong pick counts produce a standard 400 from Zod.
-// Exported for the STREAMED sibling route (campaign-preview-stream.ts,
-// myth-umggn) so both transports validate the identical body.
-export const SynthesizePreviewBodySchema = z.object({
-  picks: z.array(SynthesizerPick).length(3),
-})
+// The proposal body — ONE of the funnel's two inputs (myth-6t06f):
+//   - `{ picks }`   the brainstorm path's exactly-3 media picks;
+//   - `{ concept }` the freeform path's own world description (bounds mirror
+//                   the create route's freeform source: 20..4000).
+// Both synthesize into the same `SynthesizerOutput`, so everything downstream
+// (gate, preview store, wire, proposal UI) is shape-identical. Unknown shapes /
+// wrong pick counts produce a standard 400 from Zod. Exported for the STREAMED
+// sibling route (campaign-preview-stream.ts, myth-umggn) so both transports
+// validate the identical body.
+export const SynthesizePreviewBodySchema = z.union([
+  z.object({ picks: z.array(SynthesizerPick).length(3) }),
+  z.object({ concept: z.string().min(20).max(4000) }),
+])
+export type SynthesizePreviewBody = z.infer<typeof SynthesizePreviewBodySchema>
+
+/** Which funnel path a proposal body came from. The freeform arm gates the
+ *  player's RAW words before synthesizing (see `runPreviewCostGuards`'s
+ *  cost-control sibling note at the call sites); the brainstorm arm has no raw
+ *  words to gate — its picks are media titles — so it gates the synthesis. */
+export function isFreeformBody(
+  body: SynthesizePreviewBody,
+): body is { concept: string } {
+  return 'concept' in body
+}
 
 // Rework body: a single freeform change note. `.max(800)` mirrors the
 // synthesizer's per-pick `whyILikeIt` bound — a change note is a sentence or
@@ -117,6 +152,92 @@ export async function runPreviewCostGuards(args: {
   return false
 }
 
+/** The gate side-effects + logger every rejection in this module shares. */
+interface GateArgs {
+  readonly userId: string
+  readonly stormIncrementer: () => Promise<{ cooldownActive: boolean; retryAfterSeconds: number }>
+  readonly logger: PinoLogger
+}
+
+/**
+ * Steps 5–8 of the FREEFORM arm (myth-6t06f): gate the player's RAW words, then
+ * synthesize the proposal from them and park it.
+ *
+ * The gate runs BEFORE the synthesis, and that order is load-bearing on two
+ * counts. It is the exact protection the create route ran on this text before
+ * the proposal checkpoint existed — a synthesis in between could launder a
+ * concept the gate would have rejected — and it keeps an abusive input at one
+ * cheap gate call instead of a full Sonnet synthesis. There is no second gate:
+ * the proposal is a paraphrase of text already judged.
+ */
+async function freeformProposal(args: {
+  reply: FastifyReply
+  concept: string
+  redis: Redis
+  redisKeyPrefix: string
+  gateArgs: GateArgs
+}): Promise<FastifyReply> {
+  const gate = await runInputGate({ concept: args.concept, intentSummary: null })
+  if (gate.verdict === 'reject') {
+    return handleGateRejection({
+      reply: args.reply,
+      gate,
+      // The judged text IS the player's own; the rejection screen still needs it
+      // to render and to seed "adjust it yourself".
+      echoJudgedConcept: true,
+      synthesizedConcept: args.concept,
+      ...args.gateArgs,
+    })
+  }
+  const proposal = await synthesizeFromConcept(args.concept)
+  const previewId = await putPreview(args.redis, args.redisKeyPrefix, args.gateArgs.userId, {
+    title: proposal.title,
+    concept: proposal.concept,
+    intentSummary: proposal.intentSummary,
+    reworkCount: 0,
+  })
+  return args.reply
+    .code(201)
+    .send({ previewId, title: proposal.title, concept: proposal.concept })
+}
+
+/**
+ * Steps 5–8 of the BRAINSTORM arm: synthesize an original concept from the three
+ * picks, gate what was WRITTEN (the input is three media titles — there is
+ * nothing else worth judging), and park it on a pass.
+ */
+async function picksProposal(args: {
+  reply: FastifyReply
+  picks: readonly SynthesizerPick[]
+  redis: Redis
+  redisKeyPrefix: string
+  gateArgs: GateArgs
+}): Promise<FastifyReply> {
+  const synth = await synthesizeConcept(args.picks)
+
+  const gate = await runInputGate({ concept: synth.concept, intentSummary: synth.intentSummary })
+  if (gate.verdict === 'reject') {
+    return handleGateRejection({
+      reply: args.reply,
+      gate,
+      echoJudgedConcept: true,
+      synthesizedConcept: synth.concept,
+      ...args.gateArgs,
+    })
+  }
+
+  // Park the gated concept in Redis under a fresh previewId, keyed to the
+  // AUTHENTICATED user (IDOR-safe). reworkCount starts at 0 — a later rework
+  // (A4) bumps it to 1.
+  const previewId = await putPreview(args.redis, args.redisKeyPrefix, args.gateArgs.userId, {
+    title: synth.title,
+    concept: synth.concept,
+    intentSummary: synth.intentSummary,
+    reworkCount: 0,
+  })
+  return args.reply.code(201).send({ previewId, title: synth.title, concept: synth.concept })
+}
+
 // FastifyPluginAsync requires an async function shape; the body has no
 // top-level await (only the synchronous app.post registration).
 // eslint-disable-next-line @typescript-eslint/require-await
@@ -128,7 +249,7 @@ export const campaignPreviewRoutes: FastifyPluginAsync<CampaignPreviewOpts> = as
     '/api/campaigns/synthesize-preview',
     { config: { rateLimit: previewRateLimit } },
     async (request, reply) => {
-      // Step 1: body validation (guided-only, exactly 3 picks).
+      // Step 1: body validation (3 picks, or a freeform concept).
       const parsed = SynthesizePreviewBodySchema.safeParse(request.body)
       if (!parsed.success) {
         return reply.code(400).send({ code: 'invalid_body', issues: parsed.error.issues })
@@ -151,33 +272,29 @@ export const campaignPreviewRoutes: FastifyPluginAsync<CampaignPreviewOpts> = as
         return reply
       }
 
-      // Step 5: synthesize an original concept (Sonnet).
-      const synth = await synthesizeConcept(parsed.data.picks)
+      const gateArgs: GateArgs = {
+        userId: dbUser.id,
+        stormIncrementer: () => stormCounter.incrementAndCheck(dbUser.id),
+        logger: request.log as PinoLogger,
+      }
 
-      // Step 6: input gate. On reject: 422 with synthesizedConcept (guided).
-      const gate = await runInputGate({ concept: synth.concept, intentSummary: synth.intentSummary })
-      if (gate.verdict === 'reject') {
-        return handleGateRejection({
+      if (isFreeformBody(parsed.data)) {
+        return freeformProposal({
           reply,
-          gate,
-          userId: dbUser.id,
-          mode: 'guided',
-          synthesizedConcept: synth.concept,
-          stormIncrementer: () => stormCounter.incrementAndCheck(dbUser.id),
-          logger: request.log as PinoLogger,
+          concept: parsed.data.concept,
+          redis: opts.redis,
+          redisKeyPrefix: opts.redisKeyPrefix,
+          gateArgs,
         })
       }
 
-      // Step 7: park the gated concept in Redis under a fresh previewId, keyed
-      // to the AUTHENTICATED user (IDOR-safe). reworkCount starts at 0 — a
-      // later rework (A4) bumps it to 1.
-      const previewId = await putPreview(opts.redis, opts.redisKeyPrefix, dbUser.id, {
-        concept: synth.concept,
-        intentSummary: synth.intentSummary,
-        reworkCount: 0,
+      return picksProposal({
+        reply,
+        picks: parsed.data.picks,
+        redis: opts.redis,
+        redisKeyPrefix: opts.redisKeyPrefix,
+        gateArgs,
       })
-
-      return reply.code(201).send({ previewId, concept: synth.concept })
     },
   )
 
@@ -247,33 +364,66 @@ export const campaignPreviewRoutes: FastifyPluginAsync<CampaignPreviewOpts> = as
         return reply.code(409).send({ code: 'rework_exhausted' })
       }
 
-      // Revise (Sonnet) then re-gate. Nothing is persisted until the gate passes.
-      const revised = await reviseConcept(preview.concept, parsed.data.change)
-      const gate = await runInputGate({
-        concept: revised.concept,
-        intentSummary: revised.intentSummary,
-      })
-      if (gate.verdict === 'reject') {
-        // 422 WITHOUT overwriting the stored concept or bumping reworkCount —
-        // the original gated preview + the unspent budget survive.
-        return handleGateRejection({
-          reply,
-          gate,
+      return reworkProposal({
+        reply,
+        previewId,
+        prior: preview,
+        change: parsed.data.change,
+        redis: opts.redis,
+        redisKeyPrefix: opts.redisKeyPrefix,
+        gateArgs: {
           userId: dbUser.id,
-          mode: 'guided',
-          synthesizedConcept: revised.concept,
           stormIncrementer: () => stormCounter.incrementAndCheck(dbUser.id),
           logger: request.log as PinoLogger,
-        })
-      }
-
-      // Gate pass: overwrite the parked concept (sets reworkCount:1, resets TTL).
-      await overwritePreview(opts.redis, opts.redisKeyPrefix, dbUser.id, previewId, {
-        concept: revised.concept,
-        intentSummary: revised.intentSummary,
-        reworkCount: 1,
+        },
       })
-      return reply.code(200).send({ previewId, concept: revised.concept })
     },
   )
+}
+
+/**
+ * Steps 7–9 of the rework: revise the parked proposal (Sonnet), re-gate, and —
+ * ONLY on a pass — overwrite it (reworkCount 0→1).
+ *
+ * Gate-pass-only mutation is the load-bearing invariant: a REJECTED rework
+ * leaves the original gated concept AND reworkCount:0 untouched, so the player
+ * still holds their one budgeted change.
+ */
+async function reworkProposal(args: {
+  reply: FastifyReply
+  previewId: string
+  prior: PreviewRecord
+  change: string
+  redis: Redis
+  redisKeyPrefix: string
+  gateArgs: GateArgs
+}): Promise<FastifyReply> {
+  const revised = await reviseConcept(
+    { title: args.prior.title, concept: args.prior.concept },
+    args.change,
+  )
+  const gate = await runInputGate({
+    concept: revised.concept,
+    intentSummary: revised.intentSummary,
+  })
+  if (gate.verdict === 'reject') {
+    return handleGateRejection({
+      reply: args.reply,
+      gate,
+      echoJudgedConcept: true,
+      synthesizedConcept: revised.concept,
+      ...args.gateArgs,
+    })
+  }
+
+  await overwritePreview(
+    args.redis,
+    args.redisKeyPrefix,
+    args.gateArgs.userId,
+    args.previewId,
+    { title: revised.title, concept: revised.concept, intentSummary: revised.intentSummary, reworkCount: 1 },
+  )
+  return args.reply
+    .code(200)
+    .send({ previewId: args.previewId, title: revised.title, concept: revised.concept })
 }

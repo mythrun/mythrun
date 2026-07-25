@@ -219,6 +219,28 @@ describe('FreeformPrompt', () => {
     expect(el.className).toContain('70ch')
   })
 
+  // myth-gdycq: the optional aside slot — a secondary ask that belongs to the
+  // step. It is seated BETWEEN the field and the action row, never after the
+  // commit control, where an optional question reads as an afterthought.
+  it('renders the aside between the field and the action row', () => {
+    const { getByTestId, getByRole } = render(
+      <FreeformPrompt {...props()} aside={<span data-testid="aside-probe">ask</span>} />,
+    )
+    const aside = getByTestId('freeform-prompt-aside')
+    expect(getByTestId('aside-probe')).toBeDefined()
+    const field = getByRole('textbox')
+    const button = getByRole('button', { name: 'Continue' })
+    // DOCUMENT_POSITION_FOLLOWING (4): the aside comes after the field and
+    // before the control.
+    expect(field.compareDocumentPosition(aside) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(aside.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('renders no aside container when the slot is empty', () => {
+    const { queryByTestId } = render(<FreeformPrompt {...props()} />)
+    expect(queryByTestId('freeform-prompt-aside')).toBeNull()
+  })
+
   it('forwards the ref to the container element', () => {
     const ref = createRef<HTMLDivElement>()
     render(<FreeformPrompt ref={ref} {...props()} />)

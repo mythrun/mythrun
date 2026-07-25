@@ -22,24 +22,31 @@ const PROMPT_TEMPLATE = readFileSync(
   'utf8',
 )
 
-// Function replacers so a `$` in the concept / note is inserted literally
-// (String.prototype.replace treats `$&`, `$1`, etc. as special in a string
-// replacement — a replacer function bypasses that).
-function buildPrompt(priorConcept: string, changeNote: string): string {
-  return PROMPT_TEMPLATE.replace('{priorConcept}', () => priorConcept).replace(
-    '{changeNote}',
-    () => changeNote,
-  )
+// Function replacers so a `$` in the title / concept / note is inserted
+// literally (String.prototype.replace treats `$&`, `$1`, etc. as special in a
+// string replacement — a replacer function bypasses that).
+function buildPrompt(prior: PriorConcept, changeNote: string): string {
+  return PROMPT_TEMPLATE.replace('{priorTitle}', () => prior.title)
+    .replace('{priorConcept}', () => prior.concept)
+    .replace('{changeNote}', () => changeNote)
+}
+
+/** The parked proposal a rework revises. myth-z3icr: the TITLE travels with the
+ *  concept so a revision keeps the world's name unless the note actually moves
+ *  the world — the prompt can't preserve what it never saw. */
+export interface PriorConcept {
+  readonly title: string
+  readonly concept: string
 }
 
 export async function reviseConcept(
-  priorConcept: string,
+  prior: PriorConcept,
   changeNote: string,
 ): Promise<SynthesizerOutput> {
   const result = await generateObject({
     model: SONNET,
     schema: SynthesizerOutput,
-    prompt: buildPrompt(priorConcept, changeNote),
+    prompt: buildPrompt(prior, changeNote),
     temperature: 0.9,
     maxRetries: 3,
     callSite: 'revise-concept',

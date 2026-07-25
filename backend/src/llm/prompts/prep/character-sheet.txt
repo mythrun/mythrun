@@ -6,6 +6,7 @@ Name: {{name}}
 Race: {{race}}
 Class: {{class}}
 {{subclassLine}}
+{{pronounsLine}}
 Background: {{background}}
 Alignment: {{alignment}}
 Physical description: {{physicalDescription}}
@@ -153,5 +154,13 @@ leveled cast on it. Set it as follows:
   prepared set as `prepared: true`, and the rest as `prepared: false`.
 - Cantrips (level 0): ALWAYS `prepared: true` — cantrips are always castable if
   known.
+
+# How to refer to this character
+If the concept above carries a "Pronouns (FIXED…)" line, every sentence you
+write about this character — feature descriptions above all — uses exactly those
+pronouns. "name only" means no pronoun at all: use the character's name, or
+rewrite the sentence so none is needed. Where no line is present, write feature
+descriptions in the second person ("you regain hit points") or name the
+character, rather than guessing a pronoun.
 
 Return ONLY the JSON conforming to CharacterSheetOutputSchema.

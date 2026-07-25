@@ -166,6 +166,48 @@ describe('GuidedPath — grounding + submit', () => {
     })
   })
 
+  // myth-gdycq — the optional pronoun ask lives on the NOTES step (the builder's
+  // one free-shaped station) and joins the structured picks on the wire. Its
+  // default commits to nothing, so an untouched builder submits exactly what it
+  // always did.
+  it('offers the pronoun ask on the notes step, defaulting to no commitment', () => {
+    const { container } = renderGuided({ startingLevel: 3 })
+    pickOption(container, 'fighter')
+    next()
+    pickOption(container, 'Champion')
+    next()
+    pickOption(container, 'Human')
+    next()
+    pickOption(container, 'Soldier')
+    next()
+    // Now on notes.
+    expect(screen.getByTestId('pronoun-aside')).toBeDefined()
+    expect(screen.getByRole('combobox').textContent).toBe(
+      q('characterCreate.pronouns.unset'),
+    )
+  })
+
+  it('carries a restored pronoun pick into the guidedChoices payload', () => {
+    // Durable player input: seeded as a returning player's persisted draft seeds
+    // it, then followed to the wire alongside the four builder picks.
+    const store = makeDraftStore()
+    store.set(
+      `mythrun_character_draft:${CAMPAIGN_ID}`,
+      JSON.stringify({ pronouns: 'she_her' }),
+    )
+    const { submit, container } = renderGuided({ startingLevel: 3, store })
+    buildToGrounding(container, '')
+    answerAndContinue(GROUNDING)
+
+    expect(submit).toHaveBeenCalledWith(expect.any(String), GROUNDING, {
+      class: 'Fighter',
+      subclass: 'Champion',
+      species: 'Human',
+      background: 'Soldier',
+      pronouns: 'she_her',
+    })
+  })
+
   it('blocks a too-short grounding answer with a calm notice (and does not submit)', () => {
     const { submit, container } = renderGuided({ startingLevel: 3 })
     buildToGrounding(container, '')

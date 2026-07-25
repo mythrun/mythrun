@@ -32,6 +32,14 @@ describe('CharacterConceptOutputSchema', () => {
   it('accepts a valid concept', () => {
     expect(CharacterConceptOutputSchema.safeParse(validConcept).success).toBe(true)
   })
+  // myth-gdycq: optional exactly as `subclass` is — emitted from what the player
+  // committed or what their description implies, never invented as a default.
+  it('accepts a concept with resolved pronouns, and one without', () => {
+    expect(
+      CharacterConceptOutputSchema.safeParse({ ...validConcept, pronouns: 'they/them' }).success,
+    ).toBe(true)
+    expect(CharacterConceptOutputSchema.safeParse(validConcept).success).toBe(true)
+  })
   it('rejects a name shorter than 2 chars', () => {
     expect(
       CharacterConceptOutputSchema.safeParse({ ...validConcept, name: 'B' }).success,
@@ -93,6 +101,15 @@ describe('GuidedChoicesSchema', () => {
   })
   it('rejects a non-string pick', () => {
     expect(GuidedChoicesSchema.safeParse({ class: 42 }).success).toBe(false)
+  })
+  // myth-gdycq: pronouns is a closed TOKEN set, not free text — the stage pins
+  // the value, which only works against tokens the server itself defines.
+  it('accepts every pronoun token and rejects anything outside the set', () => {
+    for (const token of ['she_her', 'he_him', 'they_them', 'name_only']) {
+      expect(GuidedChoicesSchema.safeParse({ pronouns: token }).success).toBe(true)
+    }
+    expect(GuidedChoicesSchema.safeParse({ pronouns: 'he/him' }).success).toBe(false)
+    expect(GuidedChoicesSchema.safeParse({ pronouns: 'xe_xem' }).success).toBe(false)
   })
   it('rejects an empty-string pick', () => {
     expect(GuidedChoicesSchema.safeParse({ subclass: '' }).success).toBe(false)

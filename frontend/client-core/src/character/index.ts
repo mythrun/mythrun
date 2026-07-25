@@ -8,6 +8,15 @@
 
 export { flattenToConceptText, canonicalClassName } from './flatten.ts'
 
+// myth-gdycq: the optional pronoun ask, shared by BOTH creation paths.
+export {
+  PRONOUN_CHOICES,
+  DEFAULT_PRONOUN_CHOICE,
+  toPronounChoice,
+  pronounsPick,
+} from './pronouns.ts'
+export type { PronounChoice } from './pronouns.ts'
+
 export {
   initialGuidedState,
   guidedReducer,

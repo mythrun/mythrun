@@ -1,4 +1,6 @@
 import { pathToFileURL } from 'node:url'
+import type { Pool } from 'pg'
+import type { Redis } from 'ioredis'
 import { Worker as BullmqWorker, type Job } from 'bullmq'
 import { waitFor } from './boot/wait-for.js'
 import { probeVoyageAtBoot } from './boot/voyage-probe.js'
@@ -49,7 +51,11 @@ import { createRepo } from './repo/index.js'
 import { sessionChannel } from './contract/session-channel.js'
 import { QUEUE_DM_TRIGGER } from './session/dm-trigger-config.js'
 import { makePipelinePublishers } from './worker/publishers.js'
-import { containProcessor, createProcessEscapeGuard } from './queue/job-containment.js'
+import {
+  containProcessor,
+  createProcessEscapeGuard,
+  describeErrorForLog,
+} from './queue/job-containment.js'
 
 /** Default worker health-server port. Overridable via WORKER_HEALTH_PORT for
  *  local dev, where :3001 can collide with an unrelated process (the env var
@@ -68,10 +74,10 @@ const WORKER_CLOSE_GRACE_MS = 100_000
 
 /** myth-jykft: bind the worker's health port, failing hard (with a clear,
  *  actionable log on EADDRINUSE) if it is already taken. Called BEFORE any
- *  BullMQ worker is registered — and before the escape guard is installed, so
- *  the throw reaches the process instead of being contained — so a second
- *  worker on the same host can never fall through into a hidden competing
- *  consumer of the shared queues. The failure mode this closes: a stray second
+ *  BullMQ worker is registered — so a second worker on the same host can never
+ *  fall through into a hidden competing consumer of the shared queues. The
+ *  throw lands in main()'s boot gate (myth-ha6qr), which closes the partials
+ *  and exits non-zero. The failure mode this closes: a stray second
  *  `pnpm dev:worker` quietly takes half the session turns, and its tsx-watch
  *  reloads kill them mid-run.
  *
@@ -103,7 +109,67 @@ async function bindHealthOrFail(port: number): Promise<WorkerHealthServer> {
   }
 }
 
+/** myth-ha6qr: the handles `bootWorker` has brought up so far. Registered one
+ *  by one as boot proceeds so a failure at ANY step can close whatever exists
+ *  before exiting. Mirrors server.ts's `closePartials(pg, rTR, rTB)`; the extra
+ *  members are the worker's own (the bound health socket, whose release lets a
+ *  restart rebind it, and the escape-guard disposer). */
+interface BootPartials {
+  health?: WorkerHealthServer
+  pg?: Pool
+  redisBatch?: Redis
+  redisRealtime?: Redis
+  removeEscapeGuard?: () => void
+}
+
+/** Close every partially-constructed client, best-effort. `allSettled` so one
+ *  failed close can't mask the others (and can't mask the boot error itself). */
+async function closeBootPartials(partials: BootPartials): Promise<void> {
+  partials.removeEscapeGuard?.()
+  await Promise.allSettled([
+    partials.health?.close() ?? Promise.resolve(),
+    partials.pg?.end() ?? Promise.resolve(),
+    partials.redisBatch?.quit() ?? Promise.resolve(),
+    partials.redisRealtime?.quit() ?? Promise.resolve(),
+  ])
+}
+
+/**
+ * myth-ha6qr: the worker's boot gate — the counterpart to server.ts's
+ * `catch (err) { ...closePartials...; exit non-zero }`.
+ *
+ * A boot-phase failure is ALWAYS fatal: a bad Voyage key, an unreachable
+ * Redis, an unreadable cost-cap row. There is no degraded worker worth
+ * running — one that boots without its queues consumes nothing, so the only
+ * honest signal is a non-zero exit that ECS turns into a visible crash-loop
+ * (and that a local `pnpm dev:worker` surfaces immediately instead of hanging
+ * half-live and silent). Classification config-vs-transient happens INSIDE the
+ * individual probes (see boot/voyage-probe.ts, boot/wait-for.ts); by the time a
+ * throw reaches here the verdict is already "do not run".
+ */
+async function failBoot(err: unknown, partials: BootPartials): Promise<void> {
+  logger.error(
+    { component: 'worker', event: 'worker.boot_failed', err: describeErrorForLog(err) },
+    'worker boot failed — closing partial clients and exiting non-zero',
+  )
+  await closeBootPartials(partials)
+  process.exit(1)
+}
+
 export async function main(): Promise<void> {
+  const partials: BootPartials = {}
+  try {
+    await bootWorker(partials)
+  } catch (err) {
+    await failBoot(err, partials)
+    return
+  }
+  // Steady state. The signal handlers registered by bootWorker own the exit
+  // from here on; nothing else settles this promise.
+  await new Promise<never>(() => undefined)
+}
+
+async function bootWorker(partials: BootPartials): Promise<void> {
   const env = loadEnv()
 
   // Bind the health port FIRST — it doubles as the same-host duplicate-worker
@@ -112,28 +178,7 @@ export async function main(): Promise<void> {
   // at the end of boot, so an un-armed worker never reports green.
   const healthPort = resolveHealthPort()
   const health = await bindHealthOrFail(healthPort)
-
-  // myth-y2qfi: install the process-level escape guard FIRST — before any
-  // connection, queue, or worker exists — so a FLOATING unhandled rejection from
-  // ANY job (the 2026-07-19 session-prep crash: an AI_NoObjectGeneratedError
-  // re-thrown from a detached streaming-repair `.then` chain) is contained and
-  // the process SURVIVES, keeping all nine queues alive. The crash-loop-vs-
-  // zombie decision lives in createProcessEscapeGuard: keep-alive for isolated
-  // escapes, fail-fast on a storm. `shuttingDown` is declared here (hoisted from
-  // the shutdown block below) so the guard no-ops during graceful teardown — a
-  // teardown-race rejection must not re-trigger the fail-fast exit.
-  let shuttingDown = false
-  const escapeGuard = createProcessEscapeGuard({
-    logger,
-    isShuttingDown: () => shuttingDown,
-    onStorm: () => {
-      // A storm of escapes is a systemic defect, not one bad job: exit non-zero
-      // so ECS restarts with a clean slate and the crash-loop surfaces to ops,
-      // instead of a health-green zombie that silently fails every job.
-      process.exit(1)
-    },
-  })
-  const removeEscapeGuard = escapeGuard.install()
+  partials.health = health
 
   // Establish connections. Each probe is wrapped in waitFor() (200/500/
   // 1000/2000ms backoff, 5 attempts total) to mirror the API's boot
@@ -143,12 +188,15 @@ export async function main(): Promise<void> {
   // writable yet. Boot still fails fast on a real outage; it just
   // tolerates the normal connection-establishment race.
   const redisBatch = createBullmqRedisClient(env.redisBatchUrl, { label: 'worker-redis-batch' })
+  partials.redisBatch = redisBatch
   await waitFor({ label: 'Redis (batch)', probe: () => redisBatch.ping() })
   // redisRealtime uses the regular client — only used for PUBLISH later
   // (MYT-52); BullMQ constraints don't apply.
   const redisRealtime = createRedisClient(env.redisRealtimeUrl, { label: 'worker-redis-realtime' })
+  partials.redisRealtime = redisRealtime
   await waitFor({ label: 'Redis (realtime)', probe: () => redisRealtime.ping() })
   const pg = createPgPool(env.databaseUrl, { max: WORKER_PG_POOL_SIZE })
+  partials.pg = pg
   await waitFor({ label: 'Postgres', probe: () => pg.query('SELECT 1') })
 
   // Voyage (embeddings). A misconfigured key would otherwise make every world
@@ -177,6 +225,44 @@ export async function main(): Promise<void> {
     redisRealtime,
     env.redisKeyPrefix,
   )
+
+  // myth-y2qfi + myth-ha6qr: install the process-level escape guard HERE —
+  // after every boot probe has passed, and immediately before the first queue
+  // consumer is registered. Both halves of that placement are load-bearing:
+  //
+  //   * It COVERS STEADY STATE. From the next line on a job can run, so a
+  //     FLOATING unhandled rejection from ANY job (the 2026-07-19 session-prep
+  //     crash: an AI_NoObjectGeneratedError re-thrown from a detached
+  //     streaming-repair `.then` chain) is contained and the process SURVIVES,
+  //     keeping all nine queues alive. The crash-loop-vs-zombie decision lives
+  //     in createProcessEscapeGuard: keep-alive for isolated escapes, fail-fast
+  //     on a storm.
+  //   * It does NOT COVER BOOT. The guard is keep-alive by default, so
+  //     installing it at the top of boot (as it was) turned every boot failure —
+  //     bad Voyage key, unreachable Redis — into a swallowed rejection and a
+  //     half-live, silent process: health bound but never armed, zero
+  //     consumers, no crash. Boot failures now propagate to main()'s boot gate,
+  //     which closes the partials and exits non-zero (see failBoot).
+  //
+  // Nothing between here and health.arm() awaits, so no job can interleave into
+  // the window that the guard does not cover — the two phases are disjoint.
+  //
+  // `shuttingDown` is declared here (hoisted from the shutdown block below) so
+  // the guard no-ops during graceful teardown — a teardown-race rejection must
+  // not re-trigger the fail-fast exit.
+  let shuttingDown = false
+  const escapeGuard = createProcessEscapeGuard({
+    logger,
+    isShuttingDown: () => shuttingDown,
+    onStorm: () => {
+      // A storm of escapes is a systemic defect, not one bad job: exit non-zero
+      // so ECS restarts with a clean slate and the crash-loop surfaces to ops,
+      // instead of a health-green zombie that silently fails every job.
+      process.exit(1)
+    },
+  })
+  const removeEscapeGuard = escapeGuard.install()
+  partials.removeEscapeGuard = removeEscapeGuard
 
   // World-gen — real processor wired here. MYT-51 landed the non-streaming
   // stages, MYT-52 the streaming stages + coherence pass. The API container
@@ -495,8 +581,6 @@ export async function main(): Promise<void> {
       void shutdown(signal)
     })
   }
-
-  await new Promise<never>(() => undefined)
 }
 
 async function closeWithDeadline(worker: BullmqWorker, deadlineMs: number): Promise<void> {

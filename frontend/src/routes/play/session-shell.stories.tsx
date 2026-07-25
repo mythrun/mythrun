@@ -79,7 +79,7 @@ const TALL_WIKI = toWikiViewModel({
 const CACHE: KnowledgeCache = { wiki: TALL_WIKI, graph: null, index: null, loading: false, failed: false }
 const SHEET: SessionSheetState = {
   sheet: null,
-  overlay: { hp: null, maxHp: null, gold: null, conditionLog: [] },
+  overlay: { hp: null, maxHp: null, gold: null, conditionLog: [], activeConditions: null },
   loading: false,
   failed: true,
 }

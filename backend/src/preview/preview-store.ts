@@ -35,6 +35,9 @@ const PREVIEW_TTL_SECONDS = 1800
  *  preview was generated from. `reworkCount` starts at 0 and is bumped to 1
  *  by `overwritePreview` when a rework passes the input gate. */
 export interface PreviewRecord {
+  /** myth-z3icr: the world's working name, headlined by the proposal screen and
+   *  carried into a rework so a revision keeps the name it was shown under. */
+  readonly title: string
   readonly concept: string
   readonly intentSummary: SynthesizerOutput['intentSummary']
   readonly reworkCount: number

@@ -353,6 +353,66 @@ describe('CharacterNewRoute — the freeform path', () => {
     })
   })
 
+  // myth-gdycq — the optional pronoun ask. It rides the concept step's quiet
+  // aside (the moment the player is describing who this character is), defaults
+  // to committing nothing, and travels on the same structured-pick field the
+  // guided builder uses so the backend pins it identically on both paths.
+  it('offers the pronoun ask on the concept step, and not on the grounding step', async () => {
+    renderRoute()
+    pickFreeform()
+    expect(screen.getByTestId('pronoun-aside')).toBeDefined()
+    expect(screen.getByText(i18n.t('characterCreate.pronouns.label'))).toBeDefined()
+    // The default reads as a real answer, not an empty slot.
+    expect(screen.getByRole('combobox').textContent).toBe(
+      i18n.t('characterCreate.pronouns.unset'),
+    )
+
+    answerAndContinue(CONCEPT)
+    await screen.findByText(CHOSEN_INVITATION)
+    // The grounding step is about the scene, not the character.
+    expect(screen.queryByTestId('pronoun-aside')).toBeNull()
+  })
+
+  it('sends NOTHING for the default choice (absence is what lets the description decide)', async () => {
+    const { submit } = renderRoute()
+    pickFreeform()
+    answerAndContinue(CONCEPT)
+    await screen.findByText(CHOSEN_INVITATION)
+    answerAndContinue(GROUNDING)
+
+    await screen.findByTestId('campaign-surface-probe')
+    // No `guidedChoices` key at all — an empty payload is not sent as `{}`.
+    expect(submit).toHaveBeenCalledWith(testCtx, CAMPAIGN_ID, {
+      conceptText: CONCEPT,
+      situationGroundingText: GROUNDING,
+    })
+  })
+
+  it('carries a restored pronoun pick into the submit body', async () => {
+    // The pick is durable player input: seeded here the way a returning player's
+    // persisted draft seeds it, then followed all the way to the wire.
+    const store = makeDraftStore()
+    store.set(
+      `mythrun_character_draft:${CAMPAIGN_ID}`,
+      JSON.stringify({ pronouns: 'they_them' }),
+    )
+    const { submit } = renderRoute({ draftStore: store })
+    pickFreeform()
+    expect(screen.getByRole('combobox').textContent).toBe(
+      i18n.t('characterCreate.pronouns.theyThem'),
+    )
+    answerAndContinue(CONCEPT)
+    await screen.findByText(CHOSEN_INVITATION)
+    answerAndContinue(GROUNDING)
+
+    await screen.findByTestId('campaign-surface-probe')
+    expect(submit).toHaveBeenCalledWith(testCtx, CAMPAIGN_ID, {
+      conceptText: CONCEPT,
+      situationGroundingText: GROUNDING,
+      guidedChoices: { pronouns: 'they_them' },
+    })
+  })
+
   it('blocks a too-short concept with a calm notice (and does not advance)', () => {
     const { submit } = renderRoute()
     pickFreeform()

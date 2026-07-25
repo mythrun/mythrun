@@ -63,6 +63,12 @@ export interface SessionHub {
    *  user (a stale close can't evict a live tab). Drops the inner map when the
    *  campaign's last connection leaves. */
   deregister(campaignId: string, connId: string): void
+  /** myth-ficc: close + deregister EVERY socket this container holds for the
+   *  user, across all campaigns, with (4403, account_suspended). Returns how
+   *  many were torn down. Local-only by construction: a user's sockets on other
+   *  API containers are that container's to kill (see the suspension note in
+   *  routes/ws-session.ts). */
+  closeUser(userId: string): number
   /** Publish a server frame to the campaign's channel (cross-container fan-out). */
   publish(campaignId: string, frame: ServerFrame): Promise<void>
   /** Whether any socket is registered locally for this campaign. */
@@ -82,6 +88,47 @@ export interface CreateSessionHubDeps {
 
 const RESYNC_CLOSE_CODE = 1011 // WS 1011 = internal error; client reconnects + replays.
 const RESYNC_CLOSE_REASON = 'redis-resync-required'
+
+/** myth-ficc: application close code for a socket killed because its owner is
+ *  suspended. In the 4000-4999 application range (like NO_CHARACTER's 4404) so
+ *  the client can tell "you are banned" apart from a resync or a server fault
+ *  and stop reconnecting — a reconnect would need a fresh WS ticket, and the
+ *  mint route's requireOnboarded already answers 403 account_suspended. */
+export const SUSPENDED_CLOSE_CODE = 4403
+export const SUSPENDED_CLOSE_REASON = 'account_suspended'
+
+/** myth-ficc: close + drop every connection owned by `userId`, returning the
+ *  count. Deregistering is the part that matters for enforcement — a socket
+ *  that is closed but still in the registry keeps receiving fan-out until its
+ *  'close' event lands. Each close is independently guarded so an
+ *  already-torn-down socket can't abort the sweep and strand the rest. Takes
+ *  the registry explicitly (rather than closing over it) to keep
+ *  createSessionHub inside its line budget. */
+function makeCloseUser(
+  registry: Map<string, Map<string, RegisteredConn>>,
+  logger: pino.Logger,
+): (userId: string) => number {
+  return (userId) => {
+    let closedCount = 0
+    for (const [campaignId, conns] of [...registry]) {
+      for (const [connId, conn] of [...conns]) {
+        if (conn.userId !== userId) continue
+        try {
+          conn.ws.close(SUSPENDED_CLOSE_CODE, SUSPENDED_CLOSE_REASON)
+        } catch (err) {
+          logger.warn(
+            { err, campaignId, userId, connId },
+            'session-hub failed to close socket for a suspended user',
+          )
+        }
+        conns.delete(connId)
+        closedCount += 1
+      }
+      if (conns.size === 0) registry.delete(campaignId)
+    }
+    return closedCount
+  }
+}
 
 export async function createSessionHub({
   redis,
@@ -229,5 +276,5 @@ export async function createSessionHub({
   // down. Mirrors sse/pipeline-subscriber.ts's everReady semantics.
   await sub.psubscribe(pattern)
 
-  return { register, deregister, publish, hasLocal, close }
+  return { register, deregister, closeUser: makeCloseUser(registry, logger), publish, hasLocal, close }
 }

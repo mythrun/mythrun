@@ -52,12 +52,18 @@ const CASTER: CuratedSheet = {
   ],
 }
 
-const EMPTY_OVERLAY: CharacterOverlay = { hp: null, maxHp: null, gold: null, conditionLog: [] }
+// `activeConditions: null` = no ledger frame has spoken yet (distinct from `[]`,
+// which means "currently none"). The sheet renders `conditionLog` only — the
+// active set is folded but its presentation is still an open design call.
+const EMPTY_OVERLAY: CharacterOverlay = {
+  hp: null, maxHp: null, gold: null, conditionLog: [], activeConditions: null,
+}
 const LIVE_OVERLAY: CharacterOverlay = {
   hp: 12,
   maxHp: 28,
   gold: null,
   conditionLog: ['A hobgoblin blade opens a gash along her ribs.', 'The venom starts to bite.'],
+  activeConditions: [{ condition: 'poisoned', level: null }],
 }
 
 function baseProps(overrides: Partial<React.ComponentProps<typeof SessionSheet>> = {}) {
@@ -177,7 +183,9 @@ describe('SessionSheet', () => {
   })
 
   it('renders the live current HP alone when the overlay carries no maxHp', () => {
-    const overlay: CharacterOverlay = { hp: 9, maxHp: null, gold: null, conditionLog: [] }
+    const overlay: CharacterOverlay = {
+      hp: 9, maxHp: null, gold: null, conditionLog: [], activeConditions: null,
+    }
     const { getByTestId } = render(<SessionSheet {...baseProps({ overlay })} />)
     const hp = getByTestId('session-sheet-hp')
     expect(within(hp).getByText('9')).toBeInTheDocument()

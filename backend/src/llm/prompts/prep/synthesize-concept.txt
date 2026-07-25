@@ -7,6 +7,7 @@ CONSTRAINTS
 - Do NOT use proper nouns from the source media in the `concept` field — no character names, place names, or franchise titles. Generic descriptors of mechanics or aesthetics are fine ("magic-school setting," "samurai-and-spirits aesthetic").
 - Do NOT produce a paint-job clone. The output must read as a fresh original world, not a "[Source A] meets [Source B]" pitch.
 - 150-400 words for the `concept` field. Aim for vivid sensory grounding (sight, smell, sound) and at least one specific concrete tension between named-but-original factions or forces.
+- `title`: the world's NAME — 2-5 words, evocative, no franchise borrowings, no subtitle and no colon. The proposal screen headlines it, so it must read as a place someone could live in, not a pitch line.
 - Distill the user's stated values into the `intentSummary` structure:
   - `aesthetics`: 3-5 short phrases capturing the visual / tonal register.
   - `themes`: 3-5 short phrases capturing what the user said they cared about across the picks.

@@ -16,9 +16,15 @@
 // `rejected` mirrors the non-streaming 422 `concept_rejected` payload
 // byte-for-byte (reason / rejectionMessage / synthesizedConcept) — the text
 // the player watched arrive resolves into the SAME rejection state the
-// synchronous route produces. `synthesizedConcept` is always present (this
-// stream is guided-only, and guided rejections always surface the judged
-// concept).
+// synchronous route produces. `synthesizedConcept` is always present: every
+// rejection on this stream lands on the rejection SCREEN, which has nothing
+// but this frame to render the judged text and seed "adjust it yourself".
+//
+// myth-6t06f: the stream serves BOTH funnel paths. A brainstorm body carries 3
+// picks and the judged text is the synthesis; a freeform body carries the
+// player's own concept and the judged text is their own words (gated before the
+// synthesis runs). The frames are identical either way — the screens that
+// render them never branch on which path opened the stream.
 
 import type { GateReason } from '../rest/campaign-create.js'
 
@@ -39,8 +45,15 @@ export type SynthesizeStreamEvent =
    *  is authoritative — a post-stream schema repair can diverge from it). */
   | { readonly type: 'delta'; readonly text: string }
   /** The gate passed and the concept is parked: same payload as the
-   *  non-streaming 201. The rework/commit flows proceed unchanged. */
-  | { readonly type: 'complete'; readonly previewId: string; readonly concept: string }
+   *  non-streaming 201. The rework/commit flows proceed unchanged. `title` is
+   *  the world's name (myth-z3icr) — the proposal page headlines it instead of
+   *  leaving it buried in the first words of the prose. */
+  | {
+      readonly type: 'complete'
+      readonly previewId: string
+      readonly title: string
+      readonly concept: string
+    }
   /** The input gate rejected the synthesized concept: same payload as the
    *  non-streaming 422 `concept_rejected` (guided mode). */
   | {

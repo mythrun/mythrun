@@ -31,25 +31,51 @@ describe('SynthesizerPickSchema', () => {
 })
 
 describe('SynthesizePreviewRequestSchema', () => {
-  it('parses a request with exactly 3 picks', () => {
+  it('parses a brainstorm request with exactly 3 picks', () => {
     const parsed = SynthesizePreviewRequestSchema.parse({ picks: [pick, pick, pick] })
-    expect(parsed.picks).toHaveLength(3)
+    expect(parsed).toEqual({ picks: [pick, pick, pick] })
   })
 
   it('rejects a 2-pick and a 4-pick array (length is fixed at 3)', () => {
     expect(() => SynthesizePreviewRequestSchema.parse({ picks: [pick, pick] })).toThrow()
     expect(() => SynthesizePreviewRequestSchema.parse({ picks: [pick, pick, pick, pick] })).toThrow()
   })
+
+  // myth-6t06f: the freeform path buys the same proposal with its own concept
+  // text. Bounds mirror the create route's freeform source (20..4000).
+  it('parses a freeform request carrying the concept', () => {
+    const concept = 'A drowned harbour town of salvage guilds.'
+    expect(SynthesizePreviewRequestSchema.parse({ concept })).toEqual({ concept })
+  })
+
+  it('rejects a concept under the 20-char floor and over the 4000-char cap', () => {
+    expect(() => SynthesizePreviewRequestSchema.parse({ concept: 'too short' })).toThrow()
+    expect(() => SynthesizePreviewRequestSchema.parse({ concept: 'x'.repeat(4001) })).toThrow()
+  })
+
+  it('rejects a body carrying neither picks nor a concept', () => {
+    expect(() => SynthesizePreviewRequestSchema.parse({})).toThrow()
+  })
 })
 
 describe('SynthesizePreviewResponseSchema', () => {
-  it('parses { previewId, concept }', () => {
-    const parsed = SynthesizePreviewResponseSchema.parse({ previewId: 'p1', concept: 'A drowned city.' })
-    expect(parsed).toEqual({ previewId: 'p1', concept: 'A drowned city.' })
+  it('parses { previewId, title, concept }', () => {
+    const body = { previewId: 'p1', title: 'The Low Water', concept: 'A drowned city.' }
+    expect(SynthesizePreviewResponseSchema.parse(body)).toEqual(body)
   })
 
   it('rejects a missing concept', () => {
-    expect(() => SynthesizePreviewResponseSchema.parse({ previewId: 'p1' })).toThrow()
+    expect(() =>
+      SynthesizePreviewResponseSchema.parse({ previewId: 'p1', title: 'The Low Water' }),
+    ).toThrow()
+  })
+
+  // myth-z3icr: the proposal page headlines the world's name, so a body without
+  // one is a contract break, not a soft degrade.
+  it('rejects a missing title', () => {
+    expect(() =>
+      SynthesizePreviewResponseSchema.parse({ previewId: 'p1', concept: 'A drowned city.' }),
+    ).toThrow()
   })
 })
 
@@ -65,9 +91,14 @@ describe('ReworkRequestSchema', () => {
 })
 
 describe('ReworkResponseSchema', () => {
-  it('parses { previewId, concept }', () => {
-    const parsed = ReworkResponseSchema.parse({ previewId: 'p1', concept: 'A colder city.' })
-    expect(parsed).toEqual({ previewId: 'p1', concept: 'A colder city.' })
+  it('parses { previewId, title, concept }', () => {
+    const body = { previewId: 'p1', title: 'The Colder Coast', concept: 'A colder city.' }
+    expect(ReworkResponseSchema.parse(body)).toEqual(body)
+  })
+
+  // A revision can rename the world, so the title rides the rework 200 too.
+  it('rejects a missing title', () => {
+    expect(() => ReworkResponseSchema.parse({ previewId: 'p1', concept: 'A colder city.' })).toThrow()
   })
 })
 

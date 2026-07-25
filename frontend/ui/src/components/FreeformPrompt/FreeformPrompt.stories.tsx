@@ -1,6 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useState } from 'react'
 import { FreeformPrompt } from './FreeformPrompt.tsx'
+import { FormField } from '../FormField/FormField.tsx'
+import { Select } from '../Select/Select.tsx'
 
 // FreeformPrompt — the "tell us who you are" fork of character creation: a single
 // calm question + whisper + one generous textarea + a submit control. The prompt
@@ -42,6 +44,7 @@ function Live({
   withBack = false,
   gated = false,
   submitHint,
+  withAside = false,
 }: {
   initial?: string
   stepIndicator?: string
@@ -50,6 +53,7 @@ function Live({
   withBack?: boolean
   gated?: boolean
   submitHint?: string
+  withAside?: boolean
 }): React.JSX.Element {
   const [value, setValue] = useState(initial)
   return (
@@ -67,7 +71,30 @@ function Live({
       {...(withBack && { onBack: () => undefined, backLabel: 'Back' })}
       {...(gated && { submitDisabled: value.trim() === '' })}
       {...(submitHint !== undefined && { submitHint })}
+      {...(withAside && { aside: <PronounAsk /> })}
     />
+  )
+}
+
+// The real consumer of the `aside` slot (myth-gdycq): the optional pronoun ask,
+// composed from FormField + Select exactly as the two creation paths compose it.
+function PronounAsk(): React.JSX.Element {
+  const [value, setValue] = useState('unset')
+  return (
+    <FormField label="How should we refer to them?" requiredLabel="(required)">
+      <Select
+        size="sm"
+        value={value}
+        onChange={setValue}
+        options={[
+          { value: 'unset', label: 'Let the description decide' },
+          { value: 'she_her', label: 'she/her' },
+          { value: 'he_him', label: 'he/him' },
+          { value: 'they_them', label: 'they/them' },
+          { value: 'name_only', label: 'By name only' },
+        ]}
+      />
+    </FormField>
   )
 }
 
@@ -153,6 +180,18 @@ export const Phone: Story = {
   render: () => (
     <div className="mx-auto max-w-[375px] bg-bg p-[var(--space-4)]">
       <Live stepIndicator="1 of 2" />
+    </div>
+  ),
+}
+
+// The ASIDE slot (myth-gdycq) — a quiet optional ask seated between the answer
+// and the act, where it is on the way to the button without competing with the
+// step's real question.
+export const WithAside: Story = {
+  name: 'With a quiet aside (the pronoun ask)',
+  render: () => (
+    <div className="max-w-[720px] bg-bg p-[var(--space-6)]">
+      <Live withAside />
     </div>
   ),
 }

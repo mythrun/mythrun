@@ -691,6 +691,53 @@ describe('runCharacterSheetStage', () => {
     expect(prompt).not.toContain('{{subclassLine}}')
   })
 
+  // myth-gdycq: the concept's resolved pronouns reach stage 3 as a FIXED
+  // constraint too — this stage writes real prose (feature descriptions), so it
+  // is one of the places a "he" can appear for a character whose player asked
+  // for something else.
+  it('renders the concept pronouns as a FIXED line', async () => {
+    const { userId, worldId, campaignId } = await seedMember()
+    mockGenerateText.mockResolvedValueOnce({
+      output: SHEET,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+    await runCharacterSheetStage(createRepo(pool), {
+      campaignId,
+      userId,
+      worldId,
+      narrative: { ...NARRATIVE, pronouns: 'they/them' },
+      worldTone: 't',
+      worldEra: 'e',
+    })
+    const prompt = mockGenerateText.mock.calls[0]?.[0]?.prompt as string | undefined
+    expect(prompt).toContain(
+      'Pronouns (FIXED, use these in every sentence about this character): they/them',
+    )
+    expect(prompt).not.toContain('{{pronounsLine}}')
+  })
+
+  it('renders no pronoun line for a concept that carries none', async () => {
+    const { userId, worldId, campaignId } = await seedMember()
+    mockGenerateText.mockResolvedValueOnce({
+      output: SHEET,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+    await runCharacterSheetStage(createRepo(pool), {
+      campaignId,
+      userId,
+      worldId,
+      narrative: NARRATIVE,
+      worldTone: 't',
+      worldEra: 'e',
+    })
+    const prompt = mockGenerateText.mock.calls[0]?.[0]?.prompt as string | undefined
+    // The rules text names the marker in quotes; only a rendered pin adds `: <value>`.
+    expect(prompt).not.toContain('Pronouns (FIXED, use these in every sentence about this character):')
+    expect(prompt).not.toContain('{{pronounsLine}}')
+  })
+
   it('terminal-fails LOUD after the coherence-retry budget is exhausted', async () => {
     const { userId, worldId, campaignId } = await seedMember()
 

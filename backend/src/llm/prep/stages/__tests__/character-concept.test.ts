@@ -184,6 +184,83 @@ describe('runCharacterConceptStage', () => {
     expect(result.concept.subclass).toBeUndefined()
   })
 
+  // myth-gdycq — the pronoun ask travels the SAME structured channel the
+  // subclass does, and is pinned the same way. Run 3 wrote "he/his" for a
+  // character whose description never specified a gender; a player who says how
+  // they want to be referred to must not depend on prompt compliance.
+  it('renders the pronoun pick as a written instruction, not a bare token', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: VALID_CONCEPT,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+
+    await runCharacterConceptStage({ ...ARGS, guidedChoices: { pronouns: 'she_her' } })
+
+    const callOpts = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    expect(callOpts.prompt).toContain('pronouns: she/her')
+    // The model has to WRITE in these terms, not just copy a field.
+    expect(callOpts.prompt).toContain('use these in every sentence')
+  })
+
+  it('renders name-only as its own instruction (never use a pronoun)', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: VALID_CONCEPT,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+
+    await runCharacterConceptStage({ ...ARGS, guidedChoices: { pronouns: 'name_only' } })
+
+    const callOpts = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    expect(callOpts.prompt).toContain('never use a pronoun for this character')
+  })
+
+  it('pins the pronoun pick over the model echo (deterministic override, ZFC)', async () => {
+    // The model dropped the field entirely.
+    mockGenerateText.mockResolvedValueOnce({
+      output: VALID_CONCEPT,
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+    const dropped = await runCharacterConceptStage({
+      ...ARGS,
+      guidedChoices: { pronouns: 'they_them' },
+    })
+    expect(dropped.concept.pronouns).toBe('they/them')
+
+    // The run-3 failure verbatim: the model answered with a different set. The
+    // player's pick still wins.
+    mockGenerateText.mockResolvedValueOnce({
+      output: { ...VALID_CONCEPT, pronouns: 'he/him' },
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+    const substituted = await runCharacterConceptStage({
+      ...ARGS,
+      guidedChoices: { pronouns: 'they_them' },
+    })
+    expect(substituted.concept.pronouns).toBe('they/them')
+  })
+
+  it('leaves the model value standing when no pronoun was picked', async () => {
+    // No pick: the prompt's own resolution order governs (the description, then
+    // they/them) and whatever it resolved passes through untouched.
+    mockGenerateText.mockResolvedValueOnce({
+      output: { ...VALID_CONCEPT, pronouns: 'they/them' },
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+    const resolved = await runCharacterConceptStage(ARGS)
+    expect(resolved.concept.pronouns).toBe('they/them')
+
+    // Nothing was committed, so the choices block says so — the pronoun line is
+    // only ever the player's own answer.
+    const callOpts = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    expect(callOpts.prompt).toContain('(none — the player wrote a freeform concept)')
+    expect(callOpts.prompt).not.toContain('use these in every sentence')
+  })
+
   it('rethrows LLM errors', async () => {
     mockGenerateText.mockRejectedValueOnce(new Error('rate limit'))
     await expect(runCharacterConceptStage(ARGS)).rejects.toThrow(/rate limit/)

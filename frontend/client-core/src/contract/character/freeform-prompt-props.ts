@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react'
+
 // FreeformPrompt (MYT-90) — the path-chooser's freeform entry: a single seamless
 // question the player answers in their own words (the "describe who you are" fork,
 // the alternative to the guided builder). Platform-neutral (§9): the neutral
@@ -53,6 +55,15 @@ export interface FreeformPromptProps {
   prompt: string
   /** The quiet sub-line under the prompt (the "whisper" of guidance). */
   whisper: string
+  /**
+   * Optional quiet control rendered BETWEEN the field and the action row — a
+   * secondary, optional ask that belongs to this step but must not compete with
+   * the prompt (myth-gdycq's "how should we refer to them?"). Sits inside the
+   * composition rather than beside it so it can never land under the commit
+   * control. A slot, so the shell owns what it holds; the prompt only owns where
+   * it sits.
+   */
+  aside?: ReactNode
   /** The current field value (controlled). */
   value: string
   /** Neutral change callback carrying the new value — never a DOM event. */

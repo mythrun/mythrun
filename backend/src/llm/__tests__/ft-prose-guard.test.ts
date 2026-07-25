@@ -94,6 +94,60 @@ describe('checkFtProse — structure token (ux-run2, myth-g4hf3)', () => {
   })
 })
 
+// myth-q9for artifact #2 — a rendered segment that OPENS MID-WORD. The 2026-07-18
+// playtest saw a response begin "oss described. Wiry, amber button…" — the tail of a
+// prior beat's "V-oss". The transport causes for that were closed (myth-uhr0f aligned
+// live/replay segmentation; the turn worker refuses to re-stream a turnId), but no
+// detector existed, so a recurrence would again reach a reader before anyone noticed.
+// This is that detector: same posture as its siblings — log + smoke assertion, never
+// a turn blocker.
+describe('checkFtProse — leading fragment (myth-q9for #2)', () => {
+  it('flags the reported artifact: a response opening mid-word', () => {
+    expect(kinds('oss described. Wiry, amber button, and a look that does not settle.')).toContain(
+      'leading_fragment',
+    )
+  })
+
+  it('flags a mid-word opening on a LATER segment, not just the first', () => {
+    // Each FT text part becomes its own dm_text row and renders as its own
+    // paragraph, so every blank-line-separated segment is one a reader sees start.
+    expect(
+      kinds('The warden turns the seal over.\n\nard iron, still warm from his palm.'),
+    ).toContain('leading_fragment')
+  })
+
+  it('does not flag prose opening with a capital, a quote, or a bracketed aside', () => {
+    expect(kinds('The hall runs long and low.')).not.toContain('leading_fragment')
+    expect(kinds('"Voss," she says, and does not look up.')).not.toContain('leading_fragment')
+    expect(kinds('“Voss,” she says.')).not.toContain('leading_fragment')
+    expect(kinds('(He does not answer.) The bell rings twice.')).not.toContain('leading_fragment')
+    expect(kinds('— and the door gives, finally.')).not.toContain('leading_fragment')
+  })
+
+  it('does not flag a DELIBERATE ellipsis opening (a trailing-thought device)', () => {
+    // The device that makes a naive "starts lowercase" rule wrong.
+    expect(kinds('…and then the light was gone.')).not.toContain('leading_fragment')
+    expect(kinds('...and then the light was gone.')).not.toContain('leading_fragment')
+  })
+
+  it('does not flag a later paragraph that legitimately opens with a capital', () => {
+    expect(
+      kinds('The warden turns the seal over.\n\nHard iron, still warm from his palm.'),
+    ).not.toContain('leading_fragment')
+  })
+
+  it('skips blank segments from a run of newlines rather than reading them as openings', () => {
+    expect(kinds('The hall is quiet.\n\n\n\nHe waits.')).not.toContain('leading_fragment')
+    // A blank run before a real fragment must not mask it.
+    expect(kinds('The hall is quiet.\n\n\n\narden iron, still warm.')).toContain('leading_fragment')
+  })
+
+  it('reports the class once even when several segments open mid-word', () => {
+    const v = checkFtProse('one thing.\n\nnother thing.\n\nhird thing.')
+    expect(v.filter((x) => x.kind === 'leading_fragment')).toHaveLength(1)
+  })
+})
+
 describe('checkFtProse — multiple classes in one pass', () => {
   it('reports each distinct defect once', () => {
     const v = checkFtProse('the *order was wrong.Hast wrote it as the session context says')

@@ -388,6 +388,12 @@ interface CampaignRunResult {
   readonly relationshipCount: number
   readonly factCount: number
   readonly characterIds: readonly string[]
+  /** The campaign's member count as the SERVER reports it
+   *  (`character-creation-progress.totalMembers`), not the smoke's own
+   *  arithmetic. The one-character-per-member assertion derives from this so it
+   *  cannot go stale again the way the old hard-coded `=== 3` did when the owner
+   *  became a member with a character of their own. */
+  readonly memberCount: number
   readonly durationMs: number
 }
 
@@ -506,16 +512,19 @@ async function runOneCampaign(
     })
   }))
 
-  // 6. Wait for ALL 4 character concepts to reach status='completed'.
+  // 6. Wait for EVERY member's character concept to reach status='completed'.
   //    The character-creation-progress endpoint enumerates each member's
-  //    concept status; we wait until every one is terminal.
-  await pollFor(
+  //    concept status; we wait until every one is terminal. The expected
+  //    concept count is `allMembers.length`, never a literal — the owner
+  //    becoming a member with a character of their own is exactly the change
+  //    that silently invalidated the old hard-coded counts here (MYT-63 era).
+  const progress = await pollFor(
     () => apiGet<{
       totalMembers: number
       concepts: readonly { status: string }[]
       missing: readonly unknown[]
     }>(ownerApi, `/api/campaigns/${campaignId}/character-creation-progress`),
-    (val) => val.missing.length === 0 && val.concepts.length === 4 &&
+    (val) => val.missing.length === 0 && val.concepts.length === allMembers.length &&
       val.concepts.every((c) => c.status === 'completed' || c.status === 'failed'),
     { timeoutMs: 15 * 60_000, intervalMs: 10_000, label: `character-creation for ${concept.name}` },
   )
@@ -573,6 +582,7 @@ async function runOneCampaign(
     relationshipCount: stats.relationshipCount,
     factCount: stats.factCount,
     characterIds: stats.characterIds,
+    memberCount: progress.totalMembers,
     durationMs: Date.now() - startMs,
   }
 }
@@ -650,8 +660,16 @@ async function assertContract(
     if (r.campaignStatus !== 'active') {
       fails.push({ layer: 'A', detail: `${r.conceptName}: campaign status = ${r.campaignStatus}` })
     }
-    if (r.characterIds.length !== 3) {
-      fails.push({ layer: 'A', detail: `${r.conceptName}: character count = ${String(r.characterIds.length)}, expected 3` })
+    // One character per campaign MEMBER, derived from the server's own
+    // `totalMembers` rather than a literal. The owner is a member and gets a
+    // character too (post-MYT-63), which is what made the old hard-coded
+    // `!== 3` fail a fully-green 2026-07-10 run on 4 real characters. Any
+    // future change to campaign membership moves both sides of this together.
+    if (r.characterIds.length !== r.memberCount) {
+      fails.push({
+        layer: 'A',
+        detail: `${r.conceptName}: character count = ${String(r.characterIds.length)}, expected one per member (${String(r.memberCount)})`,
+      })
     }
   }
 

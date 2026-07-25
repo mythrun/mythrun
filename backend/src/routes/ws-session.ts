@@ -318,7 +318,20 @@ async function wsSessionAuth(
     await reply.code(403).send({ code: 'not_campaign_member' })
     return
   }
-  // 5. Stash for the handler. campaignId is the SESSION ROW's value.
+  // 5. myth-ficc — the suspension gate, same 403 `account_suspended` the HTTP
+  //    surface answers (requireOnboarded). It cannot be inherited from the mint
+  //    route: a ticket minted while the player was in good standing stays valid
+  //    for its 30s TTL, so without a check HERE a just-banned player still gets
+  //    a socket. `isSuspended` fails CLOSED on a missing row, and a THROW (pg
+  //    fault) propagates to the route error handler → 500 → no upgrade, so
+  //    every non-"definitely allowed" outcome ends without a socket. This is
+  //    also what keeps the permanently-suspended SYSTEM user (demo-world owner,
+  //    1970 sentinel) off the transport.
+  if (await repo.users.isSuspended(payload.userId)) {
+    await reply.code(403).send({ code: 'account_suspended' })
+    return
+  }
+  // 6. Stash for the handler. campaignId is the SESSION ROW's value.
   request.wsSessionAuth = { userId: payload.userId, campaignId: session.campaignId }
 }
 
@@ -631,6 +644,45 @@ function startHeartbeat(
   })
 }
 
+/**
+ * myth-ficc — the per-frame suspension gate for an ALREADY-OPEN socket. Returns
+ * true when the frame must be dropped (and tears the user's sockets down on the
+ * way out).
+ *
+ * The handshake check (wsSessionAuth step 5) only covers connect-time; a
+ * suspension can land on a socket that is already open, and "a suspended user
+ * must not be able to act" has to survive that.
+ *
+ * It is a per-frame DB read rather than a pushed kill-signal because there is
+ * no in-app suspend action to push FROM — an operator sets `suspended_at`
+ * directly in Postgres, so the socket only learns about the ban by asking.
+ * (When the admin surface lands, a `user:{id}:suspend` pub/sub message calling
+ * this same `hub.closeUser` makes termination immediate; this read then stays
+ * as the backstop that does NOT fail open when a message is missed, when Redis
+ * is down, or when the suspension was made out-of-band. Spec
+ * 2026-04-13-auth-users.md §6.4.) The cost is one indexed PK lookup per inbound
+ * frame — alongside the two Redis reads the drop-gates already do — and it is
+ * paid at most once per suspended socket, since the socket dies here.
+ *
+ * `isSuspended` fails CLOSED on a missing row. A THROW (pg fault) propagates to
+ * handleInbound's per-frame boundary, which drops the frame: the ACTION still
+ * does not happen, the socket merely survives and the next frame re-checks.
+ */
+async function rejectIfSuspended(
+  ctx: ConnCtx,
+  userId: string,
+  campaignId: string,
+  sessionId: string,
+): Promise<boolean> {
+  if (!(await ctx.deps.repo.users.isSuspended(userId))) return false
+  ctx.app.log.warn(
+    { event: 'ws.suspended_user_frame_dropped', campaignId, sessionId, userId },
+    'dropped an inbound frame from a suspended user and closed their sockets',
+  )
+  ctx.deps.hub.closeUser(userId)
+  return true
+}
+
 /** Parse + route one inbound client frame. Unknown / non-client types drop.
  *
  *  This handler is the per-frame error boundary: a single bad or throwing frame
@@ -654,6 +706,11 @@ export async function handleInbound(
   try {
     const frame = parseClientFrame(raw, ctx.app.log)
     if (!frame) return
+
+    // myth-ficc — the SUSPENSION gate (see rejectIfSuspended). Placed BEFORE
+    // the ending/combat gates so it applies to EVERY frame type, end_session
+    // included: a ban is not a way to end play.
+    if (await rejectIfSuspended(ctx, userId, campaignId, sessionId)) return
 
     // MYT-74a T11 — the END drop-gate. Once a session is ending, no inbound
     // frame may start a new turn or mutate state: an in-flight end has already

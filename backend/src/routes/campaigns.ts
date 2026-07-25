@@ -584,7 +584,9 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
             reply,
             gate,
             userId: dbUser.id,
-            mode: 'freeform',
+            // The caller IS the screen the concept was typed on and its text is
+            // still in the field — echoing it back would be redundant.
+            echoJudgedConcept: false,
             synthesizedConcept: source.concept,
             stormIncrementer: () => stormCounter.incrementAndCheck(dbUser.id),
             logger: request.log as PinoLogger,

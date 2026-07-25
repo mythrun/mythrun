@@ -5,15 +5,16 @@ import { useSynthesisState, type SynthesisStream } from '@mythrun/client-core'
 import type { RejectionState } from './rejection.tsx'
 
 // The campaign-create SYNTHESIZING beat (myth-umggn) — the world brief writing
-// itself. The guided screen opened the stream (so its calm notices still own
-// every pre-stream failure); this screen renders the arriving prose off the
+// itself. The INPUT screen opened the stream — the brainstorm picks, or (since
+// myth-6t06f) the freeform concept, so its calm notices still own every
+// pre-stream failure; this screen renders the arriving prose off the
 // stream's store (StreamingProse — paper register, ember caret, no spinner)
 // and fires ONE neutral intent per terminal:
 //
-//   - complete  → onSynthesized({previewId, concept}) — the controller swaps
-//                 to the preview screen, whose contract is unchanged; the
-//                 settled text stays put (identical type classes), the
-//                 actions arrive under it.
+//   - complete  → onSynthesized({previewId, title, concept}) — the controller
+//                 swaps to the proposal screen, whose contract is unchanged; the
+//                 settled text stays put (identical type classes), the world's
+//                 name and the actions arrive over/under it.
 //   - rejected  → onRejected(rejection) — the streamed text resolves into the
 //                 SAME rejection screen the synchronous 422 produced: the
 //                 judged concept stays visible there (synthesizedConcept),
@@ -22,8 +23,8 @@ import type { RejectionState } from './rejection.tsx'
 //                 terminal content-policy dead-end, mirroring the sync route.
 //   - failed / anything else → the HALTED partial text stays on the page under
 //                 a calm notice + a quiet `try again` (onRetry → back to the
-//                 guided picks, which are draft-persisted). No auto-retry: the
-//                 stream is a non-idempotent Sonnet call.
+//                 input screen, whose picks/concept are draft-persisted). No
+//                 auto-retry: the stream is a non-idempotent Sonnet call.
 //
 // Pure presentation + the store subscription: the screen never navigates
 // itself and never opens/closes the stream (the controller owns the handle).
@@ -31,14 +32,14 @@ import type { RejectionState } from './rejection.tsx'
 // renders as data (R5).
 
 export interface SynthesizingScreenProps {
-  /** The live synthesis stream the guided screen opened. */
+  /** The live synthesis stream the input screen opened (either path). */
   stream: SynthesisStream
-  /** The brief completed and parked (terminal `complete`) → preview screen. */
-  onSynthesized: (payload: { previewId: string; concept: string }) => void
+  /** The brief completed and parked (terminal `complete`) → proposal screen. */
+  onSynthesized: (payload: { previewId: string; title: string; concept: string }) => void
   /** The gate rejected the brief (terminal `rejected`), or the content policy
    *  blocked it (terminal `content_filtered`) → rejection screen. */
   onRejected: (rejection: RejectionState) => void
-  /** Chose `try again` after a transient failure → back to the guided picks. */
+  /** Chose `try again` after a transient failure → back to the input screen. */
   onRetry: () => void
 }
 
@@ -55,7 +56,7 @@ export function SynthesizingScreen({
   // mid-render). Exactly one terminal ever arrives, so this fires once.
   useEffect(() => {
     if (state.status === 'complete') {
-      onSynthesized({ previewId: state.previewId, concept: state.concept })
+      onSynthesized({ previewId: state.previewId, title: state.title, concept: state.concept })
     } else if (state.status === 'rejected') {
       onRejected(state.rejection)
     } else if (state.status === 'failed' && state.code === 'content_filtered') {

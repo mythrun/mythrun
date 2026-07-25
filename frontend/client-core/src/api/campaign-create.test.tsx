@@ -42,20 +42,47 @@ const picks: SynthesizerPick[] = [
 ]
 
 describe('synthesizePreview', () => {
-  it('posts {picks} and resolves {previewId, concept}', async () => {
+  it('posts {picks} and resolves {previewId, title, concept}', async () => {
     let seenBody: unknown
     server.use(
       http.post(`${BASE_URL}/api/campaigns/synthesize-preview`, async ({ request }) => {
         seenBody = await request.json()
-        return HttpResponse.json({ previewId: 'pv-1', concept: 'A drowned archive.' }, { status: 201 })
+        return HttpResponse.json(
+          { previewId: 'pv-1', title: 'The Drowned Archive', concept: 'A drowned archive.' },
+          { status: 201 },
+        )
       }),
     )
 
     await expect(synthesizePreview(testCtx, { picks })).resolves.toEqual({
       previewId: 'pv-1',
+      // myth-z3icr: the world's name rides the proposal so the page can
+      // headline it instead of mining it out of the prose.
+      title: 'The Drowned Archive',
       concept: 'A drowned archive.',
     })
     expect(seenBody).toEqual({ picks })
+  })
+
+  // myth-6t06f: the freeform path buys the same proposal with its own concept.
+  it('posts {concept} for a freeform proposal', async () => {
+    let seenBody: unknown
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns/synthesize-preview`, async ({ request }) => {
+        seenBody = await request.json()
+        return HttpResponse.json(
+          { previewId: 'pv-2', title: 'The Ninth Tide', concept: 'A drowned harbour town.' },
+          { status: 201 },
+        )
+      }),
+    )
+    const concept = 'A drowned harbour town where the salvage guilds fight over the tide.'
+
+    await expect(synthesizePreview(testCtx, { concept })).resolves.toMatchObject({
+      previewId: 'pv-2',
+      title: 'The Ninth Tide',
+    })
+    expect(seenBody).toEqual({ concept })
   })
 
   it('surfaces a 422 as HttpError.code==="concept_rejected" with .body.synthesizedConcept', async () => {
@@ -82,17 +109,23 @@ describe('synthesizePreview', () => {
 })
 
 describe('reworkPreview', () => {
-  it('posts {change} to the :previewId path and resolves {previewId, concept}', async () => {
+  it('posts {change} to the :previewId path and resolves {previewId, title, concept}', async () => {
     let seenBody: unknown
     server.use(
       http.post(`${BASE_URL}/api/campaigns/preview/pv-9/rework`, async ({ request }) => {
         seenBody = await request.json()
-        return HttpResponse.json({ previewId: 'pv-9', concept: 'Now with more rain.' })
+        return HttpResponse.json({
+          previewId: 'pv-9',
+          title: 'The Rainier Coast',
+          concept: 'Now with more rain.',
+        })
       }),
     )
 
     await expect(reworkPreview(testCtx, 'pv-9', { change: 'Make it rainier.' })).resolves.toEqual({
       previewId: 'pv-9',
+      // A revision can rename the world, so the title rides the rework too.
+      title: 'The Rainier Coast',
       concept: 'Now with more rain.',
     })
     // The previewId travels in the PATH only — the body is exactly the rework note.

@@ -15,9 +15,9 @@ const goldFrame = (gold: number): LedgerFrame => ({
   type: 'ledger_update', turnId: 't1', characterName: 'Cee',
   kind: 'gold', summary: `${String(gold)} gold remaining`, gold,
 })
-const conditionFrame = (summary: string): LedgerFrame => ({
+const conditionFrame = (summary: string, extra: Partial<LedgerFrame> = {}): LedgerFrame => ({
   type: 'ledger_update', turnId: 't1', characterName: 'Cee',
-  kind: 'condition', summary, condition: 'poisoned',
+  kind: 'condition', summary, condition: 'poisoned', ...extra,
 })
 // A take_rest frame ALSO carries authoritative post-rest hp/maxHp (a rest heals).
 const restFrame = (hp: number, maxHp: number): LedgerFrame => ({
@@ -31,8 +31,16 @@ const itemFrame = (): LedgerFrame => ({
 })
 
 describe('emptyOverlay', () => {
-  it('is all-null values with an empty conditionLog', () => {
-    expect(emptyOverlay).toEqual({ hp: null, maxHp: null, gold: null, conditionLog: [] })
+  it('is all-null values with an empty conditionLog and an UNKNOWN active set', () => {
+    expect(emptyOverlay).toEqual({
+      hp: null, maxHp: null, gold: null, conditionLog: [], activeConditions: null,
+    })
+  })
+
+  it('starts activeConditions as null (unknown), NOT as an empty array (known-none)', () => {
+    // The distinction is load-bearing: `null` means "no frame has spoken yet, so
+    // the base sheet stands"; `[]` means "the character has none right now".
+    expect(emptyOverlay.activeConditions).toBeNull()
   })
 })
 
@@ -96,6 +104,75 @@ describe('reduceLedger', () => {
     expect(next.conditionLog).toEqual([])
   })
 
+  it('folds activeConditions as an authoritative SET of the whole set', () => {
+    const next = reduceLedger(
+      emptyOverlay,
+      conditionFrame('Cee is now poisoned.', {
+        activeConditions: [{ condition: 'poisoned', level: null }],
+      }),
+    )
+    expect(next.activeConditions).toEqual([{ condition: 'poisoned', level: null }])
+  })
+
+  it('replaces the whole set on the next frame (SET, never merge)', () => {
+    const poisoned = reduceLedger(
+      emptyOverlay,
+      conditionFrame('Cee is now poisoned.', {
+        activeConditions: [{ condition: 'poisoned', level: null }],
+      }),
+    )
+    const cured = reduceLedger(
+      poisoned,
+      conditionFrame('The venom passes.', {
+        activeConditions: [{ condition: 'exhaustion', level: 3 }],
+      }),
+    )
+    expect(cured.activeConditions).toEqual([{ condition: 'exhaustion', level: 3 }])
+  })
+
+  it('an EMPTY activeConditions array clears the set — "currently none" is a statement', () => {
+    const poisoned = reduceLedger(
+      emptyOverlay,
+      conditionFrame('Cee is now poisoned.', {
+        activeConditions: [{ condition: 'poisoned', level: null }],
+      }),
+    )
+    const cured = reduceLedger(poisoned, conditionFrame('The venom passes.', { activeConditions: [] }))
+    expect(cured.activeConditions).toEqual([]) // NOT the stale [poisoned]
+  })
+
+  it('holds the last known set when the frame OMITS activeConditions (absence != empty)', () => {
+    // A gold spend cannot touch conditions, so it makes no statement about them.
+    // Treating absence as "clear" would silently wipe conditions on every purchase.
+    const poisoned = reduceLedger(
+      emptyOverlay,
+      conditionFrame('Cee is now poisoned.', {
+        activeConditions: [{ condition: 'poisoned', level: null }],
+      }),
+    )
+    const afterSpend = reduceLedger(poisoned, goldFrame(12))
+    expect(afterSpend.activeConditions).toEqual([{ condition: 'poisoned', level: null }])
+  })
+
+  it('folds activeConditions off an hp frame (every HP write syncs derived unconscious)', () => {
+    const downed = reduceLedger(
+      emptyOverlay,
+      hpFrame(0, 8, { activeConditions: [{ condition: 'unconscious', level: null }] }),
+    )
+    expect(downed.activeConditions).toEqual([{ condition: 'unconscious', level: null }])
+    const revived = reduceLedger(downed, hpFrame(4, 8, { activeConditions: [] }))
+    expect(revived.activeConditions).toEqual([])
+  })
+
+  it('is idempotent when the same activeConditions frame is re-applied (replay is harmless)', () => {
+    const frame = conditionFrame('Cee is now poisoned.', {
+      activeConditions: [{ condition: 'poisoned', level: null }],
+    })
+    const once = reduceLedger(emptyOverlay, frame)
+    const twice = reduceLedger(once, frame)
+    expect(twice.activeConditions).toEqual(once.activeConditions)
+  })
+
   it('produces an identical result whether the frame carries seq (replay) or not (live)', () => {
     const live = hpFrame(5, 8)
     const replay = hpFrame(5, 8, { seq: 21 })
@@ -104,7 +181,7 @@ describe('reduceLedger', () => {
 
   it('does not mutate the input overlay', () => {
     const frozen: CharacterOverlay = Object.freeze({
-      hp: 5, maxHp: 8, gold: null, conditionLog: [],
+      hp: 5, maxHp: 8, gold: null, conditionLog: [], activeConditions: null,
     })
     const next = reduceLedger(frozen, hpFrame(3, 8))
     expect(next).not.toBe(frozen)

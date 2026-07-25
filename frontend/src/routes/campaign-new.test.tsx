@@ -186,6 +186,20 @@ function gotoFreeform(): void {
   act(() => { screen.getByText(ideaTitle()).click() })
 }
 
+/** myth-6t06f: fork → freeform → type a concept → fire the synthesis. The
+ *  freeform path now opens the SAME stream the brainstorm path opens, so the
+ *  scripted-frame harness serves both. */
+function synthesizeFreeform(
+  frames: readonly unknown[],
+  concept = 'A drowned cathedral city the tide never fully leaves.',
+): { opens: StreamOpen[] } {
+  const installed = installSynthStream({ frames })
+  gotoFreeform()
+  fireEvent.change(screen.getByTestId('freeform-input'), { target: { value: concept } })
+  act(() => { screen.getByTestId('freeform-draft').click() })
+  return installed
+}
+
 describe('CampaignNewRoute', () => {
   it('renders the fork screen with both choices (i18n keys resolved)', () => {
     renderRoute()
@@ -239,12 +253,14 @@ describe('CampaignNewRoute', () => {
 })
 
 describe('CampaignNewRoute freeform screen', () => {
-  const begin = (): HTMLButtonElement => screen.getByTestId<HTMLButtonElement>('freeform-begin')
+  // The primary drafts a proposal since myth-6t06f — it no longer "begins" a
+  // world, and the testid says so.
+  const begin = (): HTMLButtonElement => screen.getByTestId<HTMLButtonElement>('freeform-draft')
   const typeConcept = (value: string): void => {
     fireEvent.change(screen.getByTestId('freeform-input'), { target: { value } })
   }
 
-  it('keeps Begin disabled under 20 chars and enables it at or above 20', () => {
+  it('keeps the primary disabled under 20 chars and enables it at or above 20', () => {
     gotoFreeform()
     // Empty → disabled.
     expect(begin().disabled).toBe(true)
@@ -275,83 +291,91 @@ describe('CampaignNewRoute freeform screen', () => {
         HttpResponse.json({ campaignId: 'camp-drafted' }, { status: 201 }),
       ),
     )
-    gotoFreeform()
-    typeConcept('A drowned archive city where the tides read the books')
-    await act(async () => {
-      begin().click()
-      await Promise.resolve()
-    })
+    synthesizeFreeform([
+      { type: 'complete', previewId: 'p-ff', title: 'The Low Water', concept: 'A drowned cathedral city.' },
+    ])
+    await waitFor(() => { expect(screen.getByTestId('screen-preview')).toBeDefined() })
+    act(() => { screen.getByTestId('preview-begin').click() })
     await screen.findByTestId('route-campaign-target')
     cleanup()
     gotoFreeform()
     expect(screen.getByTestId<HTMLTextAreaElement>('freeform-input').value).toBe('')
   })
 
-  it('posts the WRAPPED freeform body and navigates to /campaigns/:newId on 201', async () => {
-    let capturedBody: unknown
-    server.use(
-      http.post(`${BASE_URL}/api/campaigns`, async ({ request }) => {
-        capturedBody = await request.json()
-        return HttpResponse.json({ campaignId: 'c-new-1' }, { status: 201 })
-      }),
-    )
-    gotoFreeform()
+  // myth-6t06f: the primary no longer buys a world. It posts the player's own
+  // concept as the SYNTHESIS body — the same stream the brainstorm path opens —
+  // and the flow lands on the proposal checkpoint, not on a generating campaign.
+  it('sends the concept to the synthesis stream and lands on the proposal, not on generation', async () => {
     const concept = 'A drowned cathedral city the tide never fully leaves.'
-    typeConcept(concept)
-    act(() => { begin().click() })
+    const { opens } = synthesizeFreeform(
+      [
+        { type: 'delta', text: 'A drowned cathedral city ' },
+        { type: 'complete', previewId: 'p-ff', title: 'The Low Water', concept },
+      ],
+      concept,
+    )
 
-    await waitFor(() => {
-      expect(screen.getByTestId('route-campaign-target').textContent).toBe('c-new-1')
-    })
-    // The wire body is the wrapped freeform shape — nothing more.
-    expect(capturedBody).toEqual({
-      world: { kind: 'new', source: { mode: 'freeform', concept } },
-    })
+    await waitFor(() => { expect(screen.getByTestId('screen-preview')).toBeDefined() })
+    // The wire body is the freeform proposal shape — the concept, nothing else.
+    expect(opens[0]?.url).toBe(`${BASE_URL}/api/campaigns/synthesize-preview/stream`)
+    expect(JSON.parse(opens[0]?.init.body ?? '{}')).toEqual({ concept })
+    // Nothing was committed: no campaign, no navigation.
+    expect(screen.queryByTestId('route-campaign-target')).toBeNull()
   })
 
-  it('a double-click fires exactly ONE createCampaign — no double-charge (MYT-102 QA)', async () => {
-    let calls = 0
-    server.use(
-      http.post(`${BASE_URL}/api/campaigns`, async () => {
-        calls += 1
-        // Hold the response open so the two synchronous clicks race the in-flight guard.
-        await new Promise((r) => setTimeout(r, 30))
-        return HttpResponse.json({ campaignId: 'c-once' }, { status: 201 })
-      }),
-    )
+  it('a double-click opens exactly ONE synthesis stream — no double burn', async () => {
+    const { opens } = installSynthStream({
+      frames: [{ type: 'complete', previewId: 'p-ff', title: 'The Low Water', concept: 'A drowned city.' }],
+    })
     gotoFreeform()
     typeConcept('A drowned cathedral city the tide never fully leaves.')
     act(() => {
       begin().click()
       begin().click()
     })
-    await waitFor(() => {
-      expect(screen.getByTestId('route-campaign-target').textContent).toBe('c-once')
-    })
-    expect(calls).toBe(1)
+    await waitFor(() => { expect(screen.getByTestId('screen-preview')).toBeDefined() })
+    expect(opens).toHaveLength(1)
   })
 
-  it('shows a 422 concept_rejected rejectionMessage inline, without navigating', async () => {
-    server.use(
-      http.post(`${BASE_URL}/api/campaigns`, () =>
-        HttpResponse.json(
-          { code: 'concept_rejected', reason: 'inappropriate', rejectionMessage: 'That concept crosses a line.' },
-          { status: 422 },
-        ),
-      ),
+  // The gate verdict is now a terminal FRAME, not a 422 on the commit: it routes
+  // to the shared rejection screen, where the judged text is the player's own
+  // words and "adjust it yourself" hands them straight back.
+  it('routes a gate rejection to the rejection screen carrying the player own words', async () => {
+    const concept = 'A drowned cathedral city the tide never fully leaves.'
+    synthesizeFreeform(
+      [
+        {
+          type: 'rejected',
+          code: 'concept_rejected',
+          reason: 'inappropriate',
+          rejectionMessage: 'That concept crosses a line.',
+          synthesizedConcept: concept,
+        },
+      ],
+      concept,
     )
+
+    await waitFor(() => { expect(screen.getByTestId('screen-rejection')).toBeDefined() })
+    expect(screen.getByTestId('rejection-message').textContent).toBe('That concept crosses a line.')
+    expect(screen.getByTestId('rejection-concept').textContent).toBe(concept)
+    // Their own paragraph comes back into the field, editable.
+    act(() => { screen.getByTestId('rejection-edit-freeform').click() })
+    expect(screen.getByTestId<HTMLTextAreaElement>('freeform-input').value).toBe(concept)
+  })
+
+  it('shows a calm inline retry notice on a 503 OPEN, without leaving the freeform screen', async () => {
+    installSynthStream({ status: 503, errorBody: { code: 'llm_upstream_unavailable' } })
     gotoFreeform()
     typeConcept('A drowned cathedral city the tide never fully leaves.')
     act(() => { begin().click() })
 
-    await waitFor(() => {
-      expect(screen.getByTestId('freeform-notice').textContent).toBe('That concept crosses a line.')
-    })
-    // Stayed on freeform — the minimal inline rejection does not navigate (B5 owns
-    // the full rejection screen).
+    await waitFor(() => { expect(screen.getByTestId('freeform-notice')).toBeDefined() })
+    expect(screen.getByTestId('freeform-notice').textContent).toBe(
+      i18n.t('campaignNew.freeform.retry'),
+    )
     expect(screen.getByTestId('screen-freeform')).toBeDefined()
-    expect(screen.queryByTestId('route-campaign-target')).toBeNull()
-    // Begin is re-enabled so the player can edit + retry.
+    expect(screen.queryByTestId('screen-synthesizing')).toBeNull()
+    // The action re-enables so the player can retry.
     expect(begin().disabled).toBe(false)
   })
 
@@ -668,12 +692,13 @@ function synthesizeGuided(frames: readonly unknown[]): void {
 
 describe('CampaignNewRoute preview screen', () => {
   const CONCEPT = 'A drowned cathedral city the tide never fully leaves.'
+  const TITLE = 'The Low Water Mark'
 
   /** Walk fork → guided → streamed synthesize (complete) → preview, carrying `concept`/`previewId`. */
   async function gotoPreview(concept = CONCEPT, previewId = 'p-1'): Promise<void> {
     synthesizeGuided([
       { type: 'delta', text: concept },
-      { type: 'complete', previewId, concept },
+      { type: 'complete', previewId, title: TITLE, concept },
     ])
     await waitFor(() => { expect(screen.getByTestId('screen-preview')).toBeDefined() })
   }
@@ -697,6 +722,38 @@ describe('CampaignNewRoute preview screen', () => {
   // three named stories as a quiet attribution line under the eyebrow. Read from
   // the guided draft (which survives synthesize → preview), so the line needs a
   // configured store; without one it simply doesn't render (the test below).
+  // myth-z3icr: the proposal HEADLINES the world's name. It arrives on the wire
+  // (the synthesize stage emits it) — the page never mines it out of the prose,
+  // which would be a ZFC violation.
+  it("headlines the world's name from the wire", async () => {
+    await gotoPreview()
+    expect(screen.getByTestId('preview-title').textContent).toBe(TITLE)
+    // A real heading, not a styled line of prose.
+    expect(screen.getByTestId('preview-title').tagName).toBe('H1')
+  })
+
+  it("re-headlines the revised name after a rework", async () => {
+    const revised = 'A revised tidal city, now watched over by a living lighthouse.'
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns/preview/p-1/rework`, () =>
+        HttpResponse.json(
+          { previewId: 'p-1', title: 'The Living Lamp', concept: revised },
+          { status: 200 },
+        ),
+      ),
+    )
+    await gotoPreview()
+    act(() => { screen.getByTestId('preview-ask-change').click() })
+    fireEvent.change(screen.getByTestId('preview-change-input'), {
+      target: { value: 'make the lighthouse alive' },
+    })
+    act(() => { screen.getByTestId('preview-rework').click() })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-title').textContent).toBe('The Living Lamp')
+    })
+  })
+
   it('renders the "Woven from" attribution line from the guided picks', async () => {
     configureGuidedDraft(makeDraftStore())
     try {
@@ -775,9 +832,10 @@ describe('CampaignNewRoute preview screen', () => {
 
   it('reworks once: shows the revised concept and leaves Begin as the only action', async () => {
     const revised = 'A revised tidal city, now watched over by a living lighthouse.'
+    const REVISED_TITLE = 'The Living Lamp'
     server.use(
       http.post(`${BASE_URL}/api/campaigns/preview/p-1/rework`, () =>
-        HttpResponse.json({ previewId: 'p-1', concept: revised }, { status: 200 }),
+        HttpResponse.json({ previewId: 'p-1', title: REVISED_TITLE, concept: revised }, { status: 200 }),
       ),
     )
     await gotoPreview()
@@ -842,6 +900,122 @@ describe('CampaignNewRoute preview screen', () => {
   })
 })
 
+// myth-6t06f: the proposal checkpoint reached from the FREEFORM path. The screen
+// is the same one the brainstorm path lands on — these cases pin the two things
+// that are NOT the same: where its exits lead, and what it may credit the weave
+// to.
+describe('CampaignNewRoute proposal from the freeform path', () => {
+  const CONCEPT = 'A drowned cathedral city the tide never fully leaves.'
+
+  async function gotoFreeformProposal(): Promise<void> {
+    synthesizeFreeform(
+      [
+        { type: 'delta', text: CONCEPT },
+        { type: 'complete', previewId: 'p-ff', title: 'The Low Water', concept: CONCEPT },
+      ],
+      CONCEPT,
+    )
+    await waitFor(() => { expect(screen.getByTestId('screen-preview')).toBeDefined() })
+  }
+
+  it('headlines the name and renders the proposal prose', async () => {
+    await gotoFreeformProposal()
+    expect(screen.getByTestId('preview-title').textContent).toBe('The Low Water')
+    expect(screen.getByTestId('preview-concept').textContent).toBe(CONCEPT)
+  })
+
+  // The bead's explicit ask: the "Adjust something" loop must work for a
+  // freeform-originated proposal, not just a brainstorm-originated one.
+  it('runs the adjust-something loop and spends the single change', async () => {
+    const revised = 'A revised drowned city, now lit from beneath.'
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns/preview/p-ff/rework`, () =>
+        HttpResponse.json(
+          { previewId: 'p-ff', title: 'The Under-Light', concept: revised },
+          { status: 200 },
+        ),
+      ),
+    )
+    await gotoFreeformProposal()
+    act(() => { screen.getByTestId('preview-ask-change').click() })
+    fireEvent.change(screen.getByTestId('preview-change-input'), {
+      target: { value: 'light it from beneath' },
+    })
+    act(() => { screen.getByTestId('preview-rework').click() })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-concept').textContent).toBe(revised)
+    })
+    expect(screen.getByTestId('preview-title').textContent).toBe('The Under-Light')
+    // The one change is spent: Begin is the only action left.
+    expect(screen.getByTestId('preview-change-spent')).toBeDefined()
+    expect(screen.queryByTestId('preview-ask-change')).toBeNull()
+  })
+
+  it('commits the parked proposal by previewId, exactly like the brainstorm path', async () => {
+    let capturedBody: unknown
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns`, async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json({ campaignId: 'c-ff-1' }, { status: 201 })
+      }),
+    )
+    await gotoFreeformProposal()
+    act(() => { screen.getByTestId('preview-begin').click() })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('route-campaign-target').textContent).toBe('c-ff-1')
+    })
+    // No concept text on the wire — the server already holds the gated proposal.
+    expect(capturedBody).toEqual({
+      world: { kind: 'new', source: { mode: 'guided', previewId: 'p-ff' } },
+    })
+  })
+
+  it('returns to FREEFORM on a confirmed Start over, with the concept intact', async () => {
+    await gotoFreeformProposal()
+    act(() => { screen.getByTestId('preview-start-over').click() })
+    act(() => { screen.getByTestId('preview-start-over-yes').click() })
+    // Their own words, not the brainstorm picks (which is where a
+    // path-blind Start over would have dumped them).
+    expect(screen.getByTestId('screen-freeform')).toBeDefined()
+    expect(screen.getByTestId<HTMLTextAreaElement>('freeform-input').value).toBe(CONCEPT)
+    expect(screen.queryByTestId('screen-guided')).toBeNull()
+  })
+
+  it('returns to FREEFORM when the commit reports the proposal expired (410)', async () => {
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns`, () =>
+        HttpResponse.json({ code: 'preview_expired' }, { status: 410 }),
+      ),
+    )
+    await gotoFreeformProposal()
+    act(() => { screen.getByTestId('preview-begin').click() })
+
+    await waitFor(() => { expect(screen.getByTestId('screen-freeform')).toBeDefined() })
+    expect(screen.queryByTestId('screen-preview')).toBeNull()
+  })
+
+  // ux-run2 myth-8u3h3's credit line is true of a WEAVE only. A freeform
+  // proposal was woven from the paragraph the player just wrote — and a stale
+  // brainstorm draft in the same session would otherwise credit it to three
+  // stories they never chose for this world.
+  it('never shows the "Woven from" credit, even with a brainstorm draft in storage', async () => {
+    configureGuidedDraft(makeDraftStore())
+    try {
+      // Leave a real brainstorm draft behind, then take the freeform path.
+      synthesizeGuided([{ type: 'delta', text: 'unused' }])
+      cleanup()
+      expect(readGuidedDraft()?.picks).toEqual(GUIDED_PICKS)
+
+      await gotoFreeformProposal()
+      expect(screen.queryByTestId('preview-woven-from')).toBeNull()
+    } finally {
+      configureGuidedDraft(null)
+    }
+  })
+})
+
 describe('CampaignNewRoute rejection screen', () => {
   /** Walk fork → guided → streamed synthesize (gate rejection) → the rejection screen. */
   async function gotoRejection(): Promise<void> {
@@ -900,7 +1074,7 @@ describe('CampaignNewRoute guided draft persistence (§11)', () => {
   async function gotoPreviewWithDraft(): Promise<void> {
     synthesizeGuided([
       { type: 'delta', text: 'A synthesized concept.' },
-      { type: 'complete', previewId: 'p-1', concept: 'A synthesized concept.' },
+      { type: 'complete', previewId: 'p-1', title: 'The Synthesized Coast', concept: 'A synthesized concept.' },
     ])
     await waitFor(() => { expect(screen.getByTestId('screen-preview')).toBeDefined() })
   }
@@ -951,14 +1125,23 @@ describe('CampaignNewRoute guided draft persistence (§11)', () => {
     // The guided picks were persisted while typing — the draft is present here.
     expect(readGuidedDraft()?.picks).toEqual(GUIDED_PICKS)
 
-    // Drop into freeform (pre-filled with the judged concept, ≥ 20 chars → Begin enabled).
+    // Drop into freeform (pre-filled with the judged concept, ≥ 20 chars → the
+    // primary is enabled). Since myth-6t06f that primary drafts a PROPOSAL, so
+    // the commit happens one screen later — the clear still has to fire.
     act(() => { screen.getByTestId('rejection-edit-freeform').click() })
+    installSynthStream({
+      frames: [
+        { type: 'complete', previewId: 'p-ff', title: 'The Near Clone', concept: 'A near-clone concept.' },
+      ],
+    })
     server.use(
       http.post(`${BASE_URL}/api/campaigns`, () =>
         HttpResponse.json({ campaignId: 'c-freeform-1' }, { status: 201 }),
       ),
     )
-    act(() => { screen.getByTestId('freeform-begin').click() })
+    act(() => { screen.getByTestId('freeform-draft').click() })
+    await waitFor(() => { expect(screen.getByTestId('screen-preview')).toBeDefined() })
+    act(() => { screen.getByTestId('preview-begin').click() })
 
     await waitFor(() => {
       expect(screen.getByTestId('route-campaign-target').textContent).toBe('c-freeform-1')

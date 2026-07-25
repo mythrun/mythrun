@@ -614,6 +614,51 @@ describe('campaignCharactersPlugin (MYT-53 T12/T14 + myth-nmg9)', () => {
       expect(seedRow.rows[0]?.status).toBe('pending')
     })
 
+    // myth-gdycq: the pronoun pick rides the SAME structured channel, from
+    // either path — a freeform submission carries it with no other picks, which
+    // is the shape that used to be impossible.
+    it('200 — a freeform submission persists a lone pronoun pick (myth-gdycq)', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignWithSituation(owner)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: {
+          conceptText: longConcept,
+          situationGroundingText: longGrounding,
+          guidedChoices: { pronouns: 'they_them' },
+        },
+      })
+      expect(res.statusCode).toBe(200)
+
+      const row = await pool.query<{ guided_choices: Record<string, unknown> }>(
+        `SELECT guided_choices FROM character_concepts
+         WHERE campaign_id = $1 AND user_id = $2`,
+        [seed.campaignId, owner.userId],
+      )
+      expect(row.rows[0]?.guided_choices).toEqual({ pronouns: 'they_them' })
+    })
+
+    it('400 — a pronoun value outside the closed token set is a bad body (myth-gdycq)', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const seed = await seedCampaignWithSituation(owner)
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/characters`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: {
+          conceptText: longConcept,
+          situationGroundingText: longGrounding,
+          // Free text where a token belongs: the server pins this value, so an
+          // unrecognized one must never reach the prompt.
+          guidedChoices: { pronouns: 'he/him' },
+        },
+      })
+      expect(res.statusCode).toBe(400)
+      expect(res.json<{ code: string }>().code).toBe('bad_body')
+    })
+
     it('200 — guided submission persists guidedChoices into character_concepts.guided_choices (myth-4jhrk)', async () => {
       const owner = await seedUser(pool, scope, 0)
       const seed = await seedCampaignWithSituation(owner)

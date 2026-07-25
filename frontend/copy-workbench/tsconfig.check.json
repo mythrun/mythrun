@@ -1,3 +1,22 @@
+// Typecheck project for the copy workbench.
+//
+// The workbench is NOT part of the web app's own tsconfig (`../tsconfig.json`
+// includes only src/ + the vite/vitest/storybook/eslint-rules glue), so it needs
+// this separate project to be checked at all. It extends the app's compiler
+// options so the workbench is held to exactly the same strictness.
+//
+// WIRED IN, deliberately: `@mythrun/web`'s `typecheck` script runs
+// `tsc --noEmit && pnpm copy-workbench:check`, so this project is covered by
+// every existing caller of that script — the pre-push frontend gate, CI's
+// frontend-check.yml (`pnpm --filter @mythrun/web typecheck`), and the root
+// `pnpm typecheck`. Chaining it onto `typecheck` rather than adding a standalone
+// step is the point: there is no separate gate anyone can forget to wire up.
+//
+// This file existed but nothing ran it, so the workbench silently rotted through
+// several rounds of contract changes (RollCardLabels, CharacterSheetRevealProps,
+// PartyRosterProps, the billing grant ledger, CreditBalance's explainers) while
+// every sweep stayed green. The workbench is the surface Miklos reviews copy in —
+// a broken one blocks the copy pass — so it gets a real gate.
 {
   "extends": "../tsconfig.json",
   "include": ["**/*.ts", "**/*.tsx"],

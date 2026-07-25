@@ -13,8 +13,8 @@
 //     way (before any LLM call). The actual increment happens only on a 422.
 //   - handleGateRejection: the `422 { code:'concept_rejected', ... }` emitter.
 //     Increments the storm counter, logs the server-only reasoning (never in
-//     the response — Roc-Imp6), and includes `synthesizedConcept` on guided
-//     rejections (Kraken-C2) so the user can see what was judged.
+//     the response — Roc-Imp6), and includes `synthesizedConcept` when the
+//     rejection surface needs it (Kraken-C2) so the user can see what was judged.
 
 import type { FastifyReply } from 'fastify'
 import type { Redis } from 'ioredis'
@@ -68,13 +68,25 @@ export interface GateRejectionPayload {
  * The transport-independent half of a gate rejection (myth-umggn split):
  * increments the rejection-storm counter, logs the server-side reasoning
  * (Roc-Imp6 — never in the payload), and shapes the `concept_rejected`
- * payload. `synthesizedConcept` is included only on guided-mode rejections
- * (Kraken-C2 — lets the user see what was judged). Shared by the HTTP 422
- * arm (`handleGateRejection`) and the SSE stream's terminal `rejected` frame.
+ * payload.
+ *
+ * `echoJudgedConcept` decides whether the judged text rides back in
+ * `synthesizedConcept` (Kraken-C2 — lets the user see what was judged). It is
+ * TRUE for every rejection whose surface is the standalone rejection SCREEN,
+ * which has nothing but this payload to render and to seed its "adjust it
+ * yourself" affordance from — the proposal routes, on both funnel paths
+ * (myth-6t06f). It is FALSE only where the caller already holds the judged text
+ * inline: the create route's freeform arm answers the very screen the concept
+ * was typed on. (Before myth-6t06f this was a `mode: 'freeform' | 'guided'`
+ * flag; the freeform path's proposal checkpoint broke that equivalence, so the
+ * decision is now stated rather than inferred.)
+ *
+ * Shared by the HTTP 422 arm (`handleGateRejection`) and the SSE stream's
+ * terminal `rejected` frame.
  */
 export async function recordGateRejection(args: {
   gate: InputGateVerdict
-  mode: 'freeform' | 'guided'
+  echoJudgedConcept: boolean
   synthesizedConcept: string
   stormIncrementer: () => Promise<{ cooldownActive: boolean; retryAfterSeconds: number }>
   logger: PinoLogger
@@ -99,7 +111,7 @@ export async function recordGateRejection(args: {
     reason: args.gate.reason,
     rejectionMessage: args.gate.rejectionMessage,
   }
-  if (args.mode === 'guided') {
+  if (args.echoJudgedConcept) {
     payload.synthesizedConcept = args.synthesizedConcept
   }
   return payload
@@ -113,7 +125,7 @@ export async function handleGateRejection(args: {
   reply: FastifyReply
   gate: InputGateVerdict
   userId: string
-  mode: 'freeform' | 'guided'
+  echoJudgedConcept: boolean
   synthesizedConcept: string
   stormIncrementer: () => Promise<{ cooldownActive: boolean; retryAfterSeconds: number }>
   logger: PinoLogger

@@ -2,7 +2,15 @@ import { useRef, useState } from 'react'
 import { Stack, Text, FreeformPrompt, SituationRecap } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import type { StartingSituation } from '@mythrun/client-core'
-import { useCharacterDraft, type SessionDraftStore } from '@mythrun/client-core/character'
+import {
+  useCharacterDraft,
+  toPronounChoice,
+  pronounsPick,
+  type PronounChoice,
+  type SessionDraftStore,
+} from '@mythrun/client-core/character'
+import type { GuidedChoicesPayload } from '@mythrun/client-core'
+import { PronounAside } from './pronoun-aside.tsx'
 
 // The FREEFORM PATH (MYT-90, D3) — the "tell us who you are" fork. It collects
 // the TWO required submit fields ONE AT A TIME (the calm pacing): first the
@@ -10,6 +18,10 @@ import { useCharacterDraft, type SessionDraftStore } from '@mythrun/client-core/
 // whose whisper is the chosen situation's invitation → situationGroundingText).
 // Only the current step renders; a valid concept advances to grounding, a valid
 // grounding submits BOTH fields via the route-injected `submit`.
+//
+// myth-gdycq: the concept step also carries the optional PRONOUN ask in the
+// prompt's quiet aside slot — the same ask the guided builder puts on its notes
+// step, so neither path is the one where the player never got to say.
 //
 // MYT-102 grounding + signposting: the chosen situation's RECAP (title, location,
 // scene prose — LLM DATA) sits above the prompt on BOTH steps, so the player
@@ -46,8 +58,15 @@ export interface FreeformPathProps {
    *  pending / failed, or when no situation is chosen (legacy worlds): the
    *  prompts then render without the recap card, exactly as before. */
   situation?: SituationRecapData
-  /** Commit both fields (the route binds ctx + campaignId + the real endpoint). */
-  submit: (conceptText: string, situationGroundingText: string) => Promise<void>
+  /** Commit both fields plus any structured picks (the route binds ctx +
+   *  campaignId + the real endpoint). myth-gdycq: the freeform path carries the
+   *  optional PRONOUN pick on the same wire field the guided builder uses, so
+   *  the backend pins it identically on both paths. */
+  submit: (
+    conceptText: string,
+    situationGroundingText: string,
+    guidedChoices?: GuidedChoicesPayload,
+  ) => Promise<void>
   /** A successful submit — the route advances the create-machine to `processing`. */
   onSubmitted: () => void
   /** Leave the freeform path for the CHOOSER (the route dispatches the create-machine
@@ -70,16 +89,19 @@ export interface FreeformPathProps {
 function submitFreeform(args: {
   conceptText: string
   groundingText: string
-  submit: (conceptText: string, situationGroundingText: string) => Promise<void>
+  pronouns: PronounChoice
+  submit: FreeformPathProps['submit']
   onSubmitted: () => void
   setNotice: (notice: Notice) => void
   submitting: { current: boolean }
 }): void {
-  const { conceptText, groundingText, submit, onSubmitted, setNotice, submitting } = args
+  const { conceptText, groundingText, pronouns, submit, onSubmitted, setNotice, submitting } = args
   if (submitting.current) return
   submitting.current = true
   setNotice(null)
-  void submit(conceptText.trim(), groundingText.trim())
+  // The default choice contributes NOTHING to the body — its absence is what
+  // tells the chargen prompt to read the description (myth-gdycq).
+  void submit(conceptText.trim(), groundingText.trim(), pronounsPick(pronouns))
     .then(() => {
       onSubmitted()
     })
@@ -109,6 +131,11 @@ export function FreeformPath({
   const [step, setStep] = useState<Step>('concept')
   const [conceptText, setConceptText] = useState(draft.initial.conceptText ?? '')
   const [groundingText, setGroundingText] = useState(draft.initial.groundingText ?? '')
+  // The pronoun pick is player input like any other — restored on mount and
+  // persisted on change, so a Start over / reload never silently drops it.
+  const [pronouns, setPronouns] = useState<PronounChoice>(() =>
+    toPronounChoice(draft.initial.pronouns),
+  )
   const [notice, setNotice] = useState<Notice>(null)
 
   const handleConceptChange = (value: string): void => {
@@ -118,6 +145,10 @@ export function FreeformPath({
   const handleGroundingChange = (value: string): void => {
     setGroundingText(value)
     draft.update({ groundingText: value })
+  }
+  const handlePronounsChange = (choice: PronounChoice): void => {
+    setPronouns(choice)
+    draft.update({ pronouns: choice })
   }
 
   /** Back: from grounding, step in-path to the concept (keeping both fields); from
@@ -149,7 +180,15 @@ export function FreeformPath({
       setNotice('tooShort')
       return
     }
-    submitFreeform({ conceptText, groundingText, submit, onSubmitted, setNotice, submitting })
+    submitFreeform({
+      conceptText,
+      groundingText,
+      pronouns,
+      submit,
+      onSubmitted,
+      setNotice,
+      submitting,
+    })
   }
 
   /** The quiet NAMED signpost over the current prompt (ux-run3 myth-7ceqw c):
@@ -209,6 +248,13 @@ export function FreeformPath({
         // The grounding Continue is the character-generation trigger — it
         // carries the commit disclosure (myth-g3mt6).
         {...(step === 'grounding' && { submitHint: t('characterCreate.freeform.cost') })}
+        // myth-gdycq: the pronoun ask rides the CONCEPT step — the moment the
+        // player is describing who this character is — not the grounding step,
+        // which is about the scene. Optional and quiet; the default commits to
+        // nothing.
+        {...(step === 'concept' && {
+          aside: <PronounAside value={pronouns} onChange={handlePronounsChange} />,
+        })}
         onBack={handleBack}
         backLabel={t('back')}
       />

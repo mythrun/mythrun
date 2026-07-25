@@ -40,6 +40,10 @@ const GuidedDraftSchema = z
 const CharacterDraftSchema = z.object({
   conceptText: z.string().optional(),
   groundingText: z.string().optional(),
+  // myth-gdycq: the pronoun ask is asked on BOTH paths, so it is durable at the
+  // draft's top level rather than inside the guided picks. A loose string here
+  // (the schema guards structure only); `toPronounChoice` narrows it on read.
+  pronouns: z.string().optional(),
   guided: GuidedDraftSchema.optional(),
 })
 

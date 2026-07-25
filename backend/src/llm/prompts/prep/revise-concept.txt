@@ -9,10 +9,15 @@ CONSTRAINTS
 - Do NOT use proper nouns from any source media in the `concept` field — no character names, place names, or franchise titles. Generic descriptors of mechanics or aesthetics are fine ("magic-school setting," "samurai-and-spirits aesthetic").
 - Do NOT produce a paint-job clone. The output must read as a fresh original world, not a "[Source A] meets [Source B]" pitch.
 - 150-400 words for the `concept` field. Aim for vivid sensory grounding (sight, smell, sound) and at least one specific concrete tension between named-but-original factions or forces.
+- `title`: the world's NAME — 2-5 words, evocative, no franchise borrowings, no subtitle and no colon. KEEP the prior title unless the change note moves the world somewhere the name no longer fits; a revision is not a renaming.
 - Refresh the `intentSummary` structure so it describes the REVISED concept, not the prior one:
   - `aesthetics`: 3-5 short phrases capturing the visual / tonal register.
   - `themes`: 3-5 short phrases capturing what the revised world cares about.
   - `sourcesInternal`: brief internal breadcrumbs (e.g. "prior concept + change note (<one-phrase summary of the shift>)"). This field is INTERNAL ONLY and never rendered to the user; treat it as a debugging breadcrumb.
+
+ORIGINAL TITLE
+
+{priorTitle}
 
 ORIGINAL CONCEPT
 

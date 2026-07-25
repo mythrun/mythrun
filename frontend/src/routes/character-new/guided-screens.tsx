@@ -1,7 +1,9 @@
 import { GuidedRail, FreeformPrompt, SituationRecap, Text } from '@mythrun/ui'
 import type { TFunction } from 'i18next'
 import type { RailStep } from '@mythrun/client-core/contract'
+import type { PronounChoice } from '@mythrun/client-core/character'
 import type { SituationRecapData } from './freeform-path.tsx'
+import { PronounAside } from './pronoun-aside.tsx'
 
 // The guided path's builder-less screens (MYT-90 / MYT-102), split out of
 // guided-path.tsx so the driver stays a readable controller: the optional NOTES
@@ -17,12 +19,20 @@ export type Notice = 'tooShort' | 'error' | null
  *  rail persists above it (Notes `now`) so the journey stays signposted. The
  *  compact field + example placeholder show the shape of a good answer, and the
  *  button is state-aware — Skip while empty (an empty answer IS the sanctioned
- *  skip), Continue once it has text (ux-run2 myth-z45sb). */
+ *  skip), Continue once it has text (ux-run2 myth-z45sb).
+ *
+ *  myth-gdycq: this is also where the guided path asks how the DM should refer
+ *  to the character — the builder's one free-shaped step, so the one place a
+ *  quiet optional ask belongs. It rides the prompt's aside slot (between the
+ *  field and the actions); an unanswered ask is a valid Skip, exactly as the
+ *  notes themselves are. */
 export function NotesScreen({
   rail,
   counter,
   value,
   onChange,
+  pronouns,
+  onPronounsChange,
   onSubmit,
   onBack,
   t,
@@ -31,6 +41,8 @@ export function NotesScreen({
   counter: string
   value: string
   onChange: (value: string) => void
+  pronouns: PronounChoice
+  onPronounsChange: (choice: PronounChoice) => void
   onSubmit: () => void
   onBack: () => void
   t: TFunction
@@ -49,6 +61,7 @@ export function NotesScreen({
         compact
         value={value}
         onChange={onChange}
+        aside={<PronounAside value={pronouns} onChange={onPronounsChange} />}
         onSubmit={onSubmit}
         submitLabel={
           value.trim() === ''

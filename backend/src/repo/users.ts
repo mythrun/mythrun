@@ -58,6 +58,30 @@ export function usersNs(c: ClientLike) {
       return row ? toUser(row) : null
     },
 
+    /**
+     * myth-ficc: the suspension predicate the transport layers gate on — the
+     * WS handshake (before the upgrade) and every inbound WS frame (so a
+     * suspension lands on a socket that is ALREADY open, without depending on
+     * a Redis message arriving).
+     *
+     * It is a narrow, dedicated read rather than `getById(...)?.suspendedAt !==
+     * null` for one reason: the missing-row answer. This is a security control,
+     * so "I have no row for that id" must resolve to SUSPENDED, and putting
+     * that default here — once — means no call site can write it open by
+     * accident. (A missing row is unreachable through the FK from
+     * campaign_members, so the fail-closed default costs nothing in practice.)
+     * The permanently-suspended SYSTEM user, which owns the demo world and must
+     * never authenticate, is rejected by the same predicate via its 1970
+     * `suspended_at` sentinel — no name-based special case.
+     */
+    isSuspended: async (id: string): Promise<boolean> => {
+      const result = await c.query<{ suspended: boolean }>(
+        'SELECT (suspended_at IS NOT NULL) AS suspended FROM users WHERE id = $1',
+        [id],
+      )
+      return result.rows[0]?.suspended ?? true
+    },
+
     getByCognitoSub: async (sub: string): Promise<User | null> => {
       const result = await c.query<UserDbRow>('SELECT * FROM users WHERE cognito_sub = $1', [
         sub,

@@ -221,6 +221,46 @@ describe('users repo (integration)', () => {
     await expect(repo.getByCognitoSubWithTimeout('any-sub', 10)).rejects.toThrow(/select exploded/)
   })
 
+  // myth-ficc: the suspension predicate the transport layers gate on. It exists
+  // as its own narrow read (rather than callers doing `getById(...)?.suspendedAt
+  // !== null`) precisely so the MISSING-ROW case cannot be written open by
+  // accident at a call site — it is a security control, and its answer for
+  // "I don't know who that is" must be "suspended".
+  describe('isSuspended', () => {
+    it('is false for a live, un-suspended user', async () => {
+      await cleanupTestScope(pool, scope)
+      const repo = createUsersRepo(pool)
+      const created = await repo.create(pool, baseInput)
+      await expect(repo.isSuspended(created.id)).resolves.toBe(false)
+    })
+
+    it('is true once suspended_at is set', async () => {
+      await cleanupTestScope(pool, scope)
+      const repo = createUsersRepo(pool)
+      const created = await repo.create(pool, baseInput)
+      await pool.query('UPDATE users SET suspended_at = now() WHERE id = $1', [created.id])
+      await expect(repo.isSuspended(created.id)).resolves.toBe(true)
+    })
+
+    it('FAILS CLOSED for an unknown user id (no row ⇒ suspended)', async () => {
+      const repo = createUsersRepo(pool)
+      await expect(repo.isSuspended('00000000-0000-7000-8000-00000000dead')).resolves.toBe(true)
+    })
+
+    it('is true for the permanently-suspended SYSTEM user (1970 sentinel)', async () => {
+      // The demo-world owner must never authenticate. It carries a 1970
+      // suspended_at sentinel, so every suspension gate rejects it by
+      // construction rather than by a name-based special case.
+      const repo = createUsersRepo(pool)
+      const { rows } = await pool.query<{ id: string }>(
+        `SELECT id FROM users WHERE cognito_sub = 'system:mythrun'`,
+      )
+      const systemId = rows[0]?.id
+      expect(systemId).toBeDefined()
+      await expect(repo.isSuspended(systemId ?? '')).resolves.toBe(true)
+    })
+  })
+
   describe('findOrCreateStripeCustomer', () => {
     function makeStripeCustomersStub(returnId: string): {
       client: StripeCustomersClient

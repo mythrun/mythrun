@@ -504,4 +504,96 @@ describe('session-hub robustness (stubbed redis subscriber)', () => {
     )
     expect(sub.punsubscribe).toHaveBeenCalledTimes(1)
   })
+
+  // myth-ficc: the termination primitive behind suspended-user enforcement.
+  // Killing a user's live sockets is a per-container operation over the local
+  // registry — the same shape the resync teardown uses, but scoped to one user.
+  describe('closeUser', () => {
+    it('closes + deregisters EVERY socket the user holds, across campaigns', async () => {
+      const sub = makeFakeSub()
+      const hub = await createSessionHub({
+        redis: makeFakeRedis(sub),
+        keyPrefix: PREFIX,
+        logger: silentLogger,
+      })
+      // The target holds two tabs on one campaign and a third on another.
+      const tab1 = fakeSocket()
+      const tab2 = fakeSocket()
+      const otherCampaignTab = fakeSocket()
+      const bystander = fakeSocket()
+      hub.register('cmp-a', 'banned', 'c1', tab1)
+      hub.register('cmp-a', 'banned', 'c2', tab2)
+      hub.register('cmp-b', 'banned', 'c3', otherCampaignTab)
+      hub.register('cmp-a', 'innocent', 'c4', bystander)
+
+      const closed = hub.closeUser('banned')
+
+      expect(closed).toBe(3)
+      for (const s of [tab1, tab2, otherCampaignTab]) {
+        expect(s.closed).toEqual({ code: 4403, reason: 'account_suspended' })
+      }
+      // The bystander keeps its socket AND its delivery.
+      expect(bystander.closed).toBeNull()
+      expect(hub.hasLocal('cmp-a')).toBe(true)
+      // cmp-b held only the banned user, so its inner map is dropped entirely.
+      expect(hub.hasLocal('cmp-b')).toBe(false)
+
+      sub.emit('pmessage', PMSG_PATTERN, channel('cmp-a'), '{"type":"x"}')
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      // Deregistered, not merely closed: no further frames reach the dead tabs.
+      expect(tab1.sent).toHaveLength(0)
+      expect(tab2.sent).toHaveLength(0)
+      expect(bystander.sent).toHaveLength(1)
+
+      await hub.close()
+    })
+
+    it('is a no-op returning 0 when the user holds no local socket', async () => {
+      const sub = makeFakeSub()
+      const hub = await createSessionHub({
+        redis: makeFakeRedis(sub),
+        keyPrefix: PREFIX,
+        logger: silentLogger,
+      })
+      const bystander = fakeSocket()
+      hub.register('cmp-none', 'innocent', 'c1', bystander)
+
+      expect(hub.closeUser('banned')).toBe(0)
+      expect(bystander.closed).toBeNull()
+
+      await hub.close()
+    })
+
+    it('swallows a throwing ws.close and still deregisters the socket', async () => {
+      // A socket already torn down at the transport layer must not stop the
+      // sweep — the registry entry has to go regardless, or a suspended user
+      // keeps receiving fan-out through a zombie entry.
+      const sub = makeFakeSub()
+      const { logger, warn } = makeRecordingLogger()
+      const hub = await createSessionHub({
+        redis: makeFakeRedis(sub),
+        keyPrefix: PREFIX,
+        logger,
+      })
+      const throwing: FakeSocket = {
+        ...fakeSocket(),
+        close: () => {
+          throw new Error('close-boom')
+        },
+      }
+      const healthy = fakeSocket()
+      hub.register('cmp-thr', 'banned', 'c1', throwing)
+      hub.register('cmp-thr', 'banned', 'c2', healthy)
+
+      expect(hub.closeUser('banned')).toBe(2)
+      expect(healthy.closed).toEqual({ code: 4403, reason: 'account_suspended' })
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ err: expect.any(Error) as unknown }),
+        'session-hub failed to close socket for a suspended user',
+      )
+      expect(hub.hasLocal('cmp-thr')).toBe(false)
+
+      await hub.close()
+    })
+  })
 })

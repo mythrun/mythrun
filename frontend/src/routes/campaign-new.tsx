@@ -34,9 +34,22 @@ import { RejectionScreen, type RejectionState } from './campaign-new/rejection.t
 // transition, not a place to return to. The controller owns the stream
 // handle's lifecycle: it closes it on back-out (aborting the Sonnet burn), on
 // replacement, and on unmount.
+//
+// myth-6t06f: the FREEFORM path now runs the same course. Its screen opens the
+// same stream (with the player's concept in place of the picks), so BOTH paths
+// reach the proposal checkpoint before anything is bought. The one thing the
+// controller must remember is which screen the live proposal CAME FROM: "start
+// over" and a commit-time 410 have to return the player to their own input —
+// their three stories, or their own paragraph — never to the other path's.
 
 // The screens the flow can be on. `fork` is always the history root.
 type Screen = 'fork' | 'freeform' | 'guided' | 'synthesizing' | 'preview' | 'rejection'
+
+/** Which input screen produced the proposal now on screen (myth-6t06f). Also
+ *  gates the proposal's "woven from" credit line, which is only true of a
+ *  brainstorm proposal — a freeform one was woven from the player's own words,
+ *  which are already the thing they are reading. */
+type Origin = 'freeform' | 'guided'
 
 // ONE top affordance, one meaning per screen (ux-run2 myth-80an1): the fork's
 // is the EXIT home; the wizard's says what it does ("Leave brainstorm" — never
@@ -113,6 +126,9 @@ export function CampaignNewRoute({
   const [previewPayload, setPreviewPayload] = useState<PreviewPayload | null>(null)
   const [rejection, setRejection] = useState<RejectionState | null>(null)
   const freeform = useFreeformConcept(draftStore)
+  // Which input screen the live proposal came from (myth-6t06f) — set when a
+  // stream is opened, read by every "back to the start of my path" exit.
+  const [origin, setOrigin] = useState<Origin>('guided')
 
   // Stream lifecycle backstop: whenever the handle is replaced — and when the
   // route unmounts — close the PRIOR stream. Closing a terminal stream is a
@@ -180,12 +196,17 @@ export function CampaignNewRoute({
         <FreeformScreen
           initialConcept={freeform.concept}
           onConceptChange={freeform.change}
-          onCommitted={toCampaign}
+          onStreaming={(stream) => {
+            setOrigin('freeform')
+            setSynthesis(stream)
+            go('synthesizing')
+          }}
           onGuided={() => { go('guided') }}
         />
       ) : current === 'guided' ? (
         <GuidedScreen
           onStreaming={(stream) => {
+            setOrigin('guided')
             setSynthesis(stream)
             go('synthesizing')
           }}
@@ -207,9 +228,12 @@ export function CampaignNewRoute({
       ) : current === 'preview' && previewPayload ? (
         <PreviewScreen
           payload={previewPayload}
+          origin={origin}
           onCommitted={toCampaign}
-          onStartOver={() => { go('guided') }}
-          onPreviewExpired={() => { go('guided') }}
+          // Both exits return to the start of the path the player was ON: their
+          // own paragraph, or their three stories. Both re-prefill.
+          onStartOver={() => { go(origin) }}
+          onPreviewExpired={() => { go(origin) }}
           onRejected={(r) => {
             setRejection(r)
             go('rejection')
@@ -220,11 +244,13 @@ export function CampaignNewRoute({
           rejection={rejection}
           onEditAsFreeform={(concept) => {
             // The judged concept becomes the player's working text — persisted
-            // like anything else they'd typed, so a reload keeps it too.
+            // like anything else they'd typed, so a reload keeps it too. On the
+            // freeform path the judged text IS their own words, so this reads as
+            // "here is what you wrote, adjust it".
             freeform.change(concept)
             go('freeform')
           }}
-          onStartOver={() => { go('guided') }}
+          onStartOver={() => { go(origin) }}
         />
       ) : null}
     </Stack>

@@ -121,19 +121,20 @@
       "question": "How do you want to craft your world?"
     },
     "freeform": {
-      "begin": "Begin",
-      "cost": "Building your world takes a few minutes.",
+      "cooldown": "$t(shared.cooldown)",
+      "cost": "$t(shared.draftCost)",
+      "credits": "$t(shared.lowCredits)",
+      "draft": "Draft it →",
       "eyebrow": "In your words",
       "hint": "A few words or a few paragraphs. What makes your world tick?",
       "question": "Describe the world you want to play in.",
-      "rejectedFallback": "$t(shared.rejected)",
-      "retry": "The nib snapped mid-sentence. Try submitting again.",
+      "retry": "$t(shared.interrupted)",
       "switchAction": "Try building from things you love.",
       "switchPrompt": "Intimidated by the blank page?"
     },
     "guided": {
       "cooldown": "$t(shared.cooldown)",
-      "cost": "Drafting takes about a minute. You can revise everything.",
+      "cost": "$t(shared.draftCost)",
       "credits": "$t(shared.lowCredits)",
       "eyebrow": "From what you love",
       "find": "Weave it together →",
@@ -441,6 +442,14 @@
       "stalled": "Still working. This one's taking a while.",
       "tableRoom": "The table has room.",
       "title": "Your character is coming together"
+    },
+    "pronouns": {
+      "heHim": "he/him",
+      "label": "How should we refer to them?",
+      "nameOnly": "By name only",
+      "sheHer": "she/her",
+      "theyThem": "they/them",
+      "unset": "Let the description decide"
     },
     "recap": {
       "eyebrow": "Where you begin"
@@ -776,6 +785,7 @@
   "shared": {
     "beginAgain": "Begin again",
     "cooldown": "That's a lot of tries. Give it a moment.",
+    "draftCost": "Drafting takes about a minute. You can revise everything.",
     "entityGroup": {
       "faction": "Factions",
       "item": "Items",

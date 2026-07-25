@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Heading,
   Text,
@@ -697,14 +698,19 @@ const playScenes: Scene[] = [
         'play.roll.tier.success',
         'play.roll.tier.greatSuccess',
         'play.roll.dc',
+        'play.roll.beats',
+        'play.roll.misses',
         'play.roll.advantage',
         'play.roll.disadvantage',
         'play.roll.dieResult',
+        'play.roll.explainer',
+        'play.roll.dcExplainer',
       ],
       minHeight: 320,
     },
     () => {
       const tk = useCopy()
+      const { t } = useTranslation()
       return (
         <div style={{ maxWidth: 480, margin: '0 auto' }}>
           <RollCard
@@ -720,9 +726,18 @@ const playScenes: Scene[] = [
                 great_success: tk('play.roll.tier.greatSuccess'),
               },
               dc: tk('play.roll.dc'),
+              beats: tk('play.roll.beats'),
+              misses: tk('play.roll.misses'),
               advantage: tk('play.roll.advantage'),
               disadvantage: tk('play.roll.disadvantage'),
               dieResult: tk('play.roll.dieResult'),
+              // The DS stays interpolation-free, so the SHELL resolves the skill +
+              // modifier — and RollCard hands them to this resolver. Use them
+              // rather than `tk`: `useCopy` interpolates SAMPLE_VARS, which has no
+              // skill/modifier, so `tk` here would leak raw {{tokens}} into the
+              // exhibit. This mirrors the real call in routes/play/session-shell.
+              explainerFor: (skill, modifier) => t('play.roll.explainer', { skill, modifier }),
+              dcExplainer: tk('play.roll.dcExplainer'),
             }}
             onRoll={() => undefined}
             onContinue={() => undefined}
@@ -923,9 +938,19 @@ const billingScenes: Scene[] = [
     {
       id: 'bl-packs',
       title: 'Packs & plans (PackList)',
-      note: 'The real PackList: the subscribe/upgrade/manage/current/buy verbs (tiers + prices are sample data).',
+      note: 'The real PackList: the two section headings + their help lines, and the subscribe/upgrade/manage/current/buy verbs (tiers, prices and the grant ledger are sample data).',
       kind: 'real',
-      keys: ['billing.subscribe', 'billing.upgrade', 'billing.manage', 'billing.current', 'billing.buy'],
+      keys: [
+        'billing.plansTitle',
+        'billing.plansHelp',
+        'billing.alaCarteTitle',
+        'billing.alaCarteHelp',
+        'billing.subscribe',
+        'billing.upgrade',
+        'billing.manage',
+        'billing.current',
+        'billing.buy',
+      ],
       minHeight: 320,
     },
     () => {
@@ -935,6 +960,10 @@ const billingScenes: Scene[] = [
           <PackList
             {...fx.packListFixture}
             labels={{
+              plansTitle: tk('billing.plansTitle'),
+              plansHelp: tk('billing.plansHelp'),
+              alaCarteTitle: tk('billing.alaCarteTitle'),
+              alaCarteHelp: tk('billing.alaCarteHelp'),
               subscribe: tk('billing.subscribe'),
               upgrade: tk('billing.upgrade'),
               manage: tk('billing.manage'),
@@ -950,9 +979,17 @@ const billingScenes: Scene[] = [
     {
       id: 'bl-balance',
       title: 'Credit balance + history',
-      note: 'The real CreditBalance (bucket labels) and PurchaseHistory (empty-state label; rows are sample data).',
+      note: 'The real CreditBalance (bucket labels + the explainer that sits beside each number) and PurchaseHistory (empty-state label; rows are sample data). The zero-state explainers are authorable here even though both buckets are stocked in this exhibit.',
       kind: 'real',
-      keys: ['billing.sessionLabel', 'billing.worldGenLabel', 'billing.history.empty'],
+      keys: [
+        'billing.sessionLabel',
+        'billing.sessionHelp',
+        'billing.sessionZeroHelp',
+        'billing.worldGenLabel',
+        'billing.worldGenHelp',
+        'billing.worldGenZeroHelp',
+        'billing.history.empty',
+      ],
       minHeight: 220,
     },
     () => {
@@ -960,7 +997,15 @@ const billingScenes: Scene[] = [
       return (
         <Ground>
           <Stack gap={4}>
-            <CreditBalance {...fx.creditBalanceFixture} sessionLabel={tk('billing.sessionLabel')} worldGenLabel={tk('billing.worldGenLabel')} />
+            <CreditBalance
+              {...fx.creditBalanceFixture}
+              sessionLabel={tk('billing.sessionLabel')}
+              sessionHelp={tk('billing.sessionHelp')}
+              sessionZeroHelp={tk('billing.sessionZeroHelp')}
+              worldGenLabel={tk('billing.worldGenLabel')}
+              worldGenHelp={tk('billing.worldGenHelp')}
+              worldGenZeroHelp={tk('billing.worldGenZeroHelp')}
+            />
             <Divider />
             <PurchaseHistory {...fx.purchaseHistoryFixture} emptyLabel={tk('billing.history.empty')} />
           </Stack>

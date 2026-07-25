@@ -117,7 +117,7 @@ function makeSession(
 const EMPTY_CACHE: KnowledgeCache = { wiki: null, graph: null, index: null, loading: false, failed: true }
 const EMPTY_SHEET: SessionSheetState = {
   sheet: null,
-  overlay: { hp: null, maxHp: null, gold: null, conditionLog: [] },
+  overlay: { hp: null, maxHp: null, gold: null, conditionLog: [], activeConditions: null },
   loading: false,
   failed: true,
 }

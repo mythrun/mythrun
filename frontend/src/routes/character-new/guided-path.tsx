@@ -10,8 +10,11 @@ import {
   canonicalClassName,
   hydrateGuidedState,
   useCharacterDraft,
+  toPronounChoice,
+  pronounsPick,
   type GuidedChoiceDraft,
   type GuidedState,
+  type PronounChoice,
   type SessionDraftStore,
 } from '@mythrun/client-core/character'
 import { CLASS_OPTIONS, SPECIES, BACKGROUNDS } from '@mythrun/client-core/srd'
@@ -142,14 +145,19 @@ function selectionForStep(step: GuidedStep, choice: GuidedChoiceDraft): string |
 
 /** The structured picks for the wire (the myth-4jhrk `GuidedChoicesPayload`
  *  contract) — canonical SRD names, present-only fields
- *  (exactOptionalPropertyTypes: absent, never explicitly undefined). */
-function toGuidedChoicesPayload(state: GuidedState): GuidedChoicesPayload {
+ *  (exactOptionalPropertyTypes: absent, never explicitly undefined).
+ *  myth-gdycq: the pronoun pick joins them; its default contributes nothing. */
+function toGuidedChoicesPayload(
+  state: GuidedState,
+  pronouns: PronounChoice,
+): GuidedChoicesPayload {
   const { className, subclass, species, background } = state.choice
   return {
     ...(className !== undefined && { class: canonicalClassName(className) }),
     ...(subclass !== undefined && { subclass }),
     ...(species !== undefined && { species }),
     ...(background !== undefined && { background }),
+    ...pronounsPick(pronouns),
   }
 }
 
@@ -237,6 +245,8 @@ function useGuidedFlow(
   setSelectedId: (id: string | null) => void
   notesText: string
   handleNotesChange: (value: string) => void
+  pronouns: PronounChoice
+  handlePronounsChange: (choice: PronounChoice) => void
   groundingText: string
   handleGroundingChange: (value: string) => void
 } {
@@ -248,6 +258,12 @@ function useGuidedFlow(
   )
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [notesText, setNotesText] = useState(draft.initial.guided?.notes ?? '')
+  // The pronoun pick is player input like any other — restored on mount and
+  // persisted on change (myth-gdycq), so a back-to-chooser round-trip or a
+  // reload never silently drops it.
+  const [pronouns, setPronouns] = useState<PronounChoice>(() =>
+    toPronounChoice(draft.initial.pronouns),
+  )
   const [groundingText, setGroundingText] = useState(draft.initial.groundingText ?? '')
 
   // Persist the committed picks whenever the reducer's choice advances. `state.choice`
@@ -270,6 +286,10 @@ function useGuidedFlow(
     setGroundingText(value)
     draft.update({ groundingText: value })
   }
+  const handlePronounsChange = (choice: PronounChoice): void => {
+    setPronouns(choice)
+    draft.update({ pronouns: choice })
+  }
   return {
     state,
     dispatch,
@@ -277,6 +297,8 @@ function useGuidedFlow(
     setSelectedId,
     notesText,
     handleNotesChange,
+    pronouns,
+    handlePronounsChange,
     groundingText,
     handleGroundingChange,
   }
@@ -318,12 +340,14 @@ function submitCompletedFlow(args: {
   state: GuidedState
   startingLevel: number
   groundingText: string
+  pronouns: PronounChoice
   submit: GuidedPathProps['submit']
   onSubmitted: () => void
   setNotice: (notice: Notice) => void
   submitting: { current: boolean }
 }): void {
-  const { state, startingLevel, groundingText, submit, onSubmitted, setNotice, submitting } = args
+  const { state, startingLevel, groundingText, pronouns, submit, onSubmitted, setNotice, submitting } =
+    args
   if (groundingText.trim().length < MIN_CHARS) {
     setNotice('tooShort')
     return
@@ -336,7 +360,7 @@ function submitCompletedFlow(args: {
   submitting.current = true
   setNotice(null)
   const conceptText = flattenToConceptText(choice, startingLevel)
-  void submit(conceptText, groundingText.trim(), toGuidedChoicesPayload(state))
+  void submit(conceptText, groundingText.trim(), toGuidedChoicesPayload(state, pronouns))
     .then(() => {
       onSubmitted()
     })
@@ -360,16 +384,10 @@ export function GuidedPath({
 }: GuidedPathProps): React.JSX.Element {
   const { t } = useTranslation()
   const resolve = makeResolve(t)
-  const {
-    state,
-    dispatch,
-    selectedId,
-    setSelectedId,
-    notesText,
-    handleNotesChange,
-    groundingText,
-    handleGroundingChange,
-  } = useGuidedFlow(startingLevel, store ?? null, campaignId)
+  // Kept as ONE object rather than a ten-name destructure: the flow's durable
+  // state has outgrown the point where naming each field earns its lines.
+  const flow = useGuidedFlow(startingLevel, store ?? null, campaignId)
+  const { state, dispatch, selectedId } = flow
   const [notice, setNotice] = useState<Notice>(null)
   // A synchronous in-flight guard (a ref, not state — a double-press fires before a
   // state flush) so a second Continue can't fire a second submit.
@@ -386,14 +404,26 @@ export function GuidedPath({
     if (selectedId === null) return
     dispatch({ type: 'choose', value: selectedId })
   }
+  const stepBack = (): void => {
+    dispatch({ type: 'back' })
+  }
 
   const continueNotes = (): void => {
     // Notes is optional — an empty answer is a valid skip (the reducer/flatten drop it).
-    dispatch({ type: 'choose', value: notesText.trim() })
+    dispatch({ type: 'choose', value: flow.notesText.trim() })
   }
 
   const handleGrounding = (): void => {
-    submitCompletedFlow({ state, startingLevel, groundingText, submit, onSubmitted, setNotice, submitting })
+    submitCompletedFlow({
+      state,
+      startingLevel,
+      groundingText: flow.groundingText,
+      pronouns: flow.pronouns,
+      submit,
+      onSubmitted,
+      setNotice,
+      submitting,
+    })
   }
 
   const step = state.step
@@ -407,12 +437,10 @@ export function GuidedPath({
         counter={counter}
         {...(situation !== undefined ? { situation } : {})}
         groundingWhisper={groundingWhisper}
-        value={groundingText}
-        onChange={handleGroundingChange}
+        value={flow.groundingText}
+        onChange={flow.handleGroundingChange}
         onSubmit={handleGrounding}
-        onBack={() => {
-          dispatch({ type: 'back' })
-        }}
+        onBack={stepBack}
         notice={notice}
         t={t}
       />
@@ -422,12 +450,12 @@ export function GuidedPath({
       <NotesScreen
         rail={rail}
         counter={counter}
-        value={notesText}
-        onChange={handleNotesChange}
+        value={flow.notesText}
+        onChange={flow.handleNotesChange}
+        pronouns={flow.pronouns}
+        onPronounsChange={flow.handlePronounsChange}
         onSubmit={continueNotes}
-        onBack={() => {
-          dispatch({ type: 'back' })
-        }}
+        onBack={stepBack}
         t={t}
       />
     )
@@ -442,16 +470,10 @@ export function GuidedPath({
         question={questionFor(step, state.choice, t, resolve)}
         options={optionsFor(step, state.choice.className, resolve)}
         selectedId={selectedId}
-        onSelect={setSelectedId}
+        onSelect={flow.setSelectedId}
         onNext={commit}
-        onBack={() => {
-          // The Class step is the flow's first screen: Back leaves to the chooser.
-          if (step === 'class') {
-            onBack()
-            return
-          }
-          dispatch({ type: 'back' })
-        }}
+        // The Class step is the flow's first screen: Back leaves to the chooser.
+        onBack={step === 'class' ? onBack : stepBack}
         onSkipToFreeform={onSkipToFreeform}
         labels={builderLabels(t, step)}
       />

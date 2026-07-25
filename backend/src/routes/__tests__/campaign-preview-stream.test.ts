@@ -50,7 +50,7 @@ import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
 vi.mock('../../llm/prep/synthesize-concept.js', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../../llm/prep/synthesize-concept.js')>()
-  return { ...actual, streamSynthesizeConcept: vi.fn() }
+  return { ...actual, streamSynthesizeConcept: vi.fn(), streamSynthesizeFromConcept: vi.fn() }
 })
 vi.mock('../../llm/prep/input-gate.js', () => ({
   runInputGate: vi.fn(),
@@ -58,6 +58,7 @@ vi.mock('../../llm/prep/input-gate.js', () => ({
 
 import {
   streamSynthesizeConcept,
+  streamSynthesizeFromConcept,
   type SynthesizerOutput,
   type SynthesizerStream,
 } from '../../llm/prep/synthesize-concept.js'
@@ -65,6 +66,7 @@ import { runInputGate } from '../../llm/prep/input-gate.js'
 import type { LanguageModelUsage } from 'ai'
 
 const streamSynthesizeConceptMock = vi.mocked(streamSynthesizeConcept)
+const streamSynthesizeFromConceptMock = vi.mocked(streamSynthesizeFromConcept)
 const runInputGateMock = vi.mocked(runInputGate)
 
 const STUB_USAGE: LanguageModelUsage = {
@@ -85,6 +87,7 @@ const VALID_PICKS = [
   { title: 'Stories about memory', whyILikeIt: 'what things remember' },
 ]
 
+const TITLE = 'The Lamp Archipelago'
 const CONCEPT =
   'A rain-soaked archipelago where lighthouses are sentient and remember every shipwreck.'
 const INTENT: SynthesizerOutput['intentSummary'] = {
@@ -109,7 +112,7 @@ function fakeSynthStream(opts: {
     // consumes it); the route's `await` still observes the rejection.
     output.catch(() => undefined)
   } else {
-    output = Promise.resolve(opts.output ?? { concept: CONCEPT, intentSummary: INTENT })
+    output = Promise.resolve(opts.output ?? { title: TITLE, concept: CONCEPT, intentSummary: INTENT })
   }
   return { deltas: gen(), output }
 }
@@ -229,9 +232,10 @@ describe('POST /api/campaigns/synthesize-preview/stream (myth-umggn)', () => {
     redis = new IoredisMock()
 
     streamSynthesizeConceptMock.mockReset()
+    streamSynthesizeFromConceptMock.mockReset()
     runInputGateMock.mockReset()
     streamSynthesizeConceptMock.mockReturnValue(
-      fakeSynthStream({ deltas: [CONCEPT], output: { concept: CONCEPT, intentSummary: INTENT } }),
+      fakeSynthStream({ deltas: [CONCEPT], output: { title: TITLE, concept: CONCEPT, intentSummary: INTENT } }),
     )
     runInputGateMock.mockResolvedValue({
       verdict: 'allow',
@@ -259,7 +263,7 @@ describe('POST /api/campaigns/synthesize-preview/stream (myth-umggn)', () => {
     streamSynthesizeConceptMock.mockReturnValue(
       fakeSynthStream({
         deltas: ['A rain-soaked archipelago ', 'where lighthouses are sentient ', 'and remember every shipwreck.'],
-        output: { concept: CONCEPT, intentSummary: INTENT },
+        output: { title: TITLE, concept: CONCEPT, intentSummary: INTENT },
       }),
     )
 
@@ -272,7 +276,8 @@ describe('POST /api/campaigns/synthesize-preview/stream (myth-umggn)', () => {
     const deltas = events.filter((e) => e.type === 'delta')
     expect(deltas.map((d) => d.text).join('')).toBe(CONCEPT)
     const terminal = events[events.length - 1]
-    expect(terminal).toMatchObject({ type: 'complete', concept: CONCEPT })
+    // myth-z3icr: the terminal carries the world's NAME alongside the prose.
+    expect(terminal).toMatchObject({ type: 'complete', title: TITLE, concept: CONCEPT })
     const previewId = String(terminal?.previewId)
     expect(previewId).toMatch(/^[0-9a-f-]{36}$/)
 
@@ -282,6 +287,7 @@ describe('POST /api/campaigns/synthesize-preview/stream (myth-umggn)', () => {
 
     // Parked EXACTLY like the non-streaming route: same store, reworkCount:0.
     const stored = await getPreview(redis, REDIS_KEY_PREFIX, userId, previewId)
+    expect(stored?.title).toBe(TITLE)
     expect(stored?.concept).toBe(CONCEPT)
     expect(stored?.reworkCount).toBe(0)
 
@@ -306,7 +312,7 @@ describe('POST /api/campaigns/synthesize-preview/stream (myth-umggn)', () => {
     streamSynthesizeConceptMock.mockReturnValue(
       fakeSynthStream({
         deltas: ['A half-streamed brief that the repair chain rewrote'],
-        output: { concept: repaired, intentSummary: INTENT },
+        output: { title: TITLE, concept: repaired, intentSummary: INTENT },
       }),
     )
 
@@ -392,6 +398,110 @@ describe('POST /api/campaigns/synthesize-preview/stream (myth-umggn)', () => {
     expect(res.statusCode).toBe(400)
     expect(res.json<{ code: string }>().code).toBe('invalid_body')
     expect(streamSynthesizeConceptMock).not.toHaveBeenCalled()
+  })
+
+
+  // -----------------------------------------------------------------------
+  // myth-6t06f — the FREEFORM arm streams the same proposal from the
+  // player's own words, gating them BEFORE a token of Sonnet burns.
+  // -----------------------------------------------------------------------
+
+  describe('freeform proposal (myth-6t06f)', () => {
+    const PLAYER_CONCEPT =
+      'A drowned harbour town where the salvage guilds fight over what the tide gives back.'
+    const FREEFORM_TITLE = 'The Ninth Tide'
+    const FREEFORM_CONCEPT = 'The drowned harbour town, rendered back as a proposal.'
+
+    beforeEach(() => {
+      streamSynthesizeFromConceptMock.mockReturnValue(
+        fakeSynthStream({
+          deltas: [FREEFORM_CONCEPT],
+          output: { title: FREEFORM_TITLE, concept: FREEFORM_CONCEPT, intentSummary: INTENT },
+        }),
+      )
+    })
+
+    it('streams the player concept into a titled complete frame and parks it', async () => {
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
+
+      const res = await inject(app, devSub, { concept: PLAYER_CONCEPT })
+
+      expect(res.statusCode).toBe(200)
+      const events = dataFrames(res.body)
+      expect(events.filter((e) => e.type === 'delta').map((d) => d.text).join('')).toBe(
+        FREEFORM_CONCEPT,
+      )
+      const terminal = events[events.length - 1]
+      expect(terminal).toMatchObject({
+        type: 'complete',
+        title: FREEFORM_TITLE,
+        concept: FREEFORM_CONCEPT,
+      })
+
+      // Parked EXACTLY like a brainstorm proposal — same store, same record.
+      const stored = await getPreview(redis, REDIS_KEY_PREFIX, userId, String(terminal?.previewId))
+      expect(stored?.title).toBe(FREEFORM_TITLE)
+      expect(stored?.reworkCount).toBe(0)
+
+      // The freeform synthesizer ran; the brainstorm one never did.
+      expect(streamSynthesizeFromConceptMock).toHaveBeenCalledTimes(1)
+      expect(streamSynthesizeFromConceptMock.mock.calls[0]?.[0]).toBe(PLAYER_CONCEPT)
+      expect(streamSynthesizeConceptMock).not.toHaveBeenCalled()
+    })
+
+    it('gates the player RAW words ONCE, before the stream opens', async () => {
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
+
+      await inject(app, devSub, { concept: PLAYER_CONCEPT })
+
+      // One gate call, on the PLAYER's text — never a second pass over the
+      // synthesis (which would double the cost and re-judge unaltered text).
+      expect(runInputGateMock).toHaveBeenCalledTimes(1)
+      expect(runInputGateMock.mock.calls[0]?.[0]?.concept).toBe(PLAYER_CONCEPT)
+      expect(runInputGateMock.mock.calls[0]?.[0]?.intentSummary).toBeNull()
+      expect(runInputGateMock.mock.calls[0]?.[0]?.abortSignal).toBeInstanceOf(AbortSignal)
+    })
+
+    it('a rejected concept ends in a rejected frame echoing the PLAYER text, with ZERO synthesis', async () => {
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
+      runInputGateMock.mockResolvedValue({
+        verdict: 'reject',
+        reason: 'inappropriate',
+        rejectionMessage: "That's off the table here.",
+        reasoning: 'server-only reasoning',
+        usage: STUB_USAGE,
+      })
+
+      const res = await inject(app, devSub, { concept: PLAYER_CONCEPT })
+
+      const events = dataFrames(res.body)
+      expect(events[events.length - 1]).toEqual({
+        type: 'rejected',
+        code: 'concept_rejected',
+        reason: 'inappropriate',
+        rejectionMessage: "That's off the table here.",
+        // The judged text IS the player's own — the rejection screen shows it
+        // and seeds "adjust it yourself" from it.
+        synthesizedConcept: PLAYER_CONCEPT,
+      })
+      expect(res.body).not.toContain('server-only reasoning')
+      // Not one delta arrived: the gate ran before the stream did.
+      expect(events.some((e) => e.type === 'delta')).toBe(false)
+      expect(streamSynthesizeFromConceptMock).not.toHaveBeenCalled()
+      // Same side-effect as every other rejection.
+      expect(await redis.get(`${REDIS_KEY_PREFIX}rejection_storm:${userId}`)).toBe('1')
+    })
+
+    it('400 invalid_body as plain JSON on a concept under the 20-char floor', async () => {
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
+
+      const res = await inject(app, devSub, { concept: 'too short' })
+
+      expect(res.statusCode).toBe(400)
+      expect(res.json<{ code: string }>().code).toBe('invalid_body')
+      expect(runInputGateMock).not.toHaveBeenCalled()
+      expect(streamSynthesizeFromConceptMock).not.toHaveBeenCalled()
+    })
   })
 
   // -----------------------------------------------------------------------

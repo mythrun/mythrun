@@ -39,7 +39,7 @@ import { createTestPool } from '../../repo/__tests__/_helpers/test-pool.js'
 vi.mock('../../llm/prep/synthesize-concept.js', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../../llm/prep/synthesize-concept.js')>()
-  return { ...actual, synthesizeConcept: vi.fn() }
+  return { ...actual, synthesizeConcept: vi.fn(), synthesizeFromConcept: vi.fn() }
 })
 vi.mock('../../llm/prep/input-gate.js', () => ({
   runInputGate: vi.fn(),
@@ -49,13 +49,14 @@ vi.mock('../../llm/prep/revise-concept.js', () => ({
   reviseConcept: vi.fn(),
 }))
 
-import { synthesizeConcept } from '../../llm/prep/synthesize-concept.js'
+import { synthesizeConcept, synthesizeFromConcept } from '../../llm/prep/synthesize-concept.js'
 import { runInputGate } from '../../llm/prep/input-gate.js'
 import { reviseConcept } from '../../llm/prep/revise-concept.js'
 import { putPreview } from '../../preview/preview-store.js'
 import type { LanguageModelUsage } from 'ai'
 
 const synthesizeConceptMock = vi.mocked(synthesizeConcept)
+const synthesizeFromConceptMock = vi.mocked(synthesizeFromConcept)
 const runInputGateMock = vi.mocked(runInputGate)
 const reviseConceptMock = vi.mocked(reviseConcept)
 
@@ -180,6 +181,7 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
     reviseConceptMock.mockReset()
     // Default revised output; individual A4 tests override as needed.
     reviseConceptMock.mockResolvedValue({
+      title: 'The Revised Coast',
       concept: 'A revised concept honoring the change while keeping the original spine intact.',
       intentSummary: {
         aesthetics: ['revised'],
@@ -188,7 +190,19 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
       },
     })
     // Default synth output; individual tests override as needed.
+    synthesizeFromConceptMock.mockReset()
+    synthesizeFromConceptMock.mockResolvedValue({
+      title: 'The Ninth Tide',
+      concept: "A drowned harbour town the player described, rendered back as a proposal they can approve.",
+      intentSummary: {
+        aesthetics: ['brine'],
+        themes: ['salvage'],
+        sourcesInternal: ["the player's own description (drowned harbour town)"],
+      },
+      usage: STUB_USAGE,
+    })
     synthesizeConceptMock.mockResolvedValue({
+      title: 'The Lamp Archipelago',
       concept:
         'A rain-soaked archipelago where lighthouses are sentient and remember every shipwreck they have ever witnessed.',
       intentSummary: {
@@ -225,6 +239,7 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
     const synthesizedConcept =
       'A quiet valley where the seasons are governed by a sleeping god no one remembers naming.'
     synthesizeConceptMock.mockResolvedValue({
+      title: 'The Sleeping Valley',
       concept: synthesizedConcept,
       intentSummary: {
         aesthetics: ['moss', 'stone'],
@@ -237,13 +252,17 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
     const res = await inject(app, devSub, { picks: VALID_PICKS })
 
     expect(res.statusCode).toBe(201)
-    const body = res.json<{ previewId: string; concept: string }>()
+    const body = res.json<{ previewId: string; title: string; concept: string }>()
     expect(body.previewId).toMatch(/^[0-9a-f-]{36}$/)
     expect(body.concept).toBe(synthesizedConcept)
+    // myth-z3icr: the world's name rides the 201 so the proposal page can
+    // headline it instead of mining it out of the prose.
+    expect(body.title).toBe('The Sleeping Valley')
 
     // The stored preview round-trips for the same user with reworkCount:0.
     const stored = await getPreview(redis, REDIS_KEY_PREFIX, userId, body.previewId)
     expect(stored).not.toBeNull()
+    expect(stored?.title).toBe('The Sleeping Valley')
     expect(stored?.concept).toBe(synthesizedConcept)
     expect(stored?.reworkCount).toBe(0)
 
@@ -285,6 +304,7 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
     const { devSub } = await seedUserWithCredits(pool, scope, 1)
     const synth = 'A clockwork bureaucracy of mountain-monks whose ledgers track every broken promise.'
     synthesizeConceptMock.mockResolvedValue({
+      title: 'The Ledger Peaks',
       concept: synth,
       intentSummary: { aesthetics: ['ink'], themes: ['promise'], sourcesInternal: ['x'] },
       usage: STUB_USAGE,
@@ -354,17 +374,105 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
     expect(synthesizeConceptMock).not.toHaveBeenCalled()
   })
 
+
+  // -----------------------------------------------------------------------
+  // myth-6t06f — the FREEFORM arm: the player's own concept buys the same
+  // proposal checkpoint the brainstorm path has.
+  // -----------------------------------------------------------------------
+
+  describe('freeform proposal (myth-6t06f)', () => {
+    const PLAYER_CONCEPT =
+      'A drowned harbour town where the salvage guilds fight over what the tide gives back.'
+
+    it('201 synthesizes the player concept into a titled proposal and parks it', async () => {
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
+
+      const res = await inject(app, devSub, { concept: PLAYER_CONCEPT })
+
+      expect(res.statusCode).toBe(201)
+      const body = res.json<{ previewId: string; title: string; concept: string }>()
+      expect(body.title).toBe('The Ninth Tide')
+      expect(body.concept).toContain('drowned harbour town')
+
+      // Parked EXACTLY as a brainstorm proposal is — same store, same record.
+      const stored = await getPreview(redis, REDIS_KEY_PREFIX, userId, body.previewId)
+      expect(stored?.title).toBe('The Ninth Tide')
+      expect(stored?.reworkCount).toBe(0)
+
+      // The freeform synthesizer ran; the brainstorm one never did.
+      expect(synthesizeFromConceptMock).toHaveBeenCalledExactlyOnceWith(PLAYER_CONCEPT)
+      expect(synthesizeConceptMock).not.toHaveBeenCalled()
+    })
+
+    it('gates the player RAW words BEFORE synthesizing (one gate call, no laundering)', async () => {
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
+
+      await inject(app, devSub, { concept: PLAYER_CONCEPT })
+
+      // The gate judged what the PLAYER wrote, not what the synthesizer wrote.
+      expect(runInputGateMock).toHaveBeenCalledTimes(1)
+      expect(runInputGateMock.mock.calls[0]?.[0]?.concept).toBe(PLAYER_CONCEPT)
+      expect(runInputGateMock.mock.calls[0]?.[0]?.intentSummary).toBeNull()
+    })
+
+    it('422 on a rejected concept echoes the PLAYER text and burns ZERO synthesis', async () => {
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
+      runInputGateMock.mockResolvedValue({
+        verdict: 'reject',
+        reason: 'clone_intent',
+        rejectionMessage: 'This reads as a clone of a copyrighted work.',
+        reasoning: 'clone_intent: server-only reasoning',
+        usage: STUB_USAGE,
+      })
+
+      const res = await inject(app, devSub, { concept: PLAYER_CONCEPT })
+
+      expect(res.statusCode).toBe(422)
+      const body = res.json<{ code: string; synthesizedConcept?: string; reasoning?: string }>()
+      expect(body.code).toBe('concept_rejected')
+      // The rejection SCREEN needs the judged text to render it and to seed
+      // "adjust it yourself" — here that text is the player's own.
+      expect(body.synthesizedConcept).toBe(PLAYER_CONCEPT)
+      expect(body.reasoning).toBeUndefined()
+      // The gate fired first, so no Sonnet synthesis was ever paid for.
+      expect(synthesizeFromConceptMock).not.toHaveBeenCalled()
+    })
+
+    it('403 insufficient_credits burns nothing at all on the freeform arm', async () => {
+      const { devSub } = await seedUserWithCredits(pool, scope, 0)
+
+      const res = await inject(app, devSub, { concept: PLAYER_CONCEPT })
+
+      expect(res.statusCode).toBe(403)
+      expect(runInputGateMock).not.toHaveBeenCalled()
+      expect(synthesizeFromConceptMock).not.toHaveBeenCalled()
+    })
+
+    it('400 invalid_body on a concept under the 20-char floor — no LLM call', async () => {
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
+
+      const res = await inject(app, devSub, { concept: 'too short' })
+
+      expect(res.statusCode).toBe(400)
+      expect(res.json<{ code: string }>().code).toBe('invalid_body')
+      expect(runInputGateMock).not.toHaveBeenCalled()
+      expect(synthesizeFromConceptMock).not.toHaveBeenCalled()
+    })
+  })
+
   // -----------------------------------------------------------------------
   // A4 — POST /api/campaigns/preview/:previewId/rework (single-shot rework)
   // -----------------------------------------------------------------------
 
   describe('rework (MYT-89 A4)', () => {
+    const ORIGINAL_TITLE = 'The Drowned Calendar'
     const ORIGINAL_CONCEPT =
       'A drowned cathedral-city where the tide keeps the calendar and every bell is rung by the dead.'
 
     it('200 reworks a fresh preview: overwrites the concept and sets reworkCount:1', async () => {
       const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
       const previewId = await putPreview(redis, REDIS_KEY_PREFIX, userId, {
+        title: ORIGINAL_TITLE,
         concept: ORIGINAL_CONCEPT,
         intentSummary: STUB_INTENT,
         reworkCount: 0,
@@ -372,6 +480,7 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
       const revised =
         'A sun-bleached cathedral-city where the tide keeps the calendar and the living ring the bells at noon.'
       reviseConceptMock.mockResolvedValue({
+        title: 'The Noon Bells',
         concept: revised,
         intentSummary: { aesthetics: ['bleached'], themes: ['renewal'], sourcesInternal: ['s'] },
       })
@@ -379,19 +488,23 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
       const res = await injectRework(app, devSub, previewId, { change: 'make it brighter, less morbid' })
 
       expect(res.statusCode).toBe(200)
-      const body = res.json<{ previewId: string; concept: string }>()
+      const body = res.json<{ previewId: string; title: string; concept: string }>()
       expect(body.previewId).toBe(previewId)
       expect(body.concept).toBe(revised)
+      expect(body.title).toBe('The Noon Bells')
 
       // Store now holds the reworked concept with reworkCount bumped to 1.
       const stored = await getPreview(redis, REDIS_KEY_PREFIX, userId, previewId)
+      expect(stored?.title).toBe('The Noon Bells')
       expect(stored?.concept).toBe(revised)
       expect(stored?.reworkCount).toBe(1)
 
       // The prior concept + the change note were the revise inputs.
       expect(reviseConceptMock).toHaveBeenCalledTimes(1)
       expect(reviseConceptMock.mock.calls[0]).toEqual([
-        ORIGINAL_CONCEPT,
+        // myth-z3icr: the prior TITLE travels with the concept, so a revision
+        // can keep the name the player was shown.
+        { title: ORIGINAL_TITLE, concept: ORIGINAL_CONCEPT },
         'make it brighter, less morbid',
       ])
     })
@@ -399,12 +512,14 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
     it('422 on a gate-rejected rework leaves the ORIGINAL concept and reworkCount:0 intact', async () => {
       const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
       const previewId = await putPreview(redis, REDIS_KEY_PREFIX, userId, {
+        title: ORIGINAL_TITLE,
         concept: ORIGINAL_CONCEPT,
         intentSummary: STUB_INTENT,
         reworkCount: 0,
       })
       const rejectedRevision = 'A revised concept that reads as a clone of a copyrighted work.'
       reviseConceptMock.mockResolvedValue({
+        title: 'The Borrowed Coast',
         concept: rejectedRevision,
         intentSummary: STUB_INTENT,
       })
@@ -441,6 +556,7 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
     it('409 rework_exhausted when the preview was already reworked (reworkCount:1) — no LLM call', async () => {
       const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
       const previewId = await putPreview(redis, REDIS_KEY_PREFIX, userId, {
+        title: ORIGINAL_TITLE,
         concept: ORIGINAL_CONCEPT,
         intentSummary: STUB_INTENT,
         reworkCount: 1,
@@ -468,6 +584,7 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
       const owner = await seedUserWithCredits(pool, scope, 1, 0)
       const other = await seedUserWithCredits(pool, scope, 1, 1)
       const previewId = await putPreview(redis, REDIS_KEY_PREFIX, owner.userId, {
+        title: ORIGINAL_TITLE,
         concept: ORIGINAL_CONCEPT,
         intentSummary: STUB_INTENT,
         reworkCount: 0,
@@ -486,6 +603,7 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
     it('400 invalid_body on an empty change note — no LLM call', async () => {
       const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
       const previewId = await putPreview(redis, REDIS_KEY_PREFIX, userId, {
+        title: ORIGINAL_TITLE,
         concept: ORIGINAL_CONCEPT,
         intentSummary: STUB_INTENT,
         reworkCount: 0,
@@ -506,6 +624,7 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
     it('403 insufficient_credits when balance is 0 — reviseConcept is NEVER called', async () => {
       const { userId, devSub } = await seedUserWithCredits(pool, scope, 0)
       const previewId = await putPreview(redis, REDIS_KEY_PREFIX, userId, {
+        title: ORIGINAL_TITLE,
         concept: ORIGINAL_CONCEPT,
         intentSummary: STUB_INTENT,
         reworkCount: 0,
@@ -527,6 +646,7 @@ describe('POST /api/campaigns/synthesize-preview (MYT-89 A3)', () => {
     it('429 rejection_storm_cooldown when the counter is over threshold — no LLM call', async () => {
       const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
       const previewId = await putPreview(redis, REDIS_KEY_PREFIX, userId, {
+        title: ORIGINAL_TITLE,
         concept: ORIGINAL_CONCEPT,
         intentSummary: STUB_INTENT,
         reworkCount: 0,

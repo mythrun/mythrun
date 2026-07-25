@@ -104,7 +104,11 @@ const CACHE: KnowledgeCache = {
 }
 const CACHE_NULL: KnowledgeCache = { wiki: null, graph: null, index: null, loading: false, failed: true }
 
-const OVERLAY: CharacterOverlay = { hp: null, maxHp: null, gold: null, conditionLog: [] }
+// `activeConditions: null` = no ledger frame has spoken yet (not `[]`, which
+// would mean "currently none"). Folded on the overlay, not yet rendered.
+const OVERLAY: CharacterOverlay = {
+  hp: null, maxHp: null, gold: null, conditionLog: [], activeConditions: null,
+}
 const SHEET: CuratedSheet = {
   name: 'Kessa Vurm',
   identityLine: 'Level 3 · Human Fighter · Toll-clerk of Greenward',

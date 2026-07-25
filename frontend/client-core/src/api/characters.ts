@@ -40,11 +40,19 @@ import { defineEndpoint, type ApiContext } from './endpoint.ts'
 // "Life Domain became Grave Domain" forensics). Freeform omits the field.
 // -----------------------------------------------------------------------------
 
+// myth-gdycq: `pronouns` is a closed token set (the backend `PronounsSchema`),
+// not free text — the server PINS the value over the model's echo, which only
+// works against tokens it defines. It rides the structured-pick channel from
+// BOTH creation paths, so "guided choices" names the channel, not the builder.
+export const PRONOUN_TOKENS = ['she_her', 'he_him', 'they_them', 'name_only'] as const
+export type PronounToken = (typeof PRONOUN_TOKENS)[number]
+
 const GuidedChoicesSchema = z.object({
   class: z.string().min(1).max(60).optional(),
   subclass: z.string().min(1).max(60).optional(),
   species: z.string().min(1).max(60).optional(),
   background: z.string().min(1).max(60).optional(),
+  pronouns: z.enum(PRONOUN_TOKENS).optional(),
 })
 export type GuidedChoicesPayload = z.infer<typeof GuidedChoicesSchema>
 
