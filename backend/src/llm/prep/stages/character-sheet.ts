@@ -32,7 +32,8 @@ import { type Repo, expectCommitted } from '../../../repo/index.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
-import { generateObject } from '../../ai.js'
+import { generateObject, type GenerateObjectResult } from '../../ai.js'
+import { LlmStructuredOutputError } from '../../errors.js'
 import { SONNET } from '../../models.js'
 import {
   CharacterSheetOutputSchema,
@@ -82,7 +83,10 @@ export interface CharacterSheetStageResult {
 // (e.g. a level-9 spell on a level-1 caster). A coherence violation is a
 // regenerate, not a repair — so we re-run the whole generation up to this many
 // times, accumulating spend across every attempt.
-const COHERENCE_MAX_ATTEMPTS = 3
+// myth-evpfr widens this budget from coherence-only to BOTH bad-draw classes:
+// a coherence violation AND a schema rejection (LlmStructuredOutputError) now
+// spend an attempt and regenerate. Rationale below, at the loop.
+const SHEET_MAX_ATTEMPTS = 3
 
 /**
  * MYT-70 §3.2 — thrown by `validateCoherence` when the generated sheet is
@@ -108,22 +112,47 @@ export async function runCharacterSheetStage(
   let inputTokens = 0
   let outputTokens = 0
   let sheet: CharacterSheetOutput | undefined
-  let lastCoherenceError: CharacterSheetCoherenceError | undefined
+  let lastDrawError: Error | undefined
 
-  // Generate→validate loop. Each attempt is a fresh generation; a coherence
-  // violation discards the output and regenerates (the SDK's JSON-repair only
-  // fixes malformed structure, never mechanical incoherence). Spend from EVERY
-  // attempt — including the discarded incoherent ones — accrues to the cost.
-  for (let attempt = 0; attempt < COHERENCE_MAX_ATTEMPTS; attempt += 1) {
-    const result = await generateObject({
-      model: SONNET,
-      schema: CharacterSheetOutputSchema,
-      schemaName: 'CharacterSheetOutputSchema',
-      callSite: 'character-sheet',
-      prompt,
-      temperature: 0.5,
-      maxRetries: 3,
-    })
+  // Generate→validate loop. Each attempt is a fresh generation. TWO defect
+  // classes spend an attempt and regenerate:
+  //
+  //   - COHERENCE violation — Zod-clean but mechanically wrong against the SRD
+  //     slot tables (e.g. a level-3 spell on a level-1 caster). The SDK's
+  //     JSON-repair cannot fix that; only a fresh draw can.
+  //   - SCHEMA rejection (myth-evpfr) — `generateObject` exhausted its own
+  //     repair chain and threw LlmStructuredOutputError. That error is TERMINAL
+  //     by class, and terminal at this depth meant a stochastic one-off (the
+  //     2026-07 `.max(80)` equipment-name landmine: one over-long item name
+  //     killed the whole character) took the player's run down with no second
+  //     chance. Sonnet at temperature 0.5 draws differently each time, so one
+  //     more draw is a real remedy, not a retry of the same computation. The
+  //     budget bounds it: a SYSTEMATIC schema mismatch (a genuinely wrong
+  //     schema) still exhausts all attempts and terminal-fails LOUD, so this
+  //     cannot mask a real defect — it only rescues the stochastic case.
+  //
+  // Any OTHER throw short-circuits immediately (a rate-limit or auth error must
+  // keep its own classification, and a non-coherence validation bug must surface).
+  //
+  // Spend from EVERY attempt accrues to the cost — except a schema-rejected one,
+  // which throws before returning usage, so its tokens are unattributable.
+  for (let attempt = 0; attempt < SHEET_MAX_ATTEMPTS; attempt += 1) {
+    let result: GenerateObjectResult<CharacterSheetOutput>
+    try {
+      result = await generateObject({
+        model: SONNET,
+        schema: CharacterSheetOutputSchema,
+        schemaName: 'CharacterSheetOutputSchema',
+        callSite: 'character-sheet',
+        prompt,
+        temperature: 0.5,
+        maxRetries: 3,
+      })
+    } catch (err) {
+      if (!(err instanceof LlmStructuredOutputError)) throw err
+      lastDrawError = err
+      continue
+    }
     // LanguageModelUsage exposes token fields as `number | undefined`; default
     // to 0 to keep the strict-number contract (matches character-concept.ts).
     /* c8 ignore start — Anthropic provider always populates these. */
@@ -140,15 +169,18 @@ export async function runCharacterSheetStage(
       break
     } catch (err) {
       if (!(err instanceof CharacterSheetCoherenceError)) throw err
-      lastCoherenceError = err
+      lastDrawError = err
     }
   }
 
-  // Budget exhausted with no coherent sheet — terminal-fail LOUD. The
-  // accumulated coherence error names the mismatch for the pipeline error blob.
+  // Budget exhausted with no usable sheet — terminal-fail LOUD, rethrowing the
+  // LAST draw's error so it keeps its own class: a coherence exhaustion still
+  // surfaces as CharacterSheetCoherenceError, a schema exhaustion still
+  // surfaces as LlmStructuredOutputError (code `llm_structured_output_failed`,
+  // which is what pipeline_runs.error and the stage-failed event report).
   if (sheet === undefined) {
-    /* c8 ignore next -- defensive: the loop always sets lastCoherenceError before sheet stays undefined. */
-    throw lastCoherenceError ?? new CharacterSheetCoherenceError('character-sheet: incoherent')
+    /* c8 ignore next -- defensive: the loop always sets lastDrawError before sheet stays undefined. */
+    throw lastDrawError ?? new CharacterSheetCoherenceError('character-sheet: incoherent')
   }
 
   const characterId = await persistCharacter(repo, args, sheet)

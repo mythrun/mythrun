@@ -119,4 +119,12 @@ export interface WorldGenFogFieldProps extends Omit<BaseProps, 'children'> {
    *  changes. NOT a blanket freeze: the fade-with-entities signal (the progress
    *  indicator) is preserved, just sampled statically. */
   reducedMotion?: boolean
+  /** The world's TERRAIN SEED (ux-run3 myth-aftau) — one number, rolled once per
+   *  worldgen run and never re-rolled. It seeds BOTH the particle sim's RNG and the
+   *  static landmass field (`terrain-field.ts`), so the ground a player walked away
+   *  from is the ground they come back to: re-entry replays the identical terrain
+   *  instead of generating a different world under the same name. Omitted
+   *  (standalone fog, the tuning stories) → `Math.random` and no landmass, the
+   *  pre-run3 weather-only field. */
+  terrainSeed?: number
 }

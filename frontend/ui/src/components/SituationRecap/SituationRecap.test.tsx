@@ -7,9 +7,10 @@ import { SituationRecap } from './SituationRecap.tsx'
 import type { SituationRecapProps } from '@mythrun/client-core/contract'
 
 // The opening-situation recap card (MYT-102): a mono eyebrow over the serif
-// title + location, then the scene prose. Long prose gains a narrow-viewport
-// clamp + a quiet internal disclosure toggle; short prose renders whole with no
-// toggle. Eyebrow is resolved chrome; title/locationName/prose are LLM DATA.
+// title + location, then the scene prose. Long prose clamps to two lines at
+// every width (ux-run3 myth-21lpi) with a quiet internal disclosure toggle;
+// short prose renders whole with no toggle. Eyebrow is resolved chrome;
+// title/locationName/prose are LLM DATA.
 
 const SHORT_PROSE = 'A skiff has come in wrong, riding low.'
 // Comfortably past the collapse threshold (240 chars).
@@ -34,17 +35,28 @@ describe('SituationRecap', () => {
     expect(getByTestId('situation-recap-prose').textContent).toBe(SHORT_PROSE)
   })
 
+  it('wears the tightened ambient-card margin (myth-21lpi)', () => {
+    // Ambient context earns one padding step less than the prompt it serves —
+    // the other half of the critic's "tighten the margins or clamp the body".
+    const { getByTestId } = render(<SituationRecap {...props()} />)
+    expect(getByTestId('situation-recap').className).toContain('p-[var(--space-3)]')
+  })
+
   it('shows NO disclosure toggle (and no clamp) for short prose', () => {
     const { queryByTestId, getByTestId } = render(<SituationRecap {...props()} />)
     expect(queryByTestId('situation-recap-toggle')).toBeNull()
     expect(getByTestId('situation-recap-prose').className).not.toContain('line-clamp')
   })
 
-  it('clamps long prose on narrow (max-sm) and offers the disclosure toggle, collapsed', () => {
+  it('clamps long prose to two lines at every width and offers the disclosure toggle, collapsed', () => {
+    // ux-run3 myth-21lpi: the recap is ambient context — at 720 the grounding
+    // field + its Continue must hold the fold, so the clamp binds everywhere.
     const { getByTestId } = render(<SituationRecap {...props({ prose: LONG_PROSE })} />)
-    expect(getByTestId('situation-recap-prose').className).toContain('max-sm:line-clamp-3')
+    expect(getByTestId('situation-recap-prose').className).toContain('line-clamp-2')
     const toggle = getByTestId('situation-recap-toggle')
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    // The toggle is not width-gated — the clamp binds at every viewport.
+    expect(toggle.className).not.toContain('sm:hidden')
     // WAI-ARIA disclosure: the toggle controls the (always-rendered) prose region.
     expect(toggle.getAttribute('aria-controls')).toBe(getByTestId('situation-recap-prose').id)
   })
@@ -60,7 +72,7 @@ describe('SituationRecap', () => {
 
     await user.click(toggle)
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(getByTestId('situation-recap-prose').className).toContain('max-sm:line-clamp-3')
+    expect(getByTestId('situation-recap-prose').className).toContain('line-clamp-2')
   })
 
   it('keeps the full prose in the DOM while clamped (the clamp is visual only)', () => {

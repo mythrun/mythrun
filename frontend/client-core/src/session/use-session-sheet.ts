@@ -18,10 +18,18 @@
 //    everyone finalized to start) resolves to the SAME calm empty sheet: no
 //    `characterId` on the roster → `sheet:null`, `failed:true`, and the
 //    per-character read is never attempted.
-//  - The overlay is a pure fold of the viewer's OWN ledger frames (filtered on
-//    `characterName === viewerCharacterName`) through `reduceLedger` — the caller
-//    (the shell, Task 14) passes the `ledger_update` frames it extracts from
-//    `SessionView.items`; the reducer never re-reads the transport.
+//  - The overlay is a pure fold of the viewer's OWN ledger frames through
+//    `reduceLedger` — the caller (the shell, Task 14) passes the `ledger_update`
+//    frames it extracts from `SessionView.items`; the reducer never re-reads the
+//    transport. WHICH frames are the viewer's is decided HERE (myth-3xttt): the
+//    fetched `CharacterFull` carries the character's name, and ledger frames key
+//    on that same name, so the hook matches them itself. It used to take the name
+//    as an argument, which no caller could actually supply — the party roster
+//    carries no character name — so the play route had to feed the resolved
+//    sheet's name back in as the argument on the next render to make the overlay
+//    fold at all. Self-deriving deletes that loop. The consequence is honest: the
+//    overlay is empty until the character read lands, which is exactly the window
+//    where there is no sheet to overlay onto.
 //  - The raw→CuratedSheet ADAPTER defaults to the canonical client-core reshape
 //    (`toRevealViewModel(raw).curated`, promoted beside `sheetViewModel` in MYT-94)
 //    so the hook is fully brain-side (R1) with no injection required. `adaptSheet`
@@ -84,16 +92,32 @@ export interface SessionSheetState {
 
 interface SheetFetchState {
   readonly sheet: CuratedSheet | null
+  /** The viewer's character name, off the raw read — the ledger frames' own key
+   *  (myth-3xttt). Null until the read lands, or when there is nothing to read. */
+  readonly characterName: string | null
   readonly loading: boolean
   readonly failed: boolean
 }
 
-const LOADING_FETCH_STATE: SheetFetchState = { sheet: null, loading: true, failed: false }
+const LOADING_FETCH_STATE: SheetFetchState = {
+  sheet: null,
+  characterName: null,
+  loading: true,
+  failed: false,
+}
+const EMPTY_FETCH_STATE: SheetFetchState = {
+  sheet: null,
+  characterName: null,
+  loading: false,
+  failed: true,
+}
 
-/** Resolve the viewer's own character and adapt it to the curated sheet. Returns
- *  null when the viewer has no finalized character (no `characterId` on the
- *  roster) — the per-character read is skipped. Rejections propagate to the
- *  caller's `.catch` (→ the calm failed state). */
+/** Resolve the viewer's own character, adapt it to the curated sheet, and report
+ *  the character's NAME alongside (the raw read is the only place it exists — the
+ *  roster carries display names only). Returns null when the viewer has no
+ *  finalized character (no `characterId` on the roster) — the per-character read
+ *  is skipped. Rejections propagate to the caller's `.catch` (→ the calm failed
+ *  state). */
 async function loadCuratedSheet(
   ctx: ApiContext,
   campaignId: string,
@@ -101,12 +125,12 @@ async function loadCuratedSheet(
   fetchRoster: FetchRoster,
   fetchCharacter: FetchCharacter,
   adaptSheet: AdaptSheet,
-): Promise<CuratedSheet | null> {
+): Promise<{ sheet: CuratedSheet; characterName: string } | null> {
   const roster = await fetchRoster(ctx, campaignId)
   const characterId = roster.members.find((m) => m.userId === viewerUserId)?.characterId
   if (characterId === undefined) return null
   const raw = await fetchCharacter(ctx, campaignId, characterId)
-  return adaptSheet(raw)
+  return { sheet: adaptSheet(raw), characterName: raw.character.name }
 }
 
 /**
@@ -116,7 +140,6 @@ async function loadCuratedSheet(
 export function useSessionSheet(
   campaignId: string,
   viewerUserId: string,
-  viewerCharacterName: string,
   ledgerFrames: readonly LedgerUpdateFrame[],
   deps: SessionSheetDeps = {},
 ): SessionSheetState {
@@ -131,15 +154,16 @@ export function useSessionSheet(
   useEffect(() => {
     let active = true
     void loadCuratedSheet(ctx, campaignId, viewerUserId, fetchRoster, fetchCharacter, adaptSheet)
-      .then((sheet) => {
+      .then((loaded) => {
         if (!active) return
-        // A resolved-but-null sheet (viewer has no finalized character) reads as
+        // A resolved-but-null load (viewer has no finalized character) reads as
         // the same calm empty state as a failed read — both render the tab's
         // unavailable line.
-        setFetchState({ sheet, loading: false, failed: sheet === null })
+        if (loaded === null) setFetchState(EMPTY_FETCH_STATE)
+        else setFetchState({ ...loaded, loading: false, failed: false })
       })
       .catch(() => {
-        if (active) setFetchState({ sheet: null, loading: false, failed: true })
+        if (active) setFetchState(EMPTY_FETCH_STATE)
       })
     return () => {
       active = false
@@ -147,14 +171,17 @@ export function useSessionSheet(
   }, [ctx, campaignId, viewerUserId, fetchRoster, fetchCharacter, adaptSheet])
 
   // The live overlay: fold ONLY the viewer's own ledger frames (a pure,
-  // transport-agnostic reduce — recomputed only when the frames or the viewer
-  // name change).
+  // transport-agnostic reduce — recomputed only when the frames or the resolved
+  // name change). Before the read lands the name is null, which matches no
+  // frame's string name, so the overlay is simply empty — the same window in
+  // which there is no sheet to overlay onto.
+  const { characterName } = fetchState
   const overlay = useMemo(
     () =>
       ledgerFrames
-        .filter((frame) => frame.characterName === viewerCharacterName)
+        .filter((frame) => frame.characterName === characterName)
         .reduce(reduceLedger, emptyOverlay),
-    [ledgerFrames, viewerCharacterName],
+    [ledgerFrames, characterName],
   )
 
   return { sheet: fetchState.sheet, overlay, loading: fetchState.loading, failed: fetchState.failed }

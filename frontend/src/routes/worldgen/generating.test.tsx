@@ -101,6 +101,7 @@ interface RenderOpts {
   readonly stages?: readonly StageProgress[]
   readonly stageTimings?: readonly StageTiming[] | null
   readonly resumedMidGen?: boolean
+  readonly campaignId?: string
 }
 
 function renderGenerating({
@@ -108,6 +109,7 @@ function renderGenerating({
   stages = [],
   stageTimings = null,
   resumedMidGen = false,
+  campaignId,
 }: RenderOpts = {}): void {
   render(
     <I18nextProvider i18n={i18n}>
@@ -117,6 +119,7 @@ function renderGenerating({
         stages={stages}
         stageTimings={stageTimings}
         resumedMidGen={resumedMidGen}
+        {...(campaignId !== undefined ? { campaignId } : {})}
       />
     </I18nextProvider>,
   )
@@ -183,10 +186,10 @@ describe('GeneratingView — act one: the prep loading screen', () => {
     expect(graphSpy).not.toHaveBeenCalled()
   })
 
-  it('drives the mark from REAL events — one completed prep stage fills, zero breathes (myth-i2pdo)', () => {
+  it('drives the mark from REAL events — one completed prep stage fills, zero idles nearly blank (myth-i2pdo; ux-run3 myth-c96rf)', () => {
     mockMatchMedia(false)
     renderGenerating({ stages: [stage('concept_intake', 'running')] })
-    expect(screen.getByTestId('worldgen-loading-mark').getAttribute('data-beat-mode')).toBe('breathe')
+    expect(screen.getByTestId('worldgen-loading-mark').getAttribute('data-beat-mode')).toBe('idle')
     cleanup()
     mockMatchMedia(false)
     renderGenerating({
@@ -403,6 +406,37 @@ describe('GeneratingView — status card wiring (§3.3)', () => {
     }
   })
 
+  // ux-run3 myth-aftau: the live map is unmountable (every "Wait quietly" toggle
+  // takes it down), so the layout has to live outside the component. The route is
+  // where the world's identity enters — without this key the cache is never engaged
+  // and every re-entry re-rolls the constellation.
+  it('hands the graph the campaign as its LAYOUT CACHE KEY (myth-aftau)', () => {
+    mockMatchMedia(false)
+    renderWatching({ campaignId: 'campaign-42' })
+    expect(lastGraphProps().layoutCacheKey).toBe('campaign-42')
+  })
+
+  it('omits the layout key entirely when no campaign is supplied (never an explicit undefined)', () => {
+    mockMatchMedia(false)
+    renderWatching()
+    expect('layoutCacheKey' in lastGraphProps()).toBe(false)
+  })
+
+  // ux-run3 myth-fi1v1: the live map draws its shape vocabulary for minutes before the
+  // reveal ever explains it. The key speaks the SAME wiki group headings the reveal
+  // does — one map, no second copy — and documents no hollow state (during generation
+  // an unlabeled mark is a name still arriving, not a settled one).
+  it('gives the live map a marker KEY in the wiki\'s own words (myth-fi1v1)', () => {
+    mockMatchMedia(false)
+    renderWatching()
+    expect(lastGraphProps().legend).toEqual({
+      faction: i18n.t('worldReveal.group.faction'),
+      location: i18n.t('worldReveal.group.location'),
+      npc: i18n.t('worldReveal.group.npc'),
+      item: i18n.t('worldReveal.group.item'),
+    })
+  })
+
   it('supplies i18n framing labels (title/done/progress) for the card', () => {
     mockMatchMedia(false)
     renderWatching()
@@ -581,6 +615,65 @@ describe('GeneratingView — the coarse remaining-wait line (MYT-102 timer revam
     expect(shownBefore).toBe(mins(2)) // 30s left in the running stage + 60s ahead
     watch()
     expect(lastGraphProps().status?.countdownLabel).toBe(shownBefore)
+  })
+
+  it('DAMPS re-estimates — a sudden multi-minute drop steps down ONE minute per whisper dwell, never a nervous jump (ux-run3 myth-b965d)', () => {
+    // Run 3: the estimate shed 2 minutes in 45 seconds. A stage completing far
+    // under its average legitimately collapses the raw estimate at once — but
+    // the SHOWN number now walks down a minute at a time, at most once per
+    // ~10s whisper dwell, so it reads as observed, not guessed. (Exhaustion
+    // still bypasses the damper — the stalled line is honesty, not display.)
+    mockMatchMedia(false)
+    vi.useFakeTimers()
+    vi.setSystemTime(T0)
+    const stageTimings: StageTiming[] = [
+      { stage: 'world_and_factions', avgMs: 480_000 },
+      { stage: 'locations_and_npcs', avgMs: 300_000 },
+    ]
+    // Phase 1 carries only wf's timing (480s ahead → "about 8 min"); phase 2
+    // swaps in the full timing set so the raw estimate collapses to ~300s.
+    const view = renderGeneratingRerenderable({
+      stages: [
+        ...ENTITY_UNDERWAY.slice(0, 3),
+        stage('world_and_factions', 'running', T0.toISOString()),
+      ],
+      stageTimings: [{ stage: 'world_and_factions', avgMs: 480_000 }],
+    })
+    // Adopt the first usable estimate fully: 480s → "about 8 min".
+    const countdown = (): string | null => screen.getByTestId('worldgen-loading-countdown').textContent
+    expect(countdown()).toBe(mins(8))
+    // One second in, the stage completes WAY under its average and the next one
+    // starts: raw collapses to ~300s ("about 5 min") in a single tick.
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+    view.rerenderWith({
+      stages: [
+        ...ENTITY_UNDERWAY.slice(0, 3),
+        stage('world_and_factions', 'completed'),
+        stage('locations_and_npcs', 'running', new Date(T0.getTime() + 1000).toISOString()),
+      ],
+      stageTimings,
+    })
+    // Within the hold window the shown number does not move.
+    expect(countdown()).toBe(mins(8))
+    act(() => {
+      vi.advanceTimersByTime(4000)
+    })
+    expect(countdown()).toBe(mins(8))
+    // Each elapsed dwell releases exactly one minute: 8 → 7 → 6.
+    act(() => {
+      vi.advanceTimersByTime(6000) // t = +11s
+    })
+    expect(countdown()).toBe(mins(7))
+    act(() => {
+      vi.advanceTimersByTime(10_000) // t = +21s
+    })
+    expect(countdown()).toBe(mins(6))
+    act(() => {
+      vi.advanceTimersByTime(10_000) // t = +31s
+    })
+    expect(countdown()).toBe(mins(5))
   })
 
   it('NEVER moves the countdown up — a rising raw estimate holds at the last shown value (monotonic clamp)', () => {

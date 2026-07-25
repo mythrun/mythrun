@@ -67,7 +67,12 @@ import { cn } from '../../lib/cn.ts'
 // label+readout row over the bars, minus the framing caption (compactness is the
 // point: the footer reclaims real estate, it doesn't relocate the card verbatim).
 
-const TOTAL_STAGES = WATCHED_ENTITY_STAGES.length // 3 — the FIXED bar count + % denominator
+// The FIXED bar count + percent denominator. This is the SAME taxonomy slice the
+// route's "Stage {{current}} of {{total}}" line counts (generating.tsx's
+// `stageLabelsFrom`), which is what makes the sentence and the bar corroborate each
+// other by construction — a reader who counts cells gets the number the copy told
+// them (ux-run3 myth-fi1v1, pinned in the card's test).
+const TOTAL_STAGES = WATCHED_ENTITY_STAGES.length
 
 const CARD_CLASS = cn(
   'pointer-events-none absolute left-[var(--space-3)] top-[var(--space-3)] z-10',
@@ -105,17 +110,33 @@ const RETURN_CLASS = cn(
   'font-ui text-xs text-ink-secondary underline underline-offset-2',
 )
 
-// Per-cell fill: solid ink = done, ember + pulse = the working cell, faint track =
-// pending. Square (0px radius), full-height, equal-width segments.
-const cell = cva('h-full flex-1 rounded-none', {
+// Per-cell fill: solid ink = done, faint track = pending, and the WORKING cell is an
+// ember track carrying a HALF-WIDTH INK sliver. Square (0px radius), full-height,
+// equal-width segments.
+//
+// The half-fill is the ux-run3 fix (myth-fi1v1). Until run 3 "running" was ember and
+// nothing else — and measured off the run-3 frame the ember cell (#C1A793) sat within
+// a few points of the pending track (#C9BFA8), so the cell carrying "Stage 2" was
+// indistinguishable from the two cells after it. A reader who tried to corroborate the
+// sentence against the bar could not find the second stage on it and read the row as
+// an undifferentiated run of cells. Colour was the sole signal after all, and it was a
+// whisper. The ink sliver says "we are INSIDE this one" in the same two-tone
+// vocabulary as `completed`, survives the pulse, and needs no hue at all.
+const cell = cva('relative h-full flex-1 rounded-none', {
   variants: {
     state: {
       completed: 'bg-ink',
-      running: 'bg-accent animate-pulse',
+      running: 'bg-accent',
       pending: 'bg-surface-active',
     },
   },
 })
+
+/** The running cell's ink sliver: half the cell, left-anchored — the same ink the
+ *  completed cells carry, so the bar reads as one filling row rather than a colour
+ *  code. The pulse rides the SLIVER (not the track), so the cell's own edges stay put
+ *  and the motion reads as work rather than as a flashing block. */
+const RUNNING_FILL_CLASS = 'absolute inset-y-0 left-0 w-1/2 bg-ink animate-pulse'
 
 type CellState = 'completed' | 'running' | 'pending'
 
@@ -231,7 +252,9 @@ export const WorldGenStatusCard = forwardRef<HTMLDivElement, WorldGenStatusCardP
             aria-hidden="true"
             data-cell-state={b.state}
             className={cn(cell({ state: b.state }))}
-          />
+          >
+            {b.state === 'running' && <span data-testid="worldgen-status-running-fill" className={RUNNING_FILL_CLASS} />}
+          </span>
         ))}
       </div>
     )

@@ -64,6 +64,20 @@ describe('DieSpin', () => {
     expect(getByRole('status')).toHaveTextContent('')
   })
 
+  it('the landed numeral carries reveal weight + scale — it lands before the arithmetic (myth-twraw)', () => {
+    // The roll is the one moment of chance in the loop; the number must not read
+    // smaller than the equation below it. d20 family: one step up inside the face.
+    const d20 = render(
+      <DieSpin spinning={false} result={11} reducedMotion={false} onSpinComplete={vi.fn()} />,
+    )
+    expect(d20.container.querySelector('[data-testid="die-spin-result"]')).toHaveClass('font-bold', 'text-lg')
+    // Open-centre shapes keep their larger stamp, also at reveal weight.
+    const d6 = render(
+      <DieSpin spinning={false} result={4} reducedMotion={false} onSpinComplete={vi.fn()} sides={6} />,
+    )
+    expect(d6.container.querySelector('[data-testid="die-spin-result"]')).toHaveClass('font-bold', 'text-xl')
+  })
+
   it('runs the DECELERATING stepped rotation (distinct angles + a recoil scale) and completes once at rest', () => {
     vi.useFakeTimers()
     const onSpinComplete = vi.fn()
@@ -254,11 +268,11 @@ describe('DieSpin — per-shape outlines (myth-0qvay)', () => {
       <DieSpin spinning={false} result={20} reducedMotion={false} onSpinComplete={vi.fn()} sides={20} />,
     )
     const d20Numeral = d20.container.querySelector('[data-testid="die-spin-result"]')
-    expect(d20Numeral).toHaveClass('text-base', 'leading-none')
-    expect(d20Numeral).not.toHaveClass('text-lg')
+    expect(d20Numeral).toHaveClass('text-lg', 'leading-none', 'translate-y-[4%]')
+    expect(d20Numeral).not.toHaveClass('text-xl')
     const d6 = render(
       <DieSpin spinning={false} result={6} reducedMotion={false} onSpinComplete={vi.fn()} sides={6} />,
     )
-    expect(d6.container.querySelector('[data-testid="die-spin-result"]')).toHaveClass('text-lg', 'leading-none')
+    expect(d6.container.querySelector('[data-testid="die-spin-result"]')).toHaveClass('text-xl', 'leading-none')
   })
 })

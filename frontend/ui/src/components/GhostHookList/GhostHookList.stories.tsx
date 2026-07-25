@@ -31,11 +31,16 @@ type Story = StoryObj<typeof GhostHookList>
 const noop = (): void => undefined
 
 // The starting-situation pick — three opening hooks the owner chooses between.
+// The enter cue carries the verb (ux-run3 myth-407fa: the header says picking
+// opens your first session, so the point of action says "Open here →" rather
+// than a bare arrow that reads as "view detail"), and the card ends where its
+// content ends rather than trailing a dead right rail past the prose measure.
 export const StartingSituations: Story = {
   name: 'Starting-situation pick',
   render: () => (
-    <div className="max-w-[560px] bg-bg p-[var(--space-6)]">
+    <div className="max-w-[720px] bg-bg p-[var(--space-6)]">
       <GhostHookList
+        actionLabel="Open here"
         items={[
           {
             id: '0',

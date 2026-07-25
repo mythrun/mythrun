@@ -87,6 +87,7 @@ export const KnowledgeSidebar = forwardRef<HTMLDivElement, KnowledgeSidebarProps
     graphTabLabel,
     sheetTabLabel,
     wikiLabels,
+    wikiPresence,
     graphNodeListLabel,
     sheetLabels,
     wikiUnavailableLabel,
@@ -106,6 +107,9 @@ export const KnowledgeSidebar = forwardRef<HTMLDivElement, KnowledgeSidebarProps
     onTabChange(coerceTab(value))
   }
 
+  // `presence` (ux-run3 myth-ry14g) is the index's presence split — the people
+  // and places this session has already named lead their browse groups. Absent
+  // (a sidebar mounted before anything was named) ⇒ the plain wiki index.
   const wikiPanel =
     cache.wiki === null ? (
       <UnavailableLine label={wikiUnavailableLabel} testid="knowledge-wiki-unavailable" />
@@ -118,6 +122,7 @@ export const KnowledgeSidebar = forwardRef<HTMLDivElement, KnowledgeSidebarProps
         onQuery={onWikiQuery}
         {...wikiLabels}
         {...(selectedEntityId !== undefined ? { selectedId: selectedEntityId } : {})}
+        {...(wikiPresence !== undefined ? { presence: wikiPresence } : {})}
       />
     )
 

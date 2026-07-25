@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest'
+import { worldGenAccretion } from '@mythrun/client-core'
+import { WATCHED_STAGES, type StageProgress } from '@mythrun/contract/events'
 import { BAYER_4X4 } from '../Dither/bayer.ts'
 import {
   CHAOS,
@@ -7,10 +9,13 @@ import {
   STEP_COUNT,
   BREATHE_LOW,
   BREATHE_HIGH,
+  IDLE_FRONT,
+  IDLE_PULSE_LOW,
   clamp01,
   hash01,
   thresholdAt,
   fillLevelAt,
+  densityAt,
   litAt,
   frontColFor,
   advanceSchedule,
@@ -18,6 +23,9 @@ import {
   axisAt,
   breatheLevelAt,
   litBreatheAt,
+  idlePulse,
+  idleDensityAt,
+  litIdleAt,
 } from './develop.ts'
 
 // Pure quantized-fill / breathing math (the Spinner develop.ts pattern). Everything here is a
@@ -214,6 +222,138 @@ describe('axisAt / breatheLevelAt', () => {
         expect(level).toBeLessThanOrEqual(BREATHE_HIGH + 1e-9)
       }
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The IDLE zero-state (ux-run3 myth-c96rf). Run 3's blocker: the breathe field
+// (0.16–0.5 density) rendered DENSER than early real-event accretion, so the
+// idle→accreting handoff read as a RESET (the mark visibly emptied when work
+// began). The grammar's fix: the zero-state is NEARLY BLANK — a faint
+// low-amplitude shimmer seated at the fill's ORIGIN (the left edge, where ink
+// will begin) — so accretion only ever ADDS ink and the handoff reads as a
+// beginning. These tests pin THE DENSITY INVARIANT: idle is everywhere, at
+// every instant, no denser than the fill at the smallest accretion step any
+// consumer can show.
+
+/** A minimal completed watched stage — the smallest real event the world-gen
+ *  accretion can count (the consumer-side floor the invariant is pinned to). */
+const oneWatchedStage: StageProgress[] = [
+  {
+    stage: WATCHED_STAGES[0] ?? 'concept_intake',
+    status: 'completed',
+    userId: null,
+    costUsd: 0,
+    startedAt: null,
+    completedAt: null,
+  },
+]
+
+/** The consumers' minimum non-zero accretion levels mapped to front columns on
+ *  their real glyph geometries: the world-gen calm mark (20 cols — 120px at
+ *  6px cells) at ONE completed watched stage, and the chargen band (~60+ cols)
+ *  at one of four beats done. */
+const CONSUMER_MIN_FRONTS = [
+  frontColFor(worldGenAccretion(oneWatchedStage, 0), 20),
+  frontColFor(1 / 4, 60),
+] as const
+
+describe('idlePulse', () => {
+  it('is a low-amplitude periodic pulse bounded in [IDLE_PULSE_LOW, 1]', () => {
+    for (let i = 0; i < 40; i++) {
+      const p = i / 13
+      const v = idlePulse(p)
+      expect(v).toBeGreaterThanOrEqual(IDLE_PULSE_LOW - 1e-9)
+      expect(v).toBeLessThanOrEqual(1 + 1e-9)
+      expect(idlePulse(p + 2)).toBeCloseTo(v, 12) // period 1
+    }
+    // It never fully clears — the shimmer stays alive at the trough.
+    expect(IDLE_PULSE_LOW).toBeGreaterThan(0)
+  })
+})
+
+describe('idleDensityAt — the density invariant (ux-run3 myth-c96rf)', () => {
+  const T_SAMPLES = Array.from({ length: 16 }, (_, i) => i / 16)
+
+  it('confines the shimmer to the fill ORIGIN — zero everywhere past the idle seat', () => {
+    for (const T of T_SAMPLES) {
+      for (let x = Math.ceil(IDLE_FRONT); x < 24; x++) {
+        expect(idleDensityAt(x, T)).toBe(0)
+      }
+      expect(idleDensityAt(0, T)).toBeGreaterThan(0) // never an empty frame
+    }
+  })
+
+  it('the idle seat sits BEFORE any consumer\'s smallest accretion front (the handoff is a beginning)', () => {
+    for (const minFront of CONSUMER_MIN_FRONTS) {
+      expect(minFront).toBeGreaterThan(IDLE_FRONT)
+    }
+  })
+
+  it('idle density is CELL-WISE below the fill at the smallest consumer accretion, at every instant', () => {
+    for (const minFront of CONSUMER_MIN_FRONTS) {
+      for (const T of T_SAMPLES) {
+        for (let x = 0; x < 24; x++) {
+          expect(idleDensityAt(x, T)).toBeLessThanOrEqual(densityAt(x, minFront))
+        }
+        // Strictly emptier where the shimmer actually lives — at its crest the
+        // seat column still carries less ink than the first real event lays.
+        expect(idleDensityAt(0, T)).toBeLessThan(densityAt(0, minFront))
+      }
+    }
+  })
+
+  it('total idle ink stays below the total ink of ANY accretion state (density only ever increases)', () => {
+    const cols = 20
+    const sumIdle = (T: number): number => {
+      let s = 0
+      for (let x = 0; x < cols; x++) s += idleDensityAt(x, T)
+      return s
+    }
+    const sumFill = (frontX: number): number => {
+      let s = 0
+      for (let x = 0; x < cols; x++) s += densityAt(x, frontX)
+      return s
+    }
+    const idleMax = Math.max(...T_SAMPLES.map(sumIdle))
+    for (const minFront of CONSUMER_MIN_FRONTS) {
+      expect(idleMax).toBeLessThan(sumFill(minFront))
+    }
+    // And the fill's total ink is monotone in the front — accretion only adds.
+    let prev = 0
+    for (let f = 0; f <= cols; f++) {
+      const s = sumFill(f)
+      expect(s).toBeGreaterThanOrEqual(prev)
+      prev = s
+    }
+  })
+
+  it('the idle field is far emptier than the old breathe field ever was (the run-3 blocker)', () => {
+    // The breathe hold (kept for the no-progress session-prep wait) troughs at
+    // 0.16; the idle zero-state's densest cell must sit well under even that.
+    for (const T of T_SAMPLES) {
+      for (let x = 0; x < 24; x++) {
+        expect(idleDensityAt(x, T)).toBeLessThan(BREATHE_LOW)
+      }
+    }
+  })
+})
+
+describe('litIdleAt', () => {
+  it('is a deterministic boolean, dark outside the seat, alive within it across a pulse', () => {
+    expect(litIdleAt(5, 3, 0.5)).toBe(false) // past the seat — locked paper
+    const a = litIdleAt(0, 0, 0.5)
+    expect(litIdleAt(0, 0, 0.5)).toBe(a) // deterministic
+    // Somewhere across a pulse the seat column carries lit cells (a shimmer,
+    // not a dead frame) — and never many (nearly blank).
+    let maxLit = 0
+    for (let t = 0; t < 16; t++) {
+      let lit = 0
+      for (let y = 0; y < 20; y++) if (litIdleAt(0, y, t / 16 + 0.5 / 16)) lit++
+      maxLit = Math.max(maxLit, lit)
+    }
+    expect(maxLit).toBeGreaterThan(0)
+    expect(maxLit).toBeLessThanOrEqual(6)
   })
 })
 

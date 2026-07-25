@@ -74,12 +74,14 @@ function toSheetFeature(row: CharacterFull['features'][number]): SheetEntry {
   return { name: row.feature_name, gloss: row.description }
 }
 
-/** One backend equipment row → a curated entry. A stack (`quantity > 1`) glosses its
- *  count; the `equipped` flag is state, not shown (the brand carries state as data,
- *  never a badge/chip). */
+/** One backend equipment row → a curated entry. A stack (`quantity > 1`) carries
+ *  its count INLINE on the name line — "Parchment (sheet) ×10", NBSP-bound so the
+ *  ×N never orphans at a wrap (ux-run3 myth-vshy0; a second gloss line for a bare
+ *  count was receipt noise). The `equipped` flag is state, not shown (the brand
+ *  carries state as data, never a badge/chip). */
 function toSheetEquipment(row: CharacterFull['equipment'][number]): SheetEntry {
   return row.quantity > 1
-    ? { name: row.item_name, gloss: `×${String(row.quantity)}` }
+    ? { name: `${row.item_name}\u00A0×${String(row.quantity)}` }
     : { name: row.item_name }
 }
 

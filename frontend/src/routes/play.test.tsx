@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
 import {
@@ -137,13 +138,17 @@ function renderRoute(props: PlayRouteProps): void {
     { initialEntries: [`/campaigns/${CAMPAIGN_ID}/play`] },
   )
   render(
-    <ThemeProvider>
-      <ApiClientProvider value={testCtx}>
-        <I18nextProvider i18n={i18n}>
-          <RouterProvider router={router} />
-        </I18nextProvider>
-      </ApiClientProvider>
-    </ThemeProvider>,
+    // The query provider mirrors the app root — the live shell's mount-time
+    // balance invalidation (myth-q53lj) reads the query client.
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ThemeProvider>
+        <ApiClientProvider value={testCtx}>
+          <I18nextProvider i18n={i18n}>
+            <RouterProvider router={router} />
+          </I18nextProvider>
+        </ApiClientProvider>
+      </ThemeProvider>
+    </QueryClientProvider>,
   )
 }
 

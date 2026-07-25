@@ -26,6 +26,7 @@ import { getSkuCache, type SkuInternalEntry } from '../billing/sku-cache.js'
 import { getStripeClient } from '../billing/stripe-client.js'
 import { findOrCreateStripeCustomer } from '../billing/customer.js'
 import { LOOKUP_KEYS, type LookupKey } from '../billing/lookup-keys.js'
+import { billingError, type BillingErrorCode } from '../billing/errors.js'
 import { createRepo, type Repo } from '../repo/index.js'
 import { userSubscriptions } from '../repo/user-subscriptions.js'
 import { billingHistory } from '../repo/billing-history.js'
@@ -156,7 +157,7 @@ async function handleHistory(
   const rawCursor = (request.query as Record<string, string | undefined>).cursor
   const cursorResult = decodeCursor(rawCursor)
   if (cursorResult === 'invalid') {
-    return reply.code(400).send({ code: 'invalid_cursor' })
+    return reply.code(400).send(billingError('invalid_cursor'))
   }
 
   const listOpts = cursorResult !== undefined ? { cursor: cursorResult, limit: 50 } : { limit: 50 }
@@ -291,11 +292,17 @@ function parseCheckoutBody(body: unknown): CheckoutBody | null {
   return { items, success_url: b.success_url, cancel_url: b.cancel_url }
 }
 
+// myth-wtj2i: each arm's `code` is an Extract off the closed BillingErrorCode
+// union, so a typo here is a type error rather than a new undocumented code on
+// the wire. Same for TierResolveOutcome below.
 type CartValidationFailure =
-  | { readonly code: 'unknown_lookup_key'; readonly lookup_key: string }
-  | { readonly code: 'duplicate_lookup_key' }
-  | { readonly code: 'mixed_cart' }
-  | { readonly code: 'tier_cart_shape' }
+  | {
+      readonly code: Extract<BillingErrorCode, 'unknown_lookup_key'>
+      readonly lookup_key: string
+    }
+  | { readonly code: Extract<BillingErrorCode, 'duplicate_lookup_key'> }
+  | { readonly code: Extract<BillingErrorCode, 'mixed_cart'> }
+  | { readonly code: Extract<BillingErrorCode, 'tier_cart_shape'> }
 
 interface CartValidationOk {
   readonly ok: true
@@ -324,7 +331,10 @@ function validateCart(items: readonly CheckoutItem[]): CartValidationOk | CartVa
   // Rule 1: every lookup_key must be in the closed enum.
   for (const item of items) {
     if (!isLookupKey(item.lookup_key)) {
-      return { ok: false, failure: { code: 'unknown_lookup_key', lookup_key: item.lookup_key } }
+      return {
+        ok: false,
+        failure: { ...billingError('unknown_lookup_key'), lookup_key: item.lookup_key },
+      }
     }
   }
 
@@ -332,7 +342,7 @@ function validateCart(items: readonly CheckoutItem[]): CartValidationOk | CartVa
   const seen = new Set<string>()
   for (const item of items) {
     if (seen.has(item.lookup_key)) {
-      return { ok: false, failure: { code: 'duplicate_lookup_key' } }
+      return { ok: false, failure: billingError('duplicate_lookup_key') }
     }
     seen.add(item.lookup_key)
   }
@@ -347,14 +357,14 @@ function validateCart(items: readonly CheckoutItem[]): CartValidationOk | CartVa
   }
 
   if (hasRecurring && hasOneTime) {
-    return { ok: false, failure: { code: 'mixed_cart' } }
+    return { ok: false, failure: billingError('mixed_cart') }
   }
 
   if (hasRecurring) {
     // Tier cart: must be a single line with quantity 1.
     const only = items[0]
     if (items.length !== 1 || only?.quantity !== 1) {
-      return { ok: false, failure: { code: 'tier_cart_shape' } }
+      return { ok: false, failure: billingError('tier_cart_shape') }
     }
     return { ok: true, mode: 'subscription' }
   }
@@ -434,7 +444,7 @@ async function withStripeUnavailable<T>(
     return await call()
   } catch (err) {
     request.log.error({ err, userId, where }, 'billing.checkout_stripe_unavailable')
-    return { _replied: reply.code(502).send({ code: 'stripe_unavailable' }) }
+    return { _replied: reply.code(502).send(billingError('stripe_unavailable')) }
   }
 }
 
@@ -476,7 +486,7 @@ async function handlePortal(
   // 1. Body shape (structural).
   const parsed = parsePortalBody(request.body)
   if (parsed === null) {
-    return reply.code(400).send({ code: 'body_invalid' })
+    return reply.code(400).send(billingError('body_invalid'))
   }
 
   // 2. Auth resolution.
@@ -526,7 +536,7 @@ async function handleCheckout(
   // 1. Body shape (structural).
   const parsed = parseCheckoutBody(request.body)
   if (parsed === null) {
-    return reply.code(400).send({ code: 'body_invalid' })
+    return reply.code(400).send(billingError('body_invalid'))
   }
 
   // 2. Cart rules (domain).
@@ -548,7 +558,7 @@ async function handleCheckout(
    * SKU cache is missing — same boot-invariant rationale as the
    * sku_cache_unavailable arms elsewhere. */
   if (lineItems === null) {
-    return reply.code(503).send({ code: 'sku_cache_unavailable' })
+    return reply.code(503).send(billingError('sku_cache_unavailable'))
   }
   /* c8 ignore stop */
 
@@ -698,9 +708,16 @@ type TierResolveOutcome =
   | {
       readonly ok: false
       readonly status: 400
-      readonly code: 'unknown_lookup_key' | 'tier_unchanged' | 'not_an_upgrade'
+      readonly code: Extract<
+        BillingErrorCode,
+        'unknown_lookup_key' | 'tier_unchanged' | 'not_an_upgrade'
+      >
     }
-  | { readonly ok: false; readonly status: 503; readonly code: 'sku_cache_unavailable' }
+  | {
+      readonly ok: false
+      readonly status: 503
+      readonly code: Extract<BillingErrorCode, 'sku_cache_unavailable'>
+    }
 
 function resolveUpgradeTiers(
   targetLookupKey: string,
@@ -710,7 +727,7 @@ function resolveUpgradeTiers(
   /* c8 ignore start — `cache === null` defensive arm: boot probe
    * gates app.ready() so the cache is populated. */
   if (cache === null) {
-    return { ok: false, status: 503, code: 'sku_cache_unavailable' }
+    return { ok: false, status: 503, ...billingError('sku_cache_unavailable') }
   }
   /* c8 ignore stop */
   // The body's target_tier_lookup_key arrives as an unconstrained string; an
@@ -718,7 +735,7 @@ function resolveUpgradeTiers(
   // isLookupKey first so the cache lookup is well-typed and we don't lean on
   // a type assertion against the Map's key type.
   if (!isLookupKey(targetLookupKey)) {
-    return { ok: false, status: 400, code: 'unknown_lookup_key' }
+    return { ok: false, status: 400, ...billingError('unknown_lookup_key') }
   }
   const target = cache.byLookupKey.get(targetLookupKey)
   /* c8 ignore start — `target === undefined` arm fires only when the
@@ -727,16 +744,16 @@ function resolveUpgradeTiers(
    * any healthy boot. Same goes for the `!isLookupKey(currentLookupKey)`
    * and `current === undefined` defensive branches below. */
   if (target === undefined) {
-    return { ok: false, status: 503, code: 'sku_cache_unavailable' }
+    return { ok: false, status: 503, ...billingError('sku_cache_unavailable') }
   }
   // The active subscription's tier_lookup_key is persisted as a plain string
   // in user_subscriptions (no DB FK; see migration 007). Narrow before lookup.
   if (!isLookupKey(currentLookupKey)) {
-    return { ok: false, status: 503, code: 'sku_cache_unavailable' }
+    return { ok: false, status: 503, ...billingError('sku_cache_unavailable') }
   }
   const current = cache.byLookupKey.get(currentLookupKey)
   if (current === undefined) {
-    return { ok: false, status: 503, code: 'sku_cache_unavailable' }
+    return { ok: false, status: 503, ...billingError('sku_cache_unavailable') }
   }
   /* c8 ignore stop */
   // Both must be recurring tiers. A target sku_session/sku_world on a tier
@@ -744,15 +761,15 @@ function resolveUpgradeTiers(
   /* c8 ignore start — `target.type !== 'recurring'` arm fires for à-la-
    * carte target keys; tests exercise recurring-tier upgrades only. */
   if (target.type !== 'recurring' || current.type !== 'recurring') {
-    return { ok: false, status: 400, code: 'not_an_upgrade' }
+    return { ok: false, status: 400, ...billingError('not_an_upgrade') }
   }
   /* c8 ignore stop */
   // Monotonic upgrade rule: strict `>`. Equal → tier_unchanged. Less → not_an_upgrade.
   if (target.price.unit_amount_cents === current.price.unit_amount_cents) {
-    return { ok: false, status: 400, code: 'tier_unchanged' }
+    return { ok: false, status: 400, ...billingError('tier_unchanged') }
   }
   if (target.price.unit_amount_cents < current.price.unit_amount_cents) {
-    return { ok: false, status: 400, code: 'not_an_upgrade' }
+    return { ok: false, status: 400, ...billingError('not_an_upgrade') }
   }
   return { ok: true, targets: { target, current } }
 }
@@ -768,7 +785,7 @@ async function handleUpgradeTier(
   // 1. Body shape (structural).
   const parsed = parseUpgradeTierBody(request.body)
   if (parsed === null) {
-    return reply.code(400).send({ code: 'body_invalid' })
+    return reply.code(400).send(billingError('body_invalid'))
   }
 
   // 2. Auth resolution.
@@ -781,7 +798,7 @@ async function handleUpgradeTier(
   // 3. Active subscription.
   const activeSub = await userSubscriptions.getActiveForUser(pool, userId)
   if (activeSub === null) {
-    return reply.code(400).send({ code: 'no_active_subscription' })
+    return reply.code(400).send(billingError('no_active_subscription'))
   }
 
   // 4. Target/current tier resolution + monotonic upgrade rule.
@@ -810,7 +827,7 @@ async function handleUpgradeTier(
 
   if (subscription.pending_update !== null) {
     return reply.code(409).send({
-      code: 'upgrade_already_pending',
+      ...billingError('upgrade_already_pending'),
       detail: pendingUpdateDetail(subscription),
     })
   }
@@ -824,7 +841,7 @@ async function handleUpgradeTier(
       { userId, stripe_subscription_id: activeSub.stripe_subscription_id },
       'billing.upgrade_tier_subscription_item_missing',
     )
-    return reply.code(502).send({ code: 'stripe_unavailable' })
+    return reply.code(502).send(billingError('stripe_unavailable'))
   }
   /* c8 ignore stop */
   const subscriptionItemId = item.id
@@ -868,7 +885,7 @@ async function handleUpgradeTier(
   // 7. Inspect pending_update on the response.
   if (updated.pending_update !== null) {
     return reply.code(502).send({
-      code: 'upgrade_payment_pending',
+      ...billingError('upgrade_payment_pending'),
       detail: pendingUpdateDetail(updated),
     })
   }
@@ -897,7 +914,7 @@ export const billingRoutes: FastifyPluginAsync<BillingRoutesOpts> = async (scope
        * app.ready() so any request reaching this route sees a populated
        * cache. */
       if (cache === null) {
-        return reply.code(503).send({ code: 'sku_cache_unavailable' })
+        return reply.code(503).send(billingError('sku_cache_unavailable'))
       }
       /* c8 ignore stop */
       return reply.header('Cache-Control', 'public, max-age=300').send(cache.publicListing)

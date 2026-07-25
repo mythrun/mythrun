@@ -23,4 +23,12 @@ export interface HeadingProps extends BaseProps {
   level: HeadingLevel
   /** Visual role (size/weight). Default `heading`. */
   role?: HeadingRole
+  /**
+   * Fix the heading's box to exactly N lines: reserves the height (in `lh`
+   * units, so it tracks the role's own line-height) and clamps overflow with an
+   * ellipsis. For fixed-geometry compositions (ux-run3 myth-7jc1h — the cover
+   * card's 2-line title zone) where a 1-line and a 2-line title must occupy the
+   * same vertical band. Omit for normal auto-height headings.
+   */
+  lines?: 2
 }

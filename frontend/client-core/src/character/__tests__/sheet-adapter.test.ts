@@ -100,11 +100,11 @@ describe('toRevealViewModel — the curated field-guide view', () => {
   it('builds the AC / HP / Proficiency / Hit Die / Speed(30) stat stripe', () => {
     const { curated } = toRevealViewModel(makeRaw())
     expect(curated.stats).toEqual([
-      { label: 'AC', value: '16' },
-      { label: 'HP', value: '28' },
-      { label: 'Proficiency', value: '+2' },
-      { label: 'Hit Die', value: 'd10' },
-      { label: 'Speed', value: '30 ft' },
+      { key: 'ac', label: 'AC', value: '16' },
+      { key: 'hp', label: 'HP', value: '28' },
+      { key: 'proficiency', label: 'Proficiency', value: '+2' },
+      { key: 'hitDie', label: 'Hit Die', value: 'd10' },
+      { key: 'speed', label: 'Speed', value: '30 ft' },
     ])
   })
 
@@ -133,12 +133,12 @@ describe('toRevealViewModel — the curated field-guide view', () => {
     ])
   })
 
-  it('reshapes features (name + description gloss) and equipment (stack count gloss)', () => {
+  it('reshapes features (name + description gloss) and equipment (inline nbsp-bound stack count)', () => {
     const { curated } = toRevealViewModel(makeRaw())
     expect(curated.features).toEqual([
       { name: 'Second Wind', gloss: 'Recover a burst of HP once per rest.' },
     ])
-    expect(curated.equipment).toEqual([{ name: 'Longsword' }, { name: 'Javelin', gloss: '×4' }])
+    expect(curated.equipment).toEqual([{ name: 'Longsword' }, { name: 'Javelin\u00A0×4' }])
   })
 })
 

@@ -36,6 +36,12 @@ variable "logout_urls" {
   }
 }
 
+variable "alerts_topic_arn" {
+  description = "ARN of the SNS topic the Cognito throttling alarms publish to (myth-s48q). Empty disables alarm creation entirely, so an environment can stand its user pool up before its alerts topic exists. See infra/modules/auth/alarms.tf."
+  type        = string
+  default     = ""
+}
+
 variable "smoke_test_user_enabled" {
   description = "Provisions four native Cognito test users (one owner + three players, at mythrun-staging-smoke-{owner,player_1,player_2,player_3}@example.com) plus per-user Secrets Manager entries holding their credentials. Staging-only — production composition leaves this at the default. See infra/modules/auth/smoke-test.tf."
   type        = bool

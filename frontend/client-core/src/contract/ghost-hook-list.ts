@@ -40,4 +40,12 @@ export interface GhostHookItem {
 export interface GhostHookListProps extends BaseProps {
   /** The hooks, top to bottom. Each is a real, keyboard-activable button. */
   items: readonly GhostHookItem[]
+  /**
+   * Optional resolved verb on the cards' enter cue ("Open here" → renders as
+   * "Open here →" beside the arrow) — carries the header's commitment down to
+   * the point of action so the arrow isn't the only thing owning the card's
+   * right edge (ux-run3 myth-407fa). One shared verb for the whole list;
+   * decorative (the title stays the accessible name).
+   */
+  actionLabel?: string
 }

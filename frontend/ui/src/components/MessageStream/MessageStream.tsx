@@ -5,16 +5,19 @@ import type {
   MessageStreamProps,
   RollCardLabels,
   RollRevealView,
+  TableTalkView,
   TranscriptItem,
 } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 import { TYPE_ROLE_CLASS } from '../../lib/typography.ts'
+import { Button } from '../Button/Button.tsx'
 import { Divider } from '../Divider/Divider.tsx'
-import { IconButton } from '../IconButton/IconButton.tsx'
 import { DmMessage } from '../DmMessage/DmMessage.tsx'
 import { DmCorrection } from '../DmCorrection/DmCorrection.tsx'
 import { PlayerMessage } from '../PlayerMessage/PlayerMessage.tsx'
 import { RollCard } from '../RollCard/RollCard.tsx'
+import { TableTalk } from '../TableTalk/TableTalk.tsx'
+import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
 
 // MessageStream (MYT-92, spec §2) — the live-play transcript: a scroll container
 // that maps each TranscriptItem to its register renderer and auto-follows the
@@ -31,10 +34,19 @@ import { RollCard } from '../RollCard/RollCard.tsx'
 //
 // Auto-follow: while the reader sits at the tail (`wasAtBottom`), a new item OR
 // streaming growth of the open DM turn scrolls the view down; the moment they
-// scroll up, following stops and a quiet "jump to latest" control appears.
-// Reduced motion swaps the smooth scroll for INSTANT positioning (spec §2 — no
-// vestibular trigger). A non-null `connectionLine` pins a quiet status line
-// (reconnect / system notice) below the scroll region.
+// scroll up, following stops and a labeled jump-to-latest PILL appears
+// (myth-em6bg — the old anonymous chevron read as a rendering artifact clipped
+// onto card edges). When new content lands while scrolled up, the pill swaps to
+// the new-messages label AND announces via a polite live region, so an answer
+// below the fold never looks like nothing happened. Reduced motion swaps the
+// smooth scroll for INSTANT positioning (spec §2 — no vestibular trigger). A
+// non-null `connectionLine` pins a quiet status line (reconnect / system notice)
+// below the scroll region.
+//
+// myth-1msig: an @dm exchange (grouped route-side into `tableTalk`) wraps in the
+// marked TableTalk frame — contiguous items of one block render inside one
+// framed segment, and the scene divider is suppressed inside it (the frame
+// carries the boundary).
 //
 // Register: paper / flat-1-bit, square (no radius, no circles), no chat bubbles /
 // avatars — the DM↔player distinction is carried by the two type faces, not by
@@ -54,11 +66,11 @@ type MechanicalItem = Exclude<
 // tail" and keeps auto-following — a near-bottom read should not lose follow.
 const BOTTOM_THRESHOLD = 32
 
-// Accessible name for the scroll-to-latest control. NOTE (contract gap): the
-// committed MessageStreamProps carries NO label prop, so this generic-chrome
-// control name is inlined rather than threaded as a resolved i18n key. Flagged
-// for the Task 8 contract + the MYT-100 copy pass (see the T9 report).
-const JUMP_LABEL = 'Jump to latest'
+// Inline English fallbacks for the off-edge pill (myth-em6bg closed the old T9
+// contract gap: `jumpLabel` / `newMessagesLabel` are now real props the route
+// resolves via i18n; the fallbacks keep every pre-pill caller rendering).
+const JUMP_LABEL = 'Jump to latest ↓'
+const NEW_MESSAGES_LABEL = 'New messages ↓'
 
 // The terse system line for a non-card mechanical frame, composed from FRAME DATA
 // only (the server `summary` / enemy names / mode) plus typographic separators. No
@@ -159,13 +171,43 @@ function needsDivider(items: readonly TranscriptItem[], i: number): boolean {
   return item.kind === 'dm' && prev.turnId !== item.turnId
 }
 
+// myth-1msig — fold the item list into render segments: contiguous items sharing
+// one table-talk block become a framed segment; everything else renders as the
+// plain per-item stream. Pure list plumbing over the route-computed grouping.
+interface StreamSegment {
+  /** The table-talk block ordinal, or null for the plain stream. */
+  readonly block: number | null
+  /** The segment's items with their ORIGINAL indices (the divider probe needs them). */
+  readonly entries: readonly { item: TranscriptItem; index: number }[]
+}
+
+function buildSegments(
+  items: readonly TranscriptItem[],
+  tableTalk: TableTalkView | undefined,
+): StreamSegment[] {
+  const segments: StreamSegment[] = []
+  let open: { block: number | null; entries: { item: TranscriptItem; index: number }[] } | null = null
+  items.forEach((item, index) => {
+    const block = tableTalk?.blockByKey[item.key] ?? null
+    if (open?.block !== block) {
+      open = { block, entries: [] }
+      segments.push(open)
+    }
+    open.entries.push({ item, index })
+  })
+  return segments
+}
+
 export const MessageStream = forwardRef<HTMLDivElement, MessageStreamProps>(function MessageStream(
-  { items, connectionLine, reducedMotion, rollReveal, rollLabels, onRoll, onContinue, highlight, onEntityOpen, highlightLabels, correctionLabel },
+  { items, connectionLine, reducedMotion, rollReveal, rollLabels, onRoll, onContinue, highlight, onEntityOpen, highlightLabels, correctionLabel, jumpLabel, newMessagesLabel, tableTalk, tableTalkLabel },
   ref,
 ) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const wasAtBottom = useRef(true)
   const [showJump, setShowJump] = useState(false)
+  // myth-em6bg — true when content arrived while the reader was scrolled up; the
+  // pill swaps to the new-messages label and the live region announces it.
+  const [hasNew, setHasNew] = useState(false)
 
   const scrollToTail = useCallback(() => {
     const el = scrollRef.current
@@ -184,13 +226,17 @@ export const MessageStream = forwardRef<HTMLDivElement, MessageStreamProps>(func
 
   // Follow the tail on a new item AND on streaming growth of the open DM turn
   // (text_delta appends to the same item, so items.length alone would miss it) —
-  // but only while the reader is already at the bottom.
+  // but only while the reader is already at the bottom. Scrolled up, the same
+  // change instead ARMS the new-content announcement (myth-em6bg).
   const tail = items[items.length - 1]
   const tailTextLen = tail?.kind === 'dm' ? tail.text.length : 0
   useEffect(() => {
     if (wasAtBottom.current) {
       scrollToTail()
       setShowJump(false)
+      setHasNew(false)
+    } else {
+      setHasNew(true)
     }
   }, [items.length, tailTextLen, scrollToTail])
 
@@ -200,12 +246,14 @@ export const MessageStream = forwardRef<HTMLDivElement, MessageStreamProps>(func
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD
     wasAtBottom.current = atBottom
     setShowJump(!atBottom)
+    if (atBottom) setHasNew(false)
   }
 
   const jumpToTail = (): void => {
     wasAtBottom.current = true
     scrollToTail()
     setShowJump(false)
+    setHasNew(false)
   }
 
   return (
@@ -220,18 +268,45 @@ export const MessageStream = forwardRef<HTMLDivElement, MessageStreamProps>(func
         onScroll={handleScroll}
         className="flex min-h-0 flex-1 flex-col gap-[var(--space-2)] overflow-y-auto px-[var(--space-4)] py-[var(--space-4)]"
       >
-        {items.map((item, i) => (
-          <Fragment key={item.key}>
-            {needsDivider(items, i) ? <Divider /> : null}
-            {renderItem(item, rollReveal, rollLabels, reducedMotion, onRoll, onContinue, highlight, onEntityOpen, highlightLabels, correctionLabel)}
-          </Fragment>
-        ))}
+        {buildSegments(items, tableTalk).map((seg) =>
+          seg.block === null ? (
+            seg.entries.map(({ item, index }) => (
+              <Fragment key={item.key}>
+                {needsDivider(items, index) ? <Divider /> : null}
+                {renderItem(item, rollReveal, rollLabels, reducedMotion, onRoll, onContinue, highlight, onEntityOpen, highlightLabels, correctionLabel)}
+              </Fragment>
+            ))
+          ) : (
+            // The marked OOC exchange (myth-1msig): question + answer inside one
+            // frame; no scene divider inside — the frame carries the boundary.
+            <TableTalk key={`table-talk:${seg.entries[0]?.item.key ?? String(seg.block)}`} label={tableTalkLabel ?? ''}>
+              {seg.entries.map(({ item }) => (
+                <Fragment key={item.key}>
+                  {renderItem(item, rollReveal, rollLabels, reducedMotion, onRoll, onContinue, highlight, onEntityOpen, highlightLabels, correctionLabel)}
+                </Fragment>
+              ))}
+            </TableTalk>
+          ),
+        )}
       </div>
+      {/* The off-edge pill (myth-em6bg): a labeled square Button, bottom-centre —
+          clear of the card edges the old anonymous chevron sheared. It reads
+          "Jump to latest ↓" while merely scrolled up, and "New messages ↓" once
+          content has landed below the fold. */}
       {showJump ? (
-        <div className="absolute bottom-[var(--space-4)] right-[var(--space-4)]">
-          <IconButton icon="chevron-down" label={JUMP_LABEL} variant="secondary" size="sm" onPress={jumpToTail} />
+        <div className="absolute bottom-[var(--space-4)] left-1/2 -translate-x-1/2">
+          <Button variant="secondary" size="sm" onPress={jumpToTail}>
+            {hasNew ? (newMessagesLabel ?? NEW_MESSAGES_LABEL) : (jumpLabel ?? JUMP_LABEL)}
+          </Button>
         </div>
       ) : null}
+      {/* Persistent polite live region: a new-content arrival below the fold is
+          announced, never silent (mounted always so the announcement fires). */}
+      <VisuallyHidden>
+        <span role="status" aria-live="polite">
+          {showJump && hasNew ? (newMessagesLabel ?? NEW_MESSAGES_LABEL) : ''}
+        </span>
+      </VisuallyHidden>
       {connectionLine !== null ? (
         <p
           data-testid="message-stream-connection"

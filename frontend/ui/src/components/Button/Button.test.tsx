@@ -436,6 +436,30 @@ describe('Button', () => {
     expect(on.getByRole('button', { pressed: true })).toBeInTheDocument()
   })
 
+  it('flush="start" bleeds the size\'s own start padding so the glyph seats on the grid', () => {
+    // ux-run3 myth-4jbmr: a ghost Back on a text column indents its arrow by the
+    // hit-area padding — flush pulls the visual edge back with a negative
+    // inline-start margin exactly equal to the size's horizontal padding.
+    const { getByRole, rerender } = render(
+      <Button variant="ghost" size="sm" flush="start">
+        Back
+      </Button>,
+    )
+    expect(getByRole('button').className).toContain('-ms-[var(--space-3)]')
+    rerender(
+      <Button variant="ghost" size="lg" flush="start">
+        Back
+      </Button>,
+    )
+    expect(getByRole('button').className).toContain('-ms-[var(--space-5)]')
+    rerender(
+      <Button variant="ghost" size="sm">
+        Back
+      </Button>,
+    )
+    expect(getByRole('button').className).not.toContain('-ms-')
+  })
+
   it('has no axe violations (default / disabled / busy / loading)', async () => {
     const { container } = render(
       <div>

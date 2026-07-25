@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import { MemoryRouter, createMemoryRouter, RouterProvider } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ConnectionState } from '@mythrun/client-core'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
@@ -143,28 +144,37 @@ const SHORT_REST: SessionView['items'][number] = {
   frame: { ...LONG_REST.frame, turnId: 'TR2', restType: 'short', summary: 'Kessa Vurm finishes a short rest.' },
 }
 
+/** A fresh TanStack client per render — the shell's mount-time balance
+ *  invalidation (myth-q53lj) needs a real provider; tests that assert the
+ *  invalidation pass their own client and spy on it. */
+function makeQueryClient(): QueryClient {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } })
+}
+
 /** Render the shell against an explicit SessionView (lets a test inject `thinking`,
  *  a spy `endSession`, etc.). Mirrors renderShell's provider stack. */
-function renderShellSession(session: SessionView): void {
+function renderShellSession(session: SessionView, queryClient: QueryClient = makeQueryClient()): void {
   render(
-    <ThemeProvider>
-      <I18nextProvider i18n={i18n}>
-        <MemoryRouter>
-          <SessionShell
-            ctx={testCtx}
-            campaignId={CAMPAIGN_ID}
-            sessionId={SESSION_ID}
-            viewerUserId={VIEWER_ID}
-            displayName={DISPLAY_NAME}
-            characterName=""
-            party={new Map()}
-            reducedMotion={false}
-            useLiveSession={() => session}
-            knowledgeHooks={KNOWLEDGE_HOOKS}
-          />
-        </MemoryRouter>
-      </I18nextProvider>
-    </ThemeProvider>,
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <I18nextProvider i18n={i18n}>
+          <MemoryRouter>
+            <SessionShell
+              ctx={testCtx}
+              campaignId={CAMPAIGN_ID}
+              sessionId={SESSION_ID}
+              viewerUserId={VIEWER_ID}
+              displayName={DISPLAY_NAME}
+              characterName=""
+              party={new Map()}
+              reducedMotion={false}
+              useLiveSession={() => session}
+              knowledgeHooks={KNOWLEDGE_HOOKS}
+            />
+          </MemoryRouter>
+        </I18nextProvider>
+      </ThemeProvider>
+    </QueryClientProvider>,
   )
 }
 
@@ -184,24 +194,26 @@ const KNOWLEDGE_HOOKS: PlayKnowledgeHooks = { useCache: () => EMPTY_CACHE, useSh
 
 function renderShell(items: SessionView['items'], reducedMotion = false): void {
   render(
-    <ThemeProvider>
-      <I18nextProvider i18n={i18n}>
-        <MemoryRouter>
-          <SessionShell
-            ctx={testCtx}
-            campaignId={CAMPAIGN_ID}
-            sessionId={SESSION_ID}
-            viewerUserId={VIEWER_ID}
-            displayName={DISPLAY_NAME}
-            characterName=""
-            party={new Map()}
-            reducedMotion={reducedMotion}
-            useLiveSession={() => makeSession(items)}
-            knowledgeHooks={KNOWLEDGE_HOOKS}
-          />
-        </MemoryRouter>
-      </I18nextProvider>
-    </ThemeProvider>,
+    <QueryClientProvider client={makeQueryClient()}>
+      <ThemeProvider>
+        <I18nextProvider i18n={i18n}>
+          <MemoryRouter>
+            <SessionShell
+              ctx={testCtx}
+              campaignId={CAMPAIGN_ID}
+              sessionId={SESSION_ID}
+              viewerUserId={VIEWER_ID}
+              displayName={DISPLAY_NAME}
+              characterName=""
+              party={new Map()}
+              reducedMotion={reducedMotion}
+              useLiveSession={() => makeSession(items)}
+              knowledgeHooks={KNOWLEDGE_HOOKS}
+            />
+          </MemoryRouter>
+        </I18nextProvider>
+      </ThemeProvider>
+    </QueryClientProvider>,
   )
 }
 
@@ -252,10 +264,11 @@ describe('SessionShell — the dice-moment reveal wiring (MYT-93)', () => {
     expect(screen.getByText(DM_TEXT)).toBeDefined()
   })
 
-  it('renders a replayed skill_check already released — prose shown, no Roll (history)', () => {
+  it('renders a replayed skill_check already released — the receipt, prose shown, no Roll (history)', () => {
     renderShell([REPLAYED_SKILL_CHECK, DM_PROSE])
-    // History: the readout is present, the prose is shown, and there is no Roll theatre.
-    expect(screen.getByText('14 + 2 = 16')).toBeDefined()
+    // History: the card files as the one-line receipt (myth-twraw), the prose is
+    // shown, and there is no Roll theatre.
+    expect(screen.getByTestId('roll-receipt').textContent).toContain('14 + 2 = 16')
     expect(screen.getByText(DM_TEXT)).toBeDefined()
     expect(screen.queryByRole('button', { name: i18n.t('play.roll.roll') })).toBeNull()
   })
@@ -288,11 +301,13 @@ function renderShellRouted(connection: ConnectionState): void {
     { initialEntries: [`/campaigns/${CAMPAIGN_ID}/play`] },
   )
   render(
-    <ThemeProvider>
-      <I18nextProvider i18n={i18n}>
-        <RouterProvider router={router} />
-      </I18nextProvider>
-    </ThemeProvider>,
+    <QueryClientProvider client={makeQueryClient()}>
+      <ThemeProvider>
+        <I18nextProvider i18n={i18n}>
+          <RouterProvider router={router} />
+        </I18nextProvider>
+      </ThemeProvider>
+    </QueryClientProvider>,
   )
 }
 
@@ -385,10 +400,10 @@ describe('SessionShell — session lifecycle + composer gating (myth-lhp99 / myt
       pending: false,
     }
     renderShellSession(makeSession([SKILL_CHECK, DM_PROSE, laterPlayer]))
-    // The card renders as a historical record: readout shown, no Roll/Continue.
+    // The card renders as the historical receipt: no Roll/Continue (myth-twraw).
     expect(screen.queryByRole('button', { name: i18n.t('play.roll.roll') })).toBeNull()
     expect(screen.queryByRole('button', { name: i18n.t('play.roll.continue') })).toBeNull()
-    expect(screen.getByText('14 + 2 = 16')).toBeDefined()
+    expect(screen.getByTestId('roll-receipt').textContent).toContain('14 + 2 = 16')
     // Its gate lifted in the same paint: the prose shows and the composer is live.
     expect(screen.getByText(DM_TEXT)).toBeDefined()
     expect(screen.getByRole('button', { name: i18n.t('play.input.send') }).hasAttribute('disabled')).toBe(false)

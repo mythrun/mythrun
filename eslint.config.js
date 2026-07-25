@@ -120,6 +120,34 @@ export default tseslint.config(
     },
   },
   {
+    // myth-wtj2i: the billing error-code union is only "closed" if every emit
+    // site goes through `billingError()` (backend/src/billing/errors.ts), whose
+    // parameter is typed to it. A bare `{ code: 'whatever' }` object literal
+    // bypasses that check entirely — Fastify's `.send()` takes anything — which
+    // is exactly how the union rotted into documentation the first time. Ban
+    // the literal form in the two billing route files.
+    //
+    // `unauthenticated` / `username_required` are exempt by value: they are the
+    // shared cross-route auth envelope (cf. routes/invites.ts), not billing
+    // codes, and deliberately live outside BillingErrorCode.
+    files: ['backend/src/routes/billing.ts', 'backend/src/routes/webhook.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'ExportDefaultDeclaration',
+          message: 'Default exports are forbidden. Use named exports only.',
+        },
+        {
+          selector:
+            'Property[key.name="code"][value.type="Literal"][value.value!="unauthenticated"][value.value!="username_required"]',
+          message:
+            "Billing error codes must be built with billingError('<code>') from src/billing/errors.ts so the closed BillingErrorCode union is compile-time enforced (myth-wtj2i).",
+        },
+      ],
+    },
+  },
+  {
     // Test-file override: max-lines-per-function fires on describe/it
     // callbacks because ESLint can't distinguish framework scaffolding
     // from production functions. The describe-it-each-test idiom

@@ -462,6 +462,7 @@ function fakeLedger(): LedgerOps {
     writeLedgerEvent: unimplemented('writeLedgerEvent'),
     findLedgerEvent: unimplemented('findLedgerEvent'),
     readPartyLedgerSnapshot: unimplemented('readPartyLedgerSnapshot'),
+    readConditions: unimplemented('readConditions'),
   }
 }
 

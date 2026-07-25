@@ -134,6 +134,7 @@ export function inertCombatLedger(): LedgerOps {
   return {
     findLedgerCharacterByName: () => unsupported('findLedgerCharacterByName'),
     readPartyLedgerSnapshot: () => unsupported('readPartyLedgerSnapshot'),
+    readConditions: () => unsupported('readConditions'),
     writeHp: () => unsupported('writeHp'),
     findLedgerEvent: () => unsupported('findLedgerEvent'),
     writeLedgerEvent: () => unsupported('writeLedgerEvent'),
@@ -276,6 +277,11 @@ export function makeCombatLedger(rows: Map<string, CombatLedgerRow>): LedgerOps 
           equipment: [],
         })),
       ),
+    // myth-hlydp: this in-memory ledger tracks HP only, so it holds no condition
+    // rows to project. The §5a HP↔unconscious sync lives in the REAL repo
+    // (characters-ledger.ts), which the rules-lawyer integration tests exercise
+    // against Postgres — that is where the derived-unconscious assertions live.
+    readConditions: () => Promise.resolve([]),
     debitGold: () => unsupported('debitGold'),
     creditGold: () => unsupported('creditGold'),
     debitItem: () => unsupported('debitItem'),

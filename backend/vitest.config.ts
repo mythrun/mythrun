@@ -34,7 +34,10 @@ const COVERAGE_EXCLUDES: readonly string[] = [
   // const enums imported by tests transitively.
   'src/app-deps.ts',
   'src/auth/types.ts',
-  'src/billing/errors.ts',
+  // (src/billing/errors.ts was here as a type-only file. myth-wtj2i gave it
+  // runtime code — the BILLING_ERROR_CODES tuple and the billingError()
+  // constructor every emit site now goes through — so it is COVERED, not
+  // excluded. billing/__tests__/errors.test.ts is its direct consumer.)
   'src/billing/webhook-types.ts',
   'src/repo/types.ts',
   // Minimal pg.ClientLike interface — type-only, no runtime code.

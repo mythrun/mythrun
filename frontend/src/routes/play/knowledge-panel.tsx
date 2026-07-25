@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import {
+  useNamedEntities,
   type ConnectionStatus,
   type KnowledgeCache,
   type LedgerUpdateFrame,
@@ -79,7 +80,6 @@ export interface PlayKnowledgeHooks {
   readonly useSheet: (
     campaignId: string,
     viewerUserId: string,
-    viewerCharacterName: string,
     ledgerFrames: readonly LedgerUpdateFrame[],
   ) => SessionSheetState
 }
@@ -87,7 +87,6 @@ export interface PlayKnowledgeHooks {
 export interface UsePlayKnowledgeArgs {
   readonly campaignId: string
   readonly viewerUserId: string
-  readonly viewerCharacterName: string
   /** The live transcript — the source of the `ledger_update` frames folded into the
    *  sheet overlay. */
   readonly items: readonly TranscriptItem[]
@@ -110,6 +109,11 @@ export interface PlayKnowledge {
   /** The compiled matcher for chat highlighting — `undefined` until the cache
    *  settles (so the shell passes `highlight` only when the index is non-null). */
   readonly highlight: EntityIndex | undefined
+  /** The entities this session's settled prose has NAMED (ux-run3 myth-ry14g) —
+   *  the wiki index leads its browse groups with them. Empty before anything has
+   *  been narrated (and while the cache is still loading), which is exactly the
+   *  plain alphabetized index. */
+  readonly namedEntityIds: readonly string[]
   readonly onTabChange: (tab: KnowledgeTab) => void
   readonly onSelectEntity: (entityId: string) => void
   readonly onWikiQuery: (query: string) => void
@@ -133,7 +137,6 @@ function extractLedgerFrames(items: readonly TranscriptItem[]): readonly LedgerU
 export function usePlayKnowledge({
   campaignId,
   viewerUserId,
-  viewerCharacterName,
   items,
   connectionStatus,
   hooks,
@@ -141,18 +144,19 @@ export function usePlayKnowledge({
   const refreshToken = useReconnectRefreshToken(connectionStatus)
   const cache = hooks.useCache(campaignId, refreshToken)
 
-  // The ledger overlay keys on the character NAME, which the route only learns once
-  // the sheet read lands (the roster carries no name — see the T6 report). Feed the
-  // resolved name back so the live overlay folds even though play-session passes an
-  // empty `viewerCharacterName` today; the sheet fetch does not depend on the name,
-  // so this never re-fetches.
+  // The ledger overlay keys on the character NAME, which the sheet hook now derives
+  // for itself off the character it fetched (myth-3xttt). This used to hold a
+  // `resolvedName` state that fed the resolved sheet's own name back in as the hook's
+  // argument on the next render — the route had no name to give it (the roster
+  // carries none, and play-session passed an empty string), so without the loop the
+  // overlay never folded. Deriving it at the source retires the loop entirely.
   const ledgerFrames = useMemo(() => extractLedgerFrames(items), [items])
-  const [resolvedName, setResolvedName] = useState(viewerCharacterName)
-  const sheet = hooks.useSheet(campaignId, viewerUserId, resolvedName, ledgerFrames)
-  const sheetName = sheet.sheet?.name
-  useEffect(() => {
-    if (sheetName !== undefined && sheetName !== resolvedName) setResolvedName(sheetName)
-  }, [sheetName, resolvedName])
+  const sheet = hooks.useSheet(campaignId, viewerUserId, ledgerFrames)
+
+  // myth-ry14g: who the session has named so far — accumulated from settled DM
+  // prose through the cache's own matcher, so the sidebar's presence split and
+  // the chat's entity underlines can never disagree about who was named.
+  const namedEntityIds = useNamedEntities(items, cache.index ?? undefined)
 
   const [activeTab, setActiveTab] = useState<KnowledgeTab>('wiki')
   const [selectedEntityId, setSelectedEntityId] = useState<string | undefined>(undefined)
@@ -179,6 +183,7 @@ export function usePlayKnowledge({
     railOpen,
     drawerOpen,
     highlight: cache.index ?? undefined,
+    namedEntityIds,
     onTabChange: setActiveTab,
     onSelectEntity: setSelectedEntityId,
     onWikiQuery: setWikiQuery,
@@ -298,6 +303,15 @@ export function KnowledgePanel({ knowledge, reducedMotion }: KnowledgePanelProps
       reducedMotion={reducedMotion}
       {...buildSidebarLabels(t)}
       {...(knowledge.selectedEntityId !== undefined ? { selectedEntityId: knowledge.selectedEntityId } : {})}
+      {...(knowledge.namedEntityIds.length > 0
+        ? {
+            wikiPresence: {
+              ids: knowledge.namedEntityIds,
+              presentLabel: t('play.knowledge.wiki.present'),
+              elsewhereLabel: t('play.knowledge.wiki.elsewhere'),
+            },
+          }
+        : {})}
     />
   )
   return belowLg ? (

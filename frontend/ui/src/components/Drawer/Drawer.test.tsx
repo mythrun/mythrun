@@ -46,6 +46,32 @@ const baseProps = {
   closeLabel: 'drawer.close',
 } as const
 
+// A drawer summoned by a tap on the surface BEHIND it — the reveal's graph-node
+// tap, reduced to its essentials. The tap's pointerdown lands OUTSIDE the sheet
+// (arming Radix's deferred outside-dismiss), and the same gesture's pointerup
+// opens the drawer, so the trailing click delivers a dismissal to an
+// already-open sheet. `elsewhere` is a plain outside target for the
+// later-gesture case.
+function SummonedByOutsideTap() {
+  const [open, setOpen] = useState(false)
+  return (
+    <div>
+      <button
+        type="button"
+        onPointerUp={() => {
+          setOpen(true)
+        }}
+      >
+        summon
+      </button>
+      <button type="button">elsewhere</button>
+      <Drawer {...baseProps} open={open} onOpenChange={setOpen}>
+        {body}
+      </Drawer>
+    </div>
+  )
+}
+
 describe('Drawer', () => {
   it('is closed initially: no dialog in the a11y tree, the handle offers the summon label', () => {
     render(<Drawer {...baseProps}>{body}</Drawer>)
@@ -210,6 +236,46 @@ describe('Drawer', () => {
       expect(sheet).toHaveAttribute('data-state', 'open')
     })
     expect(sheet).not.toHaveAttribute('inert')
+  })
+
+  // myth-1k9qt — the sheet body is a flex COLUMN, so a child that declares
+  // itself a fill (`flex-1 min-h-0`, i.e. `<Box grow>`) takes the sheet's
+  // height and owns the scrolling itself. Without that, the body is the only
+  // element that ever scrolls and a child's own scroll container never moves —
+  // which silently voids per-page scroll memory (the wiki's, on mobile).
+  it('the sheet body is a flex column so a fill child can own the scrolling', () => {
+    render(
+      <Drawer {...baseProps} data-testid="sheet">
+        {body}
+      </Drawer>,
+    )
+    const sheetBody = screen.getByTestId('sheet').querySelector('[data-mythrun-drawer-body]')
+    expect(sheetBody).not.toBeNull()
+    expect(sheetBody).toHaveClass('flex', 'flex-col', 'min-h-0', 'flex-1', 'overflow-y-auto')
+  })
+
+  // myth-cwhdk — Radix Dialog defers outside-dismiss to the gesture's trailing
+  // CLICK, so the gesture that OPENS the drawer (a tap on the surface behind
+  // it) armed a dismissal at its pointerdown and delivered it once the sheet
+  // was already open: a one-gesture open→shut flash on real pointers. The
+  // guard is gesture IDENTITY — the pointerdown the dismissal carries vs the
+  // one in flight when the sheet opened — so consumers need no summon defer.
+  it('survives the very gesture that summoned it (its armed outside-dismiss is ignored)', async () => {
+    const user = userEvent.setup()
+    render(<SummonedByOutsideTap />)
+    await user.click(screen.getByText('summon'))
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+  })
+
+  it('a LATER outside gesture still dismisses (the guard is exactly one gesture wide)', async () => {
+    const user = userEvent.setup()
+    render(<SummonedByOutsideTap />)
+    await user.click(screen.getByText('summon'))
+    await screen.findByRole('dialog')
+    await user.click(screen.getByText('elsewhere'))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
   })
 
   it('has no axe violations while open', async () => {

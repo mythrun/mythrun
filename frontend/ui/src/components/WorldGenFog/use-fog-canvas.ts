@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef } from 'react'
 import {
   cameraWorldDims,
+  CELL_PX,
   createFogSim,
   DPR_CAP,
   FOG_PARAMS,
+  mulberry32,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
   WIND_BASE,
@@ -16,10 +18,11 @@ import {
 } from '@mythrun/client-core/worldgen'
 import type { FogFieldEntity, WorldGenCameraSource } from '@mythrun/client-core/contract'
 import { resolveLabelFont } from '../WorldGenGraph/canvas-util.ts'
-import { entityObstacle } from './fog-obstacles.ts'
+import { clearedCellMask, entityObstacle } from './fog-obstacles.ts'
 import { createFogConvergence, type FogConvergence } from './fog-converge.ts'
 import { paintFog } from './fog-draw.ts'
 import { resolveTerrainInk, TERRAIN_ALPHA } from './terrain-ink.ts'
+import { terrainLandAt } from './terrain-field.ts'
 
 // The imperative Canvas controller for WorldGenFogField (MYT-89 C3). Owns the fluid sim
 // (a persistent FogSim in the shared PANE-ADAPTIVE virtual space — `virtualDims`, the
@@ -223,6 +226,7 @@ function repaint(
   virtual: VirtualDims,
   camera: CameraPoint,
   terrainInk: string,
+  ground: Ground,
 ): void {
   ctx.save()
   ctx.translate(-camera.x, -camera.y)
@@ -234,14 +238,47 @@ function repaint(
     // The BASE density, pinned (no fade multiply): the clear lives in the sim's
     // spawn drain — the paint draws whatever particle density remains, full-strength.
     density,
-    // The terrain re-tune (ux-run2 myth-y7yki): themed ink + the production
-    // alpha, so the dither field the player watches for minutes clears the 3:1
-    // non-text floor (see terrain-ink.ts; the reference FOG_PARAMS values stay
-    // the verbatim record).
+    // The terrain re-tune (ux-run2 myth-y7yki, re-measured in ux-run3 myth-llqj7):
+    // themed ink at full alpha, so the dither field the player watches for minutes
+    // clears the 3:1 non-text floor MEASURED OFF PIXELS (see terrain-ink.ts; the
+    // reference FOG_PARAMS values stay the verbatim record).
     fogColor: terrainInk,
     fogAlpha: TERRAIN_ALPHA,
+    // The world's LAND (ux-run3): static, seeded ground under the draining weather.
+    ...ground,
   })
   ctx.restore()
+}
+
+/** The static-ground half of a repaint (ux-run3): the seeded land sampler and the
+ *  label knockout it has to honour. Both absent on a seedless fog (the tuning stories)
+ *  — the paint then draws the pre-run3 weather-only field. */
+interface Ground {
+  land?: ((px: number, py: number) => number) | undefined
+  clearedAt?: ((px: number, py: number) => boolean) | undefined
+}
+
+/** Build this repaint's ground: the terrain sampler bound to the seed + current world
+ *  dims, plus a cell-mask knockout under the current labels (the same clear FogSim
+ *  gives the weather for free). No seed → no ground. */
+function groundFor(
+  seed: number | undefined,
+  virtual: VirtualDims,
+  obstacles: readonly FogObstacle[],
+  gw: number,
+  gh: number,
+): Ground {
+  if (seed === undefined) return {}
+  const mask = clearedCellMask(obstacles, gw, gh)
+  return {
+    land: terrainLandAt(seed, virtual.width, virtual.height),
+    clearedAt: (px, py) => {
+      const gx = Math.trunc(px / CELL_PX)
+      const gy = Math.trunc(py / CELL_PX)
+      if (gx < 0 || gy < 0 || gx >= gw || gy >= gh) return false
+      return mask[gy * gw + gx] === 1
+    },
+  }
 }
 
 export interface FogCanvasParams {
@@ -269,10 +306,16 @@ export interface FogCanvasParams {
    *  static repaints under reduced motion (a manual pan / arrival snap has no loop).
    *  `undefined` (standalone fog) → the identity camera. */
   camera?: WorldGenCameraSource | undefined
+  /** The world's TERRAIN SEED (ux-run3 myth-aftau + myth-rlbku). Seeds the particle
+   *  sim's RNG AND the static landmass field, so one world is one ground for the life
+   *  of the session — a remount replays the identical terrain instead of rolling a new
+   *  continent under the same name. `undefined` → `Math.random` and no land: the
+   *  pre-run3 weather-only field the tuning stories still exercise. */
+  terrainSeed?: number | undefined
 }
 
 export function useFogCanvas(params: FogCanvasParams): void {
-  const { canvasRef, entities, entitiesSource, shownEntities, totalEntities, density, reducedMotion, growth, seat, camera } = params
+  const { canvasRef, entities, entitiesSource, shownEntities, totalEntities, density, reducedMotion, growth, seat, camera, terrainSeed } = params
 
   // Latest props the imperative closures read (useLatest idiom): refs so the rAF loop
   // always sees current values without re-binding every render.
@@ -311,6 +354,13 @@ export function useFogCanvas(params: FogCanvasParams): void {
   // Cached like the graph's inks (never a per-frame getComputedStyle): refreshed
   // by `applyFogSize` (mount / resize / settle) and the theme observer below.
   const terrainInkRef = useRef<string>(FOG_PARAMS.fogColor)
+  // The world's terrain seed (myth-aftau): the land field's identity, and the sim's
+  // RNG. Read through a ref like every other imperative input.
+  const seedRef = useRef<number | undefined>(terrainSeed)
+  // The obstacle set the LAST paint reserved — the static-repaint path (a camera move
+  // under reduced motion) has no frame to rebuild them from, but the land knockout
+  // still has to land under the same labels (ux-run3).
+  const obstaclesRef = useRef<readonly FogObstacle[]>([])
   entitiesRef.current = entities
   entitiesSourceRef.current = entitiesSource
   shownRef.current = shownEntities
@@ -319,6 +369,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
   growthRef.current = growth
   seatRef.current = seat
   cameraRef.current = camera
+  seedRef.current = terrainSeed
 
   // The obstacle set for THIS frame: the live source (when composed into a graph) or
   // the static `entities` prop (standalone / the tuning story). Read fresh each frame.
@@ -387,6 +438,11 @@ export function useFogCanvas(params: FogCanvasParams): void {
       simRef.current = createFogSim({
         width: virtualRef.current.width,
         height: virtualRef.current.height,
+        // The world's own RNG (myth-aftau): with a seed the particle field is born
+        // identically on every mount, so a re-entry replays the terrain the player
+        // walked away from instead of rolling a fresh one. Seedless (the tuning
+        // stories) falls back to fog-sim's `Math.random` default.
+        ...(seedRef.current !== undefined ? { random: mulberry32(seedRef.current) } : {}),
       })
       // Born at the CURRENT scaled population: the warm start seeds the full field,
       // then the snap retires down to the mount-time target — so a LATE mount (a
@@ -428,12 +484,13 @@ export function useFogCanvas(params: FogCanvasParams): void {
     // Positions are static during a settle, so the obstacles (vx/vy = 0) are built ONCE
     // and reused across every sub-step — no per-step re-measure.
     const obstacles = buildObstacles(ctx, currentEntities(), prevPosRef.current, SUBSTEP_MS, widthCacheRef.current, labelFontRef.current)
+    obstaclesRef.current = obstacles
     for (let i = 0; i < SETTLE_STEPS; i++) {
       sim.step(SUBSTEP_MS, obstacles, scale)
       simTimeRef.current += SUBSTEP_MS / 1000
     }
     sim.settleDensity(obstacles)
-    repaint(ctx, sim, simTimeRef.current, densityRef.current, virtualRef.current, cameraAt(performance.now()), terrainInkRef.current)
+    repaint(ctx, sim, simTimeRef.current, densityRef.current, virtualRef.current, cameraAt(performance.now()), terrainInkRef.current, groundFor(seedRef.current, virtualRef.current, obstacles, sim.gw, sim.gh))
     convergenceRef.current ??= createFogConvergence({
       stepMs: SUBSTEP_MS,
       budget: SETTLE_BUDGET - SETTLE_STEPS,
@@ -452,7 +509,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
       // texture, current camera/density. The ctx is captured from this settle; the
       // worker is cancelled on unmount, so a stale capture never paints.
       onDone: () => {
-        repaint(ctx, sim, simTimeRef.current, densityRef.current, virtualRef.current, cameraAt(performance.now()), terrainInkRef.current)
+        repaint(ctx, sim, simTimeRef.current, densityRef.current, virtualRef.current, cameraAt(performance.now()), terrainInkRef.current, groundFor(seedRef.current, virtualRef.current, obstacles, sim.gw, sim.gh))
       },
     })
   }, [canvasRef, applyFogSize, getSim, currentEntities, cameraAt])
@@ -470,7 +527,7 @@ export function useFogCanvas(params: FogCanvasParams): void {
       settleStatic()
       return
     }
-    repaint(ctx, sim, simTimeRef.current, densityRef.current, virtualRef.current, cameraAt(performance.now()), terrainInkRef.current)
+    repaint(ctx, sim, simTimeRef.current, densityRef.current, virtualRef.current, cameraAt(performance.now()), terrainInkRef.current, groundFor(seedRef.current, virtualRef.current, obstaclesRef.current, sim.gw, sim.gh))
   }, [canvasRef, settleStatic, cameraAt])
 
   // The dims key: a primitive fingerprint of the growth + seat inputs, so the effects
@@ -537,6 +594,8 @@ export function useFogCanvas(params: FogCanvasParams): void {
       virtualRef,
       terrainInkRef,
       cameraAt,
+      seedRef,
+      obstaclesRef,
     })
   }, [reducedMotion, canvasRef, applyFogSize, getSim, currentEntities, cameraAt])
 
@@ -628,6 +687,11 @@ interface FogLoopDeps {
   terrainInkRef: React.RefObject<string>
   /** The shared camera at a frame timestamp (identity when standalone — T1b). */
   cameraAt: (frameMs: number) => CameraPoint
+  /** The world's terrain seed (ux-run3) — the land field's identity. */
+  seedRef: React.RefObject<number | undefined>
+  /** Where the loop publishes each frame's obstacles, so a static repaint outside the
+   *  loop can knock the land out under the same labels. */
+  obstaclesRef: React.RefObject<readonly FogObstacle[]>
 }
 
 /** Run the fixed-timestep rAF loop: each frame, compute the real dt + clock, build the
@@ -635,7 +699,7 @@ interface FogLoopDeps {
  *  is REAL elapsed time (like the reference) so the cloud scrolls at wall-clock speed.
  *  Returns the cancel teardown. Module-scoped so the hook body stays lean. */
 function startFogLoop(ctx: CanvasRenderingContext2D, sim: FogSim, deps: FogLoopDeps): () => void {
-  const { getEntities, shownRef, totalRef, densityRef, prevPosRef, widthCacheRef, labelFontRef, virtualRef, terrainInkRef, cameraAt } = deps
+  const { getEntities, shownRef, totalRef, densityRef, prevPosRef, widthCacheRef, labelFontRef, virtualRef, terrainInkRef, cameraAt, seedRef, obstaclesRef } = deps
   let raf = 0
   let last = 0
   const start = performance.now()
@@ -647,10 +711,11 @@ function startFogLoop(ctx: CanvasRenderingContext2D, sim: FogSim, deps: FogLoopD
     // the zeroed grid makes the paint pure skips — the steady state costs ~nothing).
     const scale = fogSpawnScale(shownRef.current, totalRef.current)
     const obstacles = buildObstacles(ctx, getEntities(), prevPosRef.current, dtMs, widthCacheRef.current, labelFontRef.current)
+    obstaclesRef.current = obstacles
     sim.step(dtMs, obstacles, scale)
     // The shared camera at THIS rAF timestamp — the graph loop reads the same source
     // with the same time, so both layers translate identically this frame (C5).
-    repaint(ctx, sim, (now - start) / 1000, densityRef.current, virtualRef.current, cameraAt(now), terrainInkRef.current)
+    repaint(ctx, sim, (now - start) / 1000, densityRef.current, virtualRef.current, cameraAt(now), terrainInkRef.current, groundFor(seedRef.current, virtualRef.current, obstacles, sim.gw, sim.gh))
     raf = window.requestAnimationFrame(frame)
   }
   raf = window.requestAnimationFrame(frame)

@@ -14,7 +14,7 @@ import {
   QUEUE_SESSION_PREP,
   QUEUE_WORLD_GEN,
 } from './worker/bullmq-config.js'
-import { startHealthServer } from './worker/health-server.js'
+import { startHealthServer, type WorkerHealthServer } from './worker/health-server.js'
 import { logger } from './llm/logger.js'
 import { createVoyageEmbedder } from './llm/embed.js'
 import { readCostCap, readCharacterCreationCostCap } from './llm/prep/cost-cap.js'
@@ -66,8 +66,52 @@ const WORKER_PG_POOL_SIZE = 4
 // Reserve ~20s headroom under ECS stopTimeout=120s for pg + Redis cleanup.
 const WORKER_CLOSE_GRACE_MS = 100_000
 
+/** myth-jykft: bind the worker's health port, failing hard (with a clear,
+ *  actionable log on EADDRINUSE) if it is already taken. Called BEFORE any
+ *  BullMQ worker is registered — and before the escape guard is installed, so
+ *  the throw reaches the process instead of being contained — so a second
+ *  worker on the same host can never fall through into a hidden competing
+ *  consumer of the shared queues. The failure mode this closes: a stray second
+ *  `pnpm dev:worker` quietly takes half the session turns, and its tsx-watch
+ *  reloads kill them mid-run.
+ *
+ *  This is deliberately a SAME-HOST guard, not a distributed lock. Production
+ *  runs the worker as an ECS service (`aws_ecs_service.worker`, CI pins
+ *  desired-count 1) whose rolling deploys run old + new tasks concurrently at
+ *  `deployment_maximum_percent = 200`, and BullMQ competing consumers are the
+ *  intended scale-out story — so a Redis single-instance lock would break both
+ *  deploys and any future replica bump. Under awsvpc each task has its own
+ *  loopback, so this bind never sees a sibling replica.
+ *
+ *  Mirrors `listenOrFail` in server.ts. WORKER_HEALTH_PORT remains the escape
+ *  hatch for a deliberate second local instance. */
+async function bindHealthOrFail(port: number): Promise<WorkerHealthServer> {
+  try {
+    return await startHealthServer(port)
+  } catch (bindErr) {
+    if ((bindErr as { code?: string }).code === 'EADDRINUSE') {
+      logger.error(
+        { event: 'worker.health_port_in_use', healthPort: port },
+        `✗ Worker health port ${String(port)} is already in use — another worker ` +
+          `is already running on this host. Refusing to start: a second worker ` +
+          `would become a competing consumer on the shared BullMQ queues and ` +
+          `steal jobs from it. Stop the other worker, or set WORKER_HEALTH_PORT ` +
+          `to run a deliberate second instance.`,
+      )
+    }
+    throw bindErr
+  }
+}
+
 export async function main(): Promise<void> {
   const env = loadEnv()
+
+  // Bind the health port FIRST — it doubles as the same-host duplicate-worker
+  // guard (see bindHealthOrFail). Nothing below may register a queue consumer
+  // before this resolves. The server answers 503 until `health.arm(...)` runs
+  // at the end of boot, so an un-armed worker never reports green.
+  const healthPort = resolveHealthPort()
+  const health = await bindHealthOrFail(healthPort)
 
   // myth-y2qfi: install the process-level escape guard FIRST — before any
   // connection, queue, or worker exists — so a FLOATING unhandled rejection from
@@ -353,9 +397,10 @@ export async function main(): Promise<void> {
     (args) => finalizeEndedSession(finalizeDeps, args),
   )
 
-  // Start health server last — only marks healthy once everything else is up.
-  const healthPort = resolveHealthPort()
-  const health = await startHealthServer(healthPort, {
+  // Arm the (already bound) health server last — only marks healthy once
+  // everything else is up. The socket itself was claimed at the top of main()
+  // as the duplicate-worker guard; this is the phase that supplies the probes.
+  health.arm({
     pg,
     redisBatch,
     redisRealtime,

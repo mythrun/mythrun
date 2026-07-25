@@ -12,6 +12,7 @@ import type {
   AbilityAbbrev,
   AbilityTile,
   SheetStat,
+  SheetStatKey,
   SheetEntry,
   SheetSkill,
   CuratedSheet,
@@ -113,8 +114,11 @@ describe('shared data + view-model shapes', () => {
     }>()
   })
 
-  it('SheetStat is a label/value stripe cell', () => {
-    expectTypeOf<SheetStat>().toEqualTypeOf<{ label: string; value: string }>()
+  // myth-qeyqq: the structural key rides ALONGSIDE the display label so a
+  // consumer can find one cell without matching on its copy.
+  it('SheetStat is a keyed label/value stripe cell', () => {
+    expectTypeOf<SheetStat>().toEqualTypeOf<{ key: SheetStatKey; label: string; value: string }>()
+    expectTypeOf<SheetStatKey>().toEqualTypeOf<'ac' | 'hp' | 'proficiency' | 'hitDie' | 'speed'>()
   })
 
   it('SheetEntry is a name with an optional gloss', () => {
@@ -186,6 +190,12 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
     expectTypeOf<FreeformPromptProps>().toEqualTypeOf<{
       // MYT-100: the resolved submit-control label (shell-owned i18n).
       submitLabel: string
+      // ux-run3 myth-7ceqw: honest gating — Continue stands down while empty.
+      submitDisabled?: boolean
+      // ux-run3 myth-g3mt6: the commit disclosure by the CTA (duration/cost).
+      submitHint?: string
+      // ux-run3 myth-en2jj: focus the field on mount (typing is the next action).
+      focusOnMount?: boolean
       // ux-run2 myth-80an1: the optional quiet action-row Back.
       onBack?: () => void
       backLabel?: string
@@ -193,8 +203,9 @@ describe('prop contracts (exact — the C tasks build to these)', () => {
       compact?: boolean
       // ux-run2 myth-4gnrp: the whisper register — form hint vs the DM's voice.
       whisperVoice?: 'hint' | 'dm'
-      // MYT-102: the optional resolved step signpost ("1 of 2") shown quietly
-      // above the prompt so the player knows a second question follows.
+      // MYT-102: the optional resolved step signpost ("1 of 2 · Who you are")
+      // shown quietly above the prompt so the player knows a second question
+      // follows (ux-run3 myth-7ceqw named the steps).
       stepIndicator?: string
       prompt: string
       whisper: string

@@ -44,6 +44,12 @@ variable "alb_arn" {
   type        = string
 }
 
+variable "alb_arn_suffix" {
+  description = "The shared ALB's `arn_suffix` (e.g. 'app/mythrun-alb/1a2b3c4d5e6f'), NOT its ARN. This is the form CloudWatch expects for the `LoadBalancer` dimension on AWS/ApplicationELB metrics; deriving it from alb_arn by string surgery is possible but brittle, so the composition passes it explicitly. Empty default keeps a pre-alarm bring-up applying — the alarms that use it are already count-gated on alerts_topic_arn."
+  type        = string
+  default     = ""
+}
+
 variable "alb_listener_https_arn" {
   description = "ARN of the ALB's HTTPS listener (the listener_rule attaches here)."
   type        = string
@@ -162,7 +168,7 @@ variable "worker_memory" {
 }
 
 variable "log_retention_days" {
-  description = "CloudWatch log retention in days. Staging defaults to 14; production should pass 30."
+  description = "CloudWatch log retention in days for the api + worker log groups. The 14-day default is the conservative floor from Week 0 §6.1; myth-z4f raises the real environments above it because two weeks is shorter than the interval at which a subtle bug gets noticed. Staging passes 30; the production composition should pass 90."
   type        = number
   default     = 14
 }
@@ -264,4 +270,14 @@ variable "frontend_base_url" {
     )
     error_message = "frontend_base_url must be empty or a bare https?:// origin with no path/query/hash."
   }
+}
+
+# myth-89am: SNS topic the billing alarms publish to. Wired from the
+# environment root (staging passes aws_sns_topic.alerts.arn). Empty default
+# means "no topic yet" and skips alarm creation entirely, so a fresh
+# environment can apply the serving module before its alerts topic exists.
+variable "alerts_topic_arn" {
+  description = "ARN of the SNS topic that CloudWatch billing alarms publish to. Empty disables alarm creation (metric filters are still created, so the metrics exist and alarms can be attached later)."
+  type        = string
+  default     = ""
 }

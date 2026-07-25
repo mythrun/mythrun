@@ -114,6 +114,21 @@ export const SERVER_FRAME_TYPES = [
 // Snapshot of a connected participant, used in the reconnect replay payload.
 // Mirrors the §5.2 `participants: Array<{userId, displayName, characterName}>`
 // shape.
+/**
+ * One condition currently active on a character, as carried by a
+ * `ledger_update` frame's `activeConditions` (myth-hlydp).
+ *
+ * `level` is the 5e exhaustion track (1-6) and is `null` for every other
+ * condition. It rides the wire as structured data rather than surviving only
+ * in the prose `summary`, so a client can render "Exhaustion 3" without
+ * re-parsing prose — parsing prose to recover mechanics is exactly the
+ * local-intelligence pattern the architecture bans.
+ */
+export interface ActiveCondition {
+  readonly condition: string
+  readonly level: number | null
+}
+
 export interface ParticipantSummary {
   userId: string
   displayName: string
@@ -252,6 +267,24 @@ export type ServerFrame =
       featureName?: string
       usesRemaining?: number
       condition?: string
+      // myth-hlydp: the character's FULL post-mutation active-condition set —
+      // authoritative, not a delta, exactly like the `hp`/`gold` post-values
+      // above. A client SETS its condition state from this whenever the field
+      // is present, so re-applying a frame (a reconnect replay) is idempotent.
+      //
+      // A direction flag was the obvious alternative and does NOT work: a long
+      // rest mutates TWO conditions in one operation (clears unconscious via
+      // the HP->max write, decrements exhaustion) while emitting a single
+      // `kind:'rest'` frame, and every HP write silently syncs the HP-derived
+      // `unconscious` row while emitting only `kind:'hp'`. One
+      // {condition, direction} pair per frame cannot express either. The full
+      // list can, which is why it rides the hp/rest frames too, not just
+      // `kind:'condition'`.
+      //
+      // ABSENT on frames whose tool cannot touch conditions (gold, item,
+      // feature, spell_slot): absence means "no statement", so a client holds
+      // its last known set rather than clearing it.
+      activeConditions?: readonly ActiveCondition[]
       diceRolled?: readonly number[]
     }
   // MYT-74a session-end broadcast. A one-shot lifecycle frame: the live session

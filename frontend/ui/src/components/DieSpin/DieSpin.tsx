@@ -108,17 +108,20 @@ const REST_FRAME = { angle: SPIN_FRAMES.length * STEP_DEG, scale: 1 }
 // it; the numeral centres over it.
 const WRAP_CLASS = 'relative inline-flex h-16 w-16 items-center justify-center'
 // The stamped result: mono `--font-ui`, centred over the die, inheriting the die's
-// currentColor. The size class precedes `leading-none` (composed at the call
-// site) because a font-size utility carries its own line-height — merged the
-// other way round, the `leading-none` that keeps a two-digit numeral optically
-// centred would be dropped.
-const NUMERAL_BASE_CLASS = 'absolute inset-0 flex items-center justify-center font-ui font-semibold'
+// currentColor. myth-twraw: the roll is the one moment of chance in the loop, so
+// the landed numeral carries REVEAL weight (font-bold) and sits a step LARGER than
+// the equation line below — the number lands before the arithmetic explains it.
+// The size class precedes `leading-none` (composed at the call site) because a
+// font-size utility carries its own line-height — merged the other way round, the
+// `leading-none` that keeps a two-digit numeral optically centred would be dropped.
+const NUMERAL_BASE_CLASS = 'absolute inset-0 flex items-center justify-center font-ui font-bold'
 // The d20 family stamps the numeral INSIDE the central face (myth-ydu35): one step
-// smaller so a two-digit value clears the face's slanted edges, nudged down to the
-// face's centroid (the face sits below the box centre on the 24-grid).
-const NUMERAL_D20_CLASS = 'text-base translate-y-[4%]'
-// The open-centre shapes (d4…d12) keep the large stamp at the box centre.
-const NUMERAL_OPEN_CLASS = 'text-lg'
+// below the open shapes so a two-digit value clears the face's slanted edges,
+// nudged down to the face's centroid (the face sits below the box centre on the
+// 24-grid). text-lg two-digit digits (~20px wide) still clear the ~40px face base.
+const NUMERAL_D20_CLASS = 'text-lg translate-y-[4%]'
+// The open-centre shapes (d4…d12) keep the larger stamp at the box centre.
+const NUMERAL_OPEN_CLASS = 'text-xl'
 
 export const DieSpin = forwardRef<HTMLDivElement, DieSpinProps>(function DieSpin(
   { spinning, result, reducedMotion, onSpinComplete, resultLabel, sides = 20 },

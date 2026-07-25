@@ -9,6 +9,8 @@ import type {
   RollRevealView as SourceRollRevealView,
   CardItem as SourceCardItem,
 } from '../../../session/roll-reveal.ts'
+import type { ReactNode } from 'react'
+import type { TableTalkView } from '../../../session/transcript-presentation.ts'
 import * as sessionBarrel from '../index.ts'
 import type {
   // Re-exported view-model shape (from session/transcript-types.ts)
@@ -22,6 +24,7 @@ import type {
   DmMessageProps,
   PlayerMessageProps,
   SessionInputProps,
+  TableTalkProps,
   ThinkingIndicatorProps,
   SessionStartBeatProps,
   // MYT-93 dice-moment prop contracts (RollCard / DieSpin)
@@ -62,11 +65,13 @@ describe('re-exported view-model shape', () => {
 })
 
 describe('prop contracts (exact — the U tasks build to these)', () => {
-  it('MessageStreamProps — transcript items + reveal seam (MYT-93) + highlight seam (MYT-94) + correction eyebrow (myth-d6knq)', () => {
+  it('MessageStreamProps — transcript items + reveal seam (MYT-93) + highlight seam (MYT-94) + correction eyebrow (myth-d6knq) + off-edge pill / table-talk seams (ux-run3)', () => {
     // EXACT-shape pin (do NOT weaken to toMatchTypeOf). MYT-93 appended the four
     // required reveal-seam fields; MYT-94 appended the three optional highlight-seam
-    // fields; myth-d6knq appended the optional `correctionLabel` errata eyebrow. The
-    // extensions union on distinct names — this literal is the union.
+    // fields; myth-d6knq appended the optional `correctionLabel` errata eyebrow;
+    // ux-run3 appended the optional off-edge pill labels (myth-em6bg) and the
+    // table-talk grouping seam (myth-1msig). The extensions union on distinct
+    // names — this literal is the union.
     expectTypeOf<MessageStreamProps>().toEqualTypeOf<{
       items: readonly TranscriptItem[]
       connectionLine: string | null
@@ -79,6 +84,17 @@ describe('prop contracts (exact — the U tasks build to these)', () => {
       onEntityOpen?: (entityId: string) => void
       highlightLabels?: EntityHighlightLabels
       correctionLabel?: string
+      jumpLabel?: string
+      newMessagesLabel?: string
+      tableTalk?: TableTalkView
+      tableTalkLabel?: string
+    }>()
+  })
+
+  it('TableTalkProps — the marked OOC frame: a resolved eyebrow + a children slot (myth-1msig)', () => {
+    expectTypeOf<TableTalkProps>().toEqualTypeOf<{
+      label: string
+      children: ReactNode
     }>()
   })
 

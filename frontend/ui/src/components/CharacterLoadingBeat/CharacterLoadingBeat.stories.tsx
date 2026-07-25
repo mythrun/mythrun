@@ -22,14 +22,16 @@ const MID_BEATS: LoadingBeat[] = [
 ]
 
 // Fresh entry — nothing done yet: the ladder all-pending and the figure in its
-// ambient BREATHE field (the myth-zyk6o fix: alive dither from frame one, never
-// an empty black-bordered rectangle).
+// faint IDLE shimmer (ux-run3 myth-c96rf: nearly blank, poised at the fill's
+// origin — emptier than any accretion state, yet never a dead empty rectangle).
 const FRESH_BEATS: LoadingBeat[] = MID_BEATS.map((b) => ({ ...b, state: 'pending' }))
 
 const COMPLETE_BEATS: LoadingBeat[] = MID_BEATS.map((b) => ({ ...b, state: 'done' }))
 
-// The resolved beat heading the shell supplies (real MYT-100 copy).
-const HEADING = 'Bringing them to life…'
+// The resolved kicker the shell supplies — the factual stage counter (ux-run3
+// myth-1yxfr; the old "Bringing them to life…" eyebrow doubled the screen H1
+// and carried a second live ellipsis).
+const HEADING = 'Stage 3 of 4'
 
 const meta: Meta<typeof CharacterLoadingBeat> = {
   title: 'Character/CharacterLoadingBeat',
@@ -53,9 +55,10 @@ export default meta
 
 type Story = StoryObj<typeof CharacterLoadingBeat>
 
-// Fresh — zero progress: breathe figure, all-pending ladder (never-empty proof).
+// Fresh — zero progress: the faint idle shimmer (nearly blank, poised at the
+// fill's origin — ux-run3 myth-c96rf), all-pending ladder.
 export const Fresh: Story = {
-  name: 'Fresh (0 of 4 — breathing figure)',
+  name: 'Fresh (0 of 4 — idle shimmer)',
   args: { beats: FRESH_BEATS, reducedMotion: false },
 }
 

@@ -32,6 +32,39 @@ describe('WhisperLedger', () => {
     expect(queryByTestId('whisper-ledger-history')).toBeNull()
   })
 
+  it('reserves the ledger WELL from first paint — a fixed-height slot the list grows into (ux-run3 myth-5ekb5)', () => {
+    // Run 3: the mark drifted upward ~15px as lines settled beneath it. The
+    // ledger now grows DOWNWARD inside a well whose height is reserved at t=0,
+    // so settling a line never re-centers the column; overflow (wrapped lines)
+    // clips at the bottom where the oldest, most-faded line lives.
+    const empty = render(<WhisperLedger current="Now." history={[]} />)
+    const well = empty.getByTestId('whisper-ledger-well')
+    expect(well.className).toMatch(/h-\[/)
+    expect(well.className).toMatch(/overflow-hidden/)
+    empty.unmount()
+    // The well is THE SAME element once lines settle (list inside it).
+    const grown = render(<WhisperLedger current="Now." history={HISTORY} />)
+    expect(grown.getByTestId('whisper-ledger-well')).toContainElement(
+      grown.getByTestId('whisper-ledger-history'),
+    )
+  })
+
+  it('marks settled lines with a quiet filled square — none on the live line (ux-run3 myth-1yxfr)', () => {
+    // The 1-bit completion mark (square, per register — never a dot or check):
+    // each settled whisper is a done line, flipping the log from decoration to
+    // progress without touching the prose. The live line carries no mark.
+    const { getAllByTestId, getByTestId } = render(
+      <WhisperLedger current="Ink is put to page." history={HISTORY} />,
+    )
+    const marks = getAllByTestId('whisper-ledger-mark')
+    expect(marks).toHaveLength(HISTORY.length)
+    for (const mark of marks) {
+      expect(mark.className).toMatch(/bg-current/)
+      expect(mark.className).not.toMatch(/rounded-(?!none)/)
+    }
+    expect(getByTestId('whisper-ledger-current').querySelector('[data-testid="whisper-ledger-mark"]')).toBeNull()
+  })
+
   it('is wholly decorative — aria-hidden at the root (the surface owns busy semantics)', () => {
     const { getByTestId } = render(
       <WhisperLedger data-testid="ledger" current="Now." history={HISTORY} />,

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Stack,
   Box,
@@ -17,7 +17,7 @@ import {
 } from '@mythrun/ui'
 import { completedTailStageCount, getWorldSnapshot, type WorldGenStream } from '@mythrun/client-core'
 import type { RevealMoment } from '@mythrun/client-core/contract'
-import { MIN_EXPECTED_ENTITIES } from '@mythrun/client-core/worldgen'
+import { MIN_EXPECTED_ENTITIES, useWikiNavigation } from '@mythrun/client-core/worldgen'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { usePrefersReducedMotion } from '../../platform/web/use-prefers-reduced-motion.ts'
@@ -50,7 +50,7 @@ import { DrawerBackClose } from './drawer-back-close.tsx'
 //
 // THE REVEAL MOMENT (D6, §3.8): the route wraps this screen in a
 // <RevealTransition> and hands the `moment` down; the layout stages itself
-// against its phase — the title fade at `settle`, the pane arrival / drawer
+// against its phase — the eyebrow fade at `settle`, the pane arrival / drawer
 // mount at `resolve`. The fog is born drained in every phase (`revealFogShown`
 // — the §3.8 fog-gone invariant, enforced from the swap). A mount without a
 // moment renders the settled end state instantly (the late arriver).
@@ -106,25 +106,29 @@ interface RevealChromeProps {
   wikiPanel: React.JSX.Element
   continueAction: React.JSX.Element
   moment: RevealMoment
-  /** The page header — the WORLD'S NAME once the snapshot delivers it
-   *  (ux-run2 myth-8ozsw: the prime slot must anchor the real name, not the
-   *  generic "Your world" chrome); the generic title is only the fallback
-   *  while the name is unknown. */
+  /** The OUTLINE H1 — the world's name once the snapshot delivers it, the
+   *  generic title while it's unknown. Visually hidden on BOTH regimes since
+   *  ux-run3: the wiki panel is the document and its header carries the name
+   *  on the glass (run-2's myth-8ozsw put the name in the left prime slot;
+   *  run-3 found it duplicated the panel header at the same register, so the
+   *  left slot demoted to the quiet "Your world" eyebrow and the name lives
+   *  in the outline + panel only). Mobile also titles the wiki drawer. */
   title: string
 }
 
 /** Desktop: the true 50/50, ARRIVING IN MOTION (D6). The WHOLE left column —
- *  title over graph over the explore prompt + Continue — composes INSIDE the
+ *  eyebrow over graph over the explore prompt + Continue — composes INSIDE the
  *  panes row's stage cell (ux-run2 myth-ma8yv, critique 018), so the two panes
- *  share both alignment edges: the wiki's top lands on the title's line and its
- *  bottom on the Continue row's line (a spread in a book, not two components
- *  that happened to load near each other). Pre-`resolve` the stage cell owns
- *  the full width, so the stacking order the player sees mid-moment is
- *  unchanged; at `resolve` the column eases to the left half while the wiki
- *  slides in from the right. The title fades in at `settle`, the explore
- *  prompt (and Continue) at `resolve` — whole-block opacity fades with their
- *  space reserved from the first frame, so nothing shifts mid-moment. A
- *  settled mount renders all of it visible, instantly. */
+ *  share both alignment edges: the wiki's top lands on the eyebrow's line and
+ *  its bottom on the Continue row's line (a spread in a book, not two
+ *  components that happened to load near each other). Pre-`resolve` the stage
+ *  cell owns the full width, so the stacking order the player sees mid-moment
+ *  is unchanged; at `resolve` the column eases to the left half while the wiki
+ *  slides in from the right. The eyebrow (with the hidden outline H1 — see the
+ *  fade block) arrives at `settle`, the explore prompt (and Continue) at
+ *  `resolve` — whole-block opacity fades with their space reserved from the
+ *  first frame, so nothing shifts mid-moment. A settled mount renders all of
+ *  it visible, instantly. */
 function DesktopReveal({ graph, wikiPanel, continueAction, moment, title }: RevealChromeProps): React.JSX.Element {
   const { t } = useTranslation()
   return (
@@ -135,11 +139,23 @@ function DesktopReveal({ graph, wikiPanel, continueAction, moment, title }: Reve
         stage={
           <Stack grow gap={4}>
             <RevealFade moment={moment} visibleFrom="settle">
-              {/* The world's NAME fades in at settle (ux-run2 myth-8ozsw) —
-                  the reveal's payoff string in the prime slot. */}
-              <Heading level={1} role="title">
-                {title}
-              </Heading>
+              {/* The settle beat's arrival is now the QUIET EYEBROW (ux-run3):
+                  run-2's full-size name here (myth-8ozsw) doubled the wiki
+                  panel's header at the same size/weight on one baseline, and
+                  the panel is the document — so the left slot demoted to the
+                  static "Your world" chrome in the codebase's uppercase
+                  ui-label eyebrow register, keeping the settle fade an object
+                  and the panes' shared top alignment line (myth-ma8yv). The
+                  outline H1 rides along visually hidden, still the world's
+                  name — the a11y intent of myth-8ozsw survives. */}
+              <VisuallyHidden>
+                <Heading level={1} role="title">
+                  {title}
+                </Heading>
+              </VisuallyHidden>
+              <Text role="ui-label" as="p">
+                {t('worldReveal.title')}
+              </Text>
             </RevealFade>
             {/* Box grow (`flex-1 min-h-0`) gives the graph a DEFINITE flexed
                 height between the title and the Continue row, so its fillHost
@@ -166,6 +182,9 @@ function DesktopReveal({ graph, wikiPanel, continueAction, moment, title }: Reve
 interface MobileRevealProps extends RevealChromeProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** The lifted wiki stack's Back layer — see `DrawerBackClose`. */
+  canPageBack: boolean
+  onPageBack: () => void
 }
 
 /** Mobile: the graph owns the glass. The stage is the generating act's
@@ -182,7 +201,17 @@ interface MobileRevealProps extends RevealChromeProps {
  *  "handle arrives at the right edge"; before that nothing occludes the
  *  just-revealed world. Mount is monotonic (phases only advance), so the
  *  mount-persistence contract is untouched once it exists. */
-function MobileReveal({ graph, wikiPanel, continueAction, moment, open, onOpenChange, title }: MobileRevealProps): React.JSX.Element {
+function MobileReveal({
+  graph,
+  wikiPanel,
+  continueAction,
+  moment,
+  open,
+  onOpenChange,
+  canPageBack,
+  onPageBack,
+  title,
+}: MobileRevealProps): React.JSX.Element {
   const { t } = useTranslation()
   return (
     <Stack data-testid="worldgen-reveal">
@@ -196,12 +225,15 @@ function MobileReveal({ graph, wikiPanel, continueAction, moment, open, onOpenCh
       </FullBleedStage>
       {revealPhaseAtLeast(moment.phase, 'resolve') && (
         <>
-          {/* E2 (Phase E): mobile Back precedence — while the drawer is open, a
-              browser/hardware Back closes it before leaving the route (the
-              close-drawer → leave-route layer, via the router's history
-              integration). Mounted with the drawer; inert while closed. */}
+          {/* E2 (Phase E) + myth-g7kg6: mobile Back precedence — while the drawer
+              is open, a browser/hardware Back unwinds ONE layer at a time (the
+              reader's wiki page, then the drawer, then the route), via the
+              router's history integration. Mounted with the drawer; inert while
+              closed. */}
           <DrawerBackClose
             open={open}
+            canPageBack={canPageBack}
+            onPageBack={onPageBack}
             onClose={() => {
               onOpenChange(false)
             }}
@@ -215,9 +247,15 @@ function MobileReveal({ graph, wikiPanel, continueAction, moment, open, onOpenCh
             open={open}
             onOpenChange={onOpenChange}
           >
-            <Stack gap={4}>
+            {/* Continue keeps its natural height at the top of the sheet; the
+                wiki FILLS what's left (`Box grow` — flex-1 min-h-0) so IT is
+                the scroller, not the sheet body. That is what makes the wiki's
+                per-page scroll capture/restore real on mobile: while the body
+                scrolled, the wiki's own container never moved and every
+                captured offset was 0 (myth-1k9qt). */}
+            <Stack gap={4} grow>
               {continueAction}
-              {wikiPanel}
+              <Box grow>{wikiPanel}</Box>
             </Stack>
           </Drawer>
         </>
@@ -310,40 +348,24 @@ const NO_STAGES: WorldGenStream['stages'] = []
 // changing to a defined id). A D4-side semantics change breaks re-tap here.
 //
 // A graph tap: highlight, push the wiki page and — on mobile, where the wiki
-// sleeps in the drawer — SUMMON the sheet so the page is actually seen. The
-// summon is DEFERRED past the tapping gesture: the graph selects on
-// POINTERUP, but Radix (Dialog ≥1.1.17, `deferPointerDownOutside`) arms the
-// sheet's outside-dismiss at the gesture's POINTERDOWN — which landed on the
-// canvas, outside the sheet — and delivers it at the gesture's trailing
-// CLICK. Opening synchronously puts the sheet in its OPEN state by click
-// time, so its own armed dismissal immediately closes it (a one-gesture
-// open→shut flash; caught live). Deferring one macrotask lets that click
-// land on a still-closed sheet — whose closed-state dismiss suppression
-// swallows it — and then opens. A gesture with no trailing click (a drag)
-// never selects, so the timer only ever runs for real taps.
+// sleeps in the drawer — SUMMON the sheet so the page is actually seen,
+// SYNCHRONOUSLY. D5 deferred the summon one macrotask here, because the graph
+// selects on POINTERUP while Radix arms the sheet's outside-dismiss at the same
+// gesture's POINTERDOWN and delivers it at its trailing CLICK — so an open sheet
+// was shut by its own summoning tap. That guard now lives in the Drawer itself
+// (myth-cwhdk: it ignores the dismissal carrying the pointerdown that was in
+// flight when it opened), which is a guarantee rather than a race won by a hair,
+// so this stays plain state.
 function useGraphSelection(narrow: boolean, modelReady: boolean, summonDrawer: () => void) {
   const [selection, setSelection] = useState<string | undefined>(undefined)
   const [wikiPush, setWikiPush] = useState<string | undefined>(undefined)
   useEffect(() => {
     if (modelReady && wikiPush !== undefined) setWikiPush(undefined)
   }, [modelReady, wikiPush])
-  const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(
-    () => () => {
-      if (openTimerRef.current !== null) clearTimeout(openTimerRef.current)
-    },
-    [],
-  )
   const handleGraphSelect = (displayId: string): void => {
     setSelection(displayId)
     setWikiPush(displayId)
-    if (narrow) {
-      if (openTimerRef.current !== null) clearTimeout(openTimerRef.current)
-      openTimerRef.current = setTimeout(() => {
-        openTimerRef.current = null
-        summonDrawer()
-      }, 0)
-    }
+    if (narrow) summonDrawer()
   }
   return { selection, setSelection, wikiPush, handleGraphSelect }
 }
@@ -371,6 +393,10 @@ export function WorldReveal({
   // player reads. Monotonic within a mount (stages only advance).
   const wikiRefreshToken = completedTailStageCount(stages)
   const wiki = useWikiModel(campaignId, fetchSnapshot, wikiRefreshToken)
+  // The wiki's page stack, LIFTED out of WorldWiki (myth-g7kg6) so the mobile
+  // Back precedence can pop a page before the drawer closes. The wiki drives it
+  // exactly as it drives its own; only the ownership moved.
+  const wikiNavigation = useWikiNavigation()
   const { selection, setSelection, wikiPush, handleGraphSelect } = useGraphSelection(
     narrow,
     wiki.model !== null,
@@ -404,12 +430,16 @@ export function WorldReveal({
       nodeListLabel={t('worldReveal.graphNodeList')}
       // The glyph KEY (myth-466cy): the same kind labels the wiki's group headings
       // speak, so the graph's diamond/square/stack vocabulary reads as documented
-      // rather than decorative. Only kinds present in the world render.
+      // rather than decorative. Only kinds present in the world render. The
+      // reserved `hollow` seat (ux-run3) names the OUTLINE-only marks — nodes
+      // whose name tier-retired at this density, findable in the panel's index —
+      // which the key otherwise left reading as a glitch.
       legend={{
         faction: t('worldReveal.group.faction'),
         location: t('worldReveal.group.location'),
         npc: t('worldReveal.group.npc'),
         item: t('worldReveal.group.item'),
+        hollow: t('worldReveal.legendHollow'),
       }}
       // The REGIME props (MYT-89 audit v3 + v4). Desktop: the pane is a true
       // half of the screen — it FILLS the RevealPanes row (fillHost) and must
@@ -440,10 +470,13 @@ export function WorldReveal({
       onSelect={setSelection}
       query={query}
       onQuery={setQuery}
+      navigation={wikiNavigation}
     />
   )
   const continueAction = <ContinueAffordance ready={continueReady} onPress={handleContinue} />
-  // The page header is the world's NAME (ux-run2 myth-8ozsw); generic fallback only pre-model.
+  // The OUTLINE H1 (+ the mobile drawer's title): the world's NAME once the
+  // model delivers it (myth-8ozsw); generic fallback only pre-model. Visually
+  // hidden on the glass since ux-run3 — the wiki panel's header carries it.
   const title = wiki.model?.introduction?.title ?? t('worldReveal.title')
 
   if (narrow) {
@@ -455,6 +488,8 @@ export function WorldReveal({
         moment={moment}
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
+        canPageBack={wikiNavigation.canBack}
+        onPageBack={wikiNavigation.back}
         title={title}
       />
     )

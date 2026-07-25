@@ -109,8 +109,8 @@ const SHEET: CuratedSheet = {
   name: 'Kessa Vurm',
   identityLine: 'Level 3 · Human Fighter · Toll-clerk of Greenward',
   stats: [
-    { label: 'AC', value: '16' },
-    { label: 'HP', value: '28 / 28' },
+    { key: 'ac', label: 'AC', value: '16' },
+    { key: 'hp', label: 'HP', value: '28 / 28' },
   ],
   abilities: [
     { abbrev: 'STR', score: 16, modifier: 3 },

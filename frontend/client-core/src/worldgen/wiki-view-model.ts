@@ -12,6 +12,7 @@
 // a hard server boundary, so the normalizer stays a dumb reshape either way.
 
 import type { EntityKind, WorldSnapshot, WorldSnapshotEntity } from '@mythrun/contract/rest'
+import { buildLeadLines } from '../session/entity-index.ts'
 
 /** A fact as the wiki shows it — the display fields, keyed off nothing (the
  *  owning entity carries it). Projected from the snapshot fact row. */
@@ -54,6 +55,13 @@ export interface WikiEntity {
   readonly related: readonly WikiRelatedLink[]
   readonly hasBody: boolean
   readonly children?: readonly WikiEntity[]
+  /** The one-line HANDLE the index shows beneath the name (ux-run3 myth-ry14g):
+   *  the kernel's first sentence, else the first known fact — the same
+   *  derivation (`buildLeadLines`) the in-prose entity popover uses, so an index
+   *  row and the popover say the same thing about a person. A twelve-name
+   *  alphabetized list is a memory test; the handle is what makes it a
+   *  reference. Absent when the entity carries neither kernel nor fact. */
+  readonly handle?: string
 }
 
 /** Entities of one kind. `kind` is the snapshot `entity_type`. */
@@ -279,16 +287,20 @@ interface EntityIndexes {
   readonly factsByEntity: ReadonlyMap<string, readonly WikiFact[]>
   readonly relatedByEntity: ReadonlyMap<string, readonly WikiRelatedLink[]>
   readonly kernelByEntity: ReadonlyMap<string, string>
+  /** entityId → its one-line index handle (ux-run3 myth-ry14g). */
+  readonly handleByEntity: ReadonlyMap<string, string>
 }
 
 /** Build one entity node, recursing into its nested-location children. */
 function toEntityNode(entity: WorldSnapshotEntity, layout: Layout, indexes: EntityIndexes): WikiEntity {
   const facts = indexes.factsByEntity.get(entity.id) ?? []
   const body = indexes.kernelByEntity.get(entity.id)
+  const handle = indexes.handleByEntity.get(entity.id)
   const base: WikiEntity = {
     id: entity.id,
     name: entity.name,
     ...(body !== undefined ? { body } : {}),
+    ...(handle !== undefined ? { handle } : {}),
     facts,
     related: indexes.relatedByEntity.get(entity.id) ?? [],
     hasBody: facts.length > 0 || body !== undefined,
@@ -338,6 +350,7 @@ export function toWikiViewModel(snapshot: WikiSnapshot): WikiViewModel {
     factsByEntity: indexFactsByEntity(snapshot),
     relatedByEntity: indexRelatedByEntity(snapshot, new Map(snapshot.entities.map((e) => [e.id, e.name]))),
     kernelByEntity: indexKernelsByEntity(snapshot),
+    handleByEntity: buildLeadLines(snapshot),
   }
   const layout = layOut(snapshot)
   const groups: WikiGroup[] = []

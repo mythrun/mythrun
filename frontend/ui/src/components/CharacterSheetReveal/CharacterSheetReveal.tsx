@@ -68,17 +68,25 @@ const IDENT_CLASS = 'font-ui text-sm font-medium uppercase tracking-wide text-ac
 // than 5.5rem once uppercased + letter-spaced) never spills its box at ~375px — the
 // row wraps to fewer cells instead. Strong edge; hairline inter-cell rules.
 const STRIPE_CLASS = 'flex flex-wrap rounded-none border border-border-strong bg-surface'
+// Cells centre their label·value pair (ux-run3 myth-vmadj) — the value owns the
+// cell instead of huddling left in empty paper.
 const STRIPE_CELL =
-  'min-w-fit flex-1 border-r border-border px-[var(--space-3)] py-[var(--space-2)] last:border-r-0'
+  'min-w-fit flex-1 border-r border-border px-[var(--space-3)] py-[var(--space-2)] text-center last:border-r-0'
 const STRIPE_KEY = 'font-ui text-xs uppercase tracking-wide text-ink-tertiary'
-const STRIPE_VALUE = 'font-body text-lg font-semibold text-ink'
+// The vitals value reads one full step above body (myth-vmadj: AC/HP are the
+// numbers a player checks constantly) — clearly between body (lg) and the
+// ability-score hero (2xl).
+const STRIPE_VALUE = 'font-body text-xl font-semibold text-ink'
 
 // The two-column body — abilities + prose beside the panels on desktop, a single
 // column below `md`. `items-start` so the columns top-align rather than stretch.
 const COLS_CLASS = 'grid items-start gap-[var(--space-6)] md:grid-cols-[1.1fr_1fr]'
 
 // The six ability tiles — a 3-up square grid (two rows), holding down to ~375px.
-const ABILITIES_CLASS = 'grid grid-cols-3 gap-[var(--space-2)]'
+// `auto-rows-fr` equalises the two rows (myth-vmadj): the caster's INT tile adds
+// a casting tag line, and without the reserve its row read taller — the grid
+// must read as one lattice.
+const ABILITIES_CLASS = 'grid auto-rows-fr grid-cols-3 gap-[var(--space-2)]'
 // One ability tile — a SQUARE paper cell (strong edge) with the abbrev, the big
 // serif score, and the ember mono modifier. No circle: the signature "visual, not a
 // table" element as a flat tile.
@@ -120,10 +128,13 @@ const PANEL_ITEM_VALUE = 'mt-[2px] block font-body text-sm leading-[1.5] text-in
 // title ("What they can do") — frame and fill disagree (MYT-olo9c). The deep fix is a
 // Haiku third-person rewrite in char-gen (deferred). As a cheap, honest presentation
 // mitigation the feature gloss is typographically DISTANCED into a quoted rule
-// reference — a hanging left rule + italic + muted — so it reads AS a rulebook
+// reference — a hanging left rule + muted ink — so it reads AS a rulebook
 // quotation, not as the character's own portrait. It changes NO authored copy.
+// ROMAN, not italic (ux-run3 myth-vmadj): these glosses run multi-line, and
+// italics at length read as strain — the left rule alone carries the quotation;
+// italics stay reserved for single-line flavour (the subtitle role).
 const PANEL_ITEM_GLOSS_RULE =
-  'mt-[var(--space-1)] block border-l-2 border-border pl-[var(--space-2)] font-body text-xs italic text-ink-tertiary'
+  'mt-[var(--space-1)] block border-l-2 border-border pl-[var(--space-2)] font-body text-xs text-ink-tertiary'
 
 // The expanded skills grid — two columns of rows on desktop, one at phone widths.
 const SKILLS_LIST_CLASS =
@@ -145,8 +156,12 @@ const ACTIONS_CLASS = cn(
   'sm:flex-row sm:flex-wrap sm:items-center',
 )
 // The inline start-over confirm (two-step, CONTROLLED): the prompt over its two
-// verbs, right-aligned in the discard action's isolated slot.
-const START_OVER_SLOT = 'ml-auto flex min-w-0 flex-col items-end gap-[var(--space-2)]'
+// verbs, right-aligned in the discard action's isolated slot. The slot reserves
+// the CONFIRM state's height on row layouts (ux-run3 myth-vshy0: 4.25rem =
+// text-sm prompt line 20px + gap-2 8px + md control 40px) so arming the confirm
+// never drops the action row; `justify-center` seats both states in the reserve.
+const START_OVER_SLOT =
+  'ml-auto flex min-w-0 flex-col items-end justify-center gap-[var(--space-2)] sm:min-h-[4.25rem]'
 const START_OVER_PROMPT = 'text-right font-body text-sm text-ink'
 
 /** Format an ability modifier with an explicit sign — `+3`, `+0`, `−1` (the mono
@@ -384,7 +399,7 @@ export const CharacterSheetReveal = forwardRef<HTMLDivElement, CharacterSheetRev
         {/* The AC / HP / Proficiency / Hit Die / Speed stripe. */}
         <div data-testid="character-sheet-reveal-stripe" className={STRIPE_CLASS}>
           {curated.stats.map((stat) => (
-            <div key={stat.label} className={STRIPE_CELL}>
+            <div key={stat.key} className={STRIPE_CELL}>
               <div className={STRIPE_KEY}>{stat.label}</div>
               <div className={STRIPE_VALUE}>{stat.value}</div>
             </div>
@@ -409,6 +424,17 @@ export const CharacterSheetReveal = forwardRef<HTMLDivElement, CharacterSheetRev
               ))}
             </div>
             <CuratedSaves savingThrows={full.savingThrows} />
+            {/* The caster's spells sit HERE, under the saving throws (ux-run3
+                myth-vshy0): capabilities group left, possessions right — and the
+                left column no longer dies ~220px before the right. */}
+            {hasSpells && curated.spells !== undefined && (
+              <EntryPanel
+                title={labels.panelSpells}
+                entries={curated.spells}
+                testid="character-sheet-reveal-spells"
+                labelValue
+              />
+            )}
           </div>
           <div className="flex min-w-0 flex-col gap-[var(--space-4)]">
             <EntryPanel
@@ -422,14 +448,6 @@ export const CharacterSheetReveal = forwardRef<HTMLDivElement, CharacterSheetRev
               entries={curated.equipment}
               testid="character-sheet-reveal-equipment"
             />
-            {hasSpells && curated.spells !== undefined && (
-              <EntryPanel
-                title={labels.panelSpells}
-                entries={curated.spells}
-                testid="character-sheet-reveal-spells"
-                labelValue
-              />
-            )}
           </div>
         </div>
 

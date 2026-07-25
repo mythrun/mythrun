@@ -256,6 +256,37 @@ describe('CampaignNewRoute freeform screen', () => {
     expect(begin().disabled).toBe(false)
   })
 
+  // myth-5fi4q — the player's typed world concept survives a reload, exactly as
+  // the guided sibling's picks do. Player words are never lost.
+  it('restores the typed concept after a reload', () => {
+    gotoFreeform()
+    typeConcept('A drowned archive city where the tides read the books')
+    // A reload: the whole tree goes away and comes back on the flow root.
+    cleanup()
+    gotoFreeform()
+    expect(screen.getByTestId<HTMLTextAreaElement>('freeform-input').value).toBe(
+      'A drowned archive city where the tides read the books',
+    )
+  })
+
+  it('drops the persisted concept once the campaign is actually created', async () => {
+    server.use(
+      http.post(`${BASE_URL}/api/campaigns`, () =>
+        HttpResponse.json({ campaignId: 'camp-drafted' }, { status: 201 }),
+      ),
+    )
+    gotoFreeform()
+    typeConcept('A drowned archive city where the tides read the books')
+    await act(async () => {
+      begin().click()
+      await Promise.resolve()
+    })
+    await screen.findByTestId('route-campaign-target')
+    cleanup()
+    gotoFreeform()
+    expect(screen.getByTestId<HTMLTextAreaElement>('freeform-input').value).toBe('')
+  })
+
   it('posts the WRAPPED freeform body and navigates to /campaigns/:newId on 201', async () => {
     let capturedBody: unknown
     server.use(

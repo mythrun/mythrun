@@ -35,6 +35,7 @@ export { SessionPreparing } from './components/SessionPreparing/SessionPreparing
 export { WhisperLedger } from './components/WhisperLedger/WhisperLedger.tsx'
 export type { WhisperLedgerProps } from './components/WhisperLedger/WhisperLedger.tsx'
 export { SessionInput } from './components/SessionInput/SessionInput.tsx'
+export { TableTalk } from './components/TableTalk/TableTalk.tsx'
 export { PlayerMessage } from './components/PlayerMessage/PlayerMessage.tsx'
 export { MessageStream } from './components/MessageStream/MessageStream.tsx'
 // Dice moment (MYT-93).

@@ -38,9 +38,11 @@ export interface EndSessionLabels {
  *  Pressed: a one-beat inline confirm — no modal. myth-xxyo9: BOTH confirm
  *  affordances are bordered `secondary` buttons ("two square outline buttons side
  *  by side is fully in-register" — bare mono text next to a bordered button reads
- *  as a label, not an option), and the credit disclosure sits under the confirm
- *  row, before the decision. `disabled` covers the window after the end is
- *  already in flight (the farewell is rendering). */
+ *  as a label, not an option). myth-88lmb: the credit disclosure sits under the
+ *  QUESTION line, before the decision — under the buttons it read as a
+ *  consequence of confirming. `disabled` covers the window after the end is
+ *  already in flight (the farewell is rendering; the shell unmounts this control
+ *  the moment the confirm lands — the swept transition). */
 export function EndSessionControl({
   labels,
   onEnd,
@@ -72,8 +74,17 @@ export function EndSessionControl({
 
   return (
     <Stack gap={1} align="end" data-testid="end-session-confirm">
-      <Stack direction="row" gap={2} align="center" justify="end" wrap>
-        <Text role="meta">{labels.prompt}</Text>
+      <Stack direction="row" gap={2} align="start" justify="end" wrap>
+        {/* myth-88lmb: the credit line sits under the QUESTION, not under the
+            buttons — right-aligned beneath "End session" it parsed as a
+            consequence of confirming ("ending will cost a credit") rather than
+            the statement of record its past tense means. */}
+        <Stack gap={1} align="end">
+          <Text role="meta">{labels.prompt}</Text>
+          <Text role="meta" data-testid="end-session-credit">
+            {labels.credit}
+          </Text>
+        </Stack>
         <Button
           variant="secondary"
           size="sm"
@@ -88,9 +99,6 @@ export function EndSessionControl({
           {labels.confirm}
         </Button>
       </Stack>
-      <Text role="meta" data-testid="end-session-credit">
-        {labels.credit}
-      </Text>
     </Stack>
   )
 }

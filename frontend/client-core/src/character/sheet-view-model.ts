@@ -107,20 +107,26 @@ function buildIdentityLine(source: CharacterSheetSource): string {
 /** The AC / HP / Proficiency stripe, with Hit Die + Speed appended when present.
  *  At FULL health the HP cell reads as the single number ("25", not "25 / 25") —
  *  current-slash-max is mid-combat state; the slash earns its place once damage
- *  exists (ux-run2 myth-8ps4n). The in-session sheet overlays the live value by
- *  the 'HP' label, so this only styles the at-rest read. */
+ *  exists (ux-run2 myth-8ps4n). Every cell carries its STRUCTURAL key beside the
+ *  display label (myth-qeyqq): the in-session sheet swaps the live value into the
+ *  `hp` cell by that key, so this function only styles the at-rest read and a
+ *  future label rename can't quietly take the live overlay down with it. */
 function buildStats(source: CharacterSheetSource): SheetStat[] {
   const hp =
     source.hitPoints === source.maxHitPoints
       ? String(source.maxHitPoints)
       : `${String(source.hitPoints)} / ${String(source.maxHitPoints)}`
   const stats: SheetStat[] = [
-    { label: 'AC', value: String(source.armorClass) },
-    { label: 'HP', value: hp },
-    { label: 'Proficiency', value: `+${String(source.proficiencyBonus)}` },
+    { key: 'ac', label: 'AC', value: String(source.armorClass) },
+    { key: 'hp', label: 'HP', value: hp },
+    { key: 'proficiency', label: 'Proficiency', value: `+${String(source.proficiencyBonus)}` },
   ]
-  if (source.hitDie !== undefined) stats.push({ label: 'Hit Die', value: `d${String(source.hitDie)}` })
-  if (source.speed !== undefined) stats.push({ label: 'Speed', value: `${String(source.speed)} ft` })
+  if (source.hitDie !== undefined) {
+    stats.push({ key: 'hitDie', label: 'Hit Die', value: `d${String(source.hitDie)}` })
+  }
+  if (source.speed !== undefined) {
+    stats.push({ key: 'speed', label: 'Speed', value: `${String(source.speed)} ft` })
+  }
   return stats
 }
 
@@ -140,7 +146,10 @@ function buildSpellLines(spells: readonly SheetSpell[]): SheetEntry[] {
     .sort(([a], [b]) => a - b)
     .map(([level, names]) => ({
       name: level === 0 ? 'Cantrips' : `Level ${String(level)}`,
-      gloss: names.join(' · '),
+      // The NBSP binds each '·' to the FOLLOWING spell name (ux-run3
+      // myth-vshy0): a wrap breaks before the separator, so no '·' ever
+      // dangles at a line end.
+      gloss: names.join(' ·\u00A0'),
     }))
 }
 

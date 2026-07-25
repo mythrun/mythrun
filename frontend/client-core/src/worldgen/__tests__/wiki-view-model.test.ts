@@ -416,4 +416,60 @@ describe('toWikiViewModel', () => {
       { entityId: 'b1', name: 'Cove', label: 'near' },
     ])
   })
+
+  // ux-run3 myth-ry14g — the index handle. A name-only index answers the one
+  // question the reader never has; the handle is the one line that tells them
+  // who this is. Same derivation as the in-prose entity popover's `leadLine`
+  // (buildLeadLines), so the two surfaces say the same thing about a person.
+  describe('handle (ux-run3 myth-ry14g)', () => {
+    it("takes the kernel's first sentence as the entity's one-line handle", () => {
+      const snapshot: WikiSnapshot = {
+        entities: [{ id: 'n1', entityType: 'npc', name: 'Vellin Ashar' }],
+        facts: [],
+        entityHierarchy: [],
+        proseKernels: [
+          { entityId: 'n1', content: 'Archivist of the upper tier. She speaks in half-finished sentences.' },
+        ],
+      }
+      const mira = toWikiViewModel(snapshot).groups[0]?.entities[0]
+      expect(mira?.handle).toBe('Archivist of the upper tier.')
+    })
+
+    it("falls back to the lowest-id fact's content when the entity has no kernel", () => {
+      const snapshot: WikiSnapshot = {
+        entities: [{ id: 'n1', entityType: 'npc', name: 'Mira' }],
+        facts: [
+          { id: 'fact2', entityId: 'n1', topic: 'mood', content: 'Salt hangs on her coat.' },
+          { id: 'fact1', entityId: 'n1', topic: 'role', content: 'The harbormaster.' },
+        ],
+        entityHierarchy: [],
+      }
+      expect(toWikiViewModel(snapshot).groups[0]?.entities[0]?.handle).toBe('The harbormaster.')
+    })
+
+    it('omits the key entirely for an entity with neither kernel nor facts', () => {
+      const snapshot: WikiSnapshot = {
+        entities: [{ id: 'n1', entityType: 'npc', name: 'Mira' }],
+        facts: [],
+        entityHierarchy: [],
+      }
+      const entity = toWikiViewModel(snapshot).groups[0]?.entities[0]
+      expect(entity?.handle).toBeUndefined()
+      expect(entity !== undefined && 'handle' in entity).toBe(false)
+    })
+
+    it('carries the handle onto NESTED entities too', () => {
+      const snapshot: WikiSnapshot = {
+        entities: [
+          { id: 'l1', entityType: 'location', name: 'Saltmarsh' },
+          { id: 'l2', entityType: 'location', name: 'The Tidewatch' },
+        ],
+        facts: [],
+        entityHierarchy: [{ parentEntityId: 'l1', childEntityId: 'l2' }],
+        proseKernels: [{ entityId: 'l2', content: 'A stone watchtower over the bay. Gulls own the parapet.' }],
+      }
+      const child = toWikiViewModel(snapshot).groups[0]?.entities[0]?.children?.[0]
+      expect(child?.handle).toBe('A stone watchtower over the bay.')
+    })
+  })
 })

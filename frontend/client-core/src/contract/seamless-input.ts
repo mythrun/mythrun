@@ -67,4 +67,11 @@ export interface SeamlessInputProps extends BaseProps {
   disabled?: boolean
   /** Marks the field required (native `required` + `aria-required`). */
   required?: boolean
+  /**
+   * Focus the field on mount (web maps it to native `autoFocus`). For the
+   * flow's one-question writing screens where typing IS the next action
+   * (ux-run3 myth-en2jj) — the deliberate, documented opt-in the jsx-a11y
+   * autofocus lint deliberately still guards against elsewhere.
+   */
+  focusOnMount?: boolean
 }

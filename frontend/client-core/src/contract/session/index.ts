@@ -16,6 +16,12 @@ export type { TranscriptItem } from '../../session/transcript-types.ts'
 // useRollReveal) stay OUT of the barrel, mirroring TranscriptItem vs. emptyTranscript.
 export type { CardItem, RollPhase, RollRevealView } from '../../session/roll-reveal.ts'
 
+// ux-run3 display derivations (session/transcript-presentation.ts) — the @dm
+// table-talk grouping MessageStream wraps in the marked OOC frame (myth-1msig).
+// TYPE only; the runtime selectors (orderForDisplay, buildTableTalkView) stay out
+// of the barrel, mirroring TranscriptItem vs. emptyTranscript.
+export type { TableTalkView } from '../../session/transcript-presentation.ts'
+
 // Prop contracts — one per @mythrun/ui play component (Tasks 9–14).
 export type { MessageStreamProps } from './message-stream-props.ts'
 export type { DmMessageProps } from './dm-message-props.ts'
@@ -23,6 +29,8 @@ export type { DmMessageProps } from './dm-message-props.ts'
 export type { DmCorrectionProps } from './dm-correction-props.ts'
 export type { PlayerMessageProps } from './player-message-props.ts'
 export type { SessionInputProps } from './session-input-props.ts'
+// myth-1msig — the marked table-talk (OOC exchange) frame prop contract.
+export type { TableTalkProps } from './table-talk-props.ts'
 export type { ThinkingIndicatorProps } from './thinking-indicator-props.ts'
 export type { SessionStartBeatProps } from './session-start-beat-props.ts'
 // myth-ep74g — the between-sessions preparing hold prop contract.

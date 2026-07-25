@@ -1,6 +1,7 @@
 import type { BaseProps } from './index.ts'
 import type { EntityKind } from '@mythrun/contract/rest'
 import type { WikiViewModel } from '../worldgen/wiki-view-model.ts'
+import type { WikiNavigation } from '../worldgen/use-wiki-navigation.ts'
 
 // Re-export the wiki MODEL types so a consumer reads the model shape off the same
 // contract surface it reads the props from (the model lives in the DOM-free brain,
@@ -14,6 +15,28 @@ export type {
   WikiIntroduction,
   WikiIntroReference,
 } from '../worldgen/wiki-view-model.ts'
+// The page stack a consumer supplies when it needs to SEE the wiki's history
+// (see `WorldWikiProps.navigation`), re-exported for the same reason.
+export type { WikiNavigation, WikiLocation } from '../worldgen/use-wiki-navigation.ts'
+
+/**
+ * The index's PRESENCE split (ux-run3 myth-ry14g). An alphabetized index treats
+ * the scene's antagonist and a session-one shopkeeper as equals; the live
+ * transcript knows better, so the play sidebar hands the wiki the entity ids the
+ * session has already named and the two quiet sub-labels that head the halves.
+ * A group splits only when BOTH halves are non-empty (no lonely heading), and a
+ * root counts as present when a nested child is the one named — the containing
+ * place travels with the person met there. Absent (the world reveal, where
+ * nothing has been played yet) ⇒ the plain alphabetized index, unchanged.
+ */
+export interface WikiPresence {
+  /** Entity ids the live session has named — order irrelevant (membership only). */
+  ids: readonly string[]
+  /** Quiet mono sub-label over the named half — a resolved i18n string. */
+  presentLabel: string
+  /** Quiet mono sub-label over the remainder — a resolved i18n string. */
+  elsewhereLabel: string
+}
 
 /**
  * WorldWiki (MYT-89 Phase D, D4; intro-as-home myth-b9bap) — the browsable
@@ -94,4 +117,15 @@ export interface WorldWikiProps extends Omit<BaseProps, 'children'> {
    *  renders nothing and the home is exactly the step-less panel; a non-empty
    *  user search also stands the strip down. Absent → the pre-step behaviour. */
   stepContext?: string
+  /** The index's presence split (ux-run3 myth-ry14g) — see {@link WikiPresence}.
+   *  Absent ⇒ the plain alphabetized index (the reveal's behaviour, unchanged). */
+  presence?: WikiPresence
+  /** The page stack, LIFTED (myth-g7kg6). Omitted (the default) the wiki owns
+   *  its own `useWikiNavigation` and history is entirely in-surface. A consumer
+   *  that must SEE the stack passes its own — the mobile reveal does, because
+   *  a hardware Back has to pop the reader's wiki page before the drawer
+   *  disappears out from under them, and `back()` reports nothing outward.
+   *  Supplying it changes nothing about how the wiki navigates; it only moves
+   *  where the state lives (the Drawer's `open`/`defaultOpen` pattern). */
+  navigation?: WikiNavigation
 }

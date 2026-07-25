@@ -153,6 +153,24 @@ describe('RecapView', () => {
     expect(screen.queryByTestId('recap-copy-link')).toBeNull()
   })
 
+  it('exits are ONE row — outlined Back first, ghost Copy link to its right (myth-bbald)', () => {
+    // Run 3: the ghost Copy link stacked ABOVE the outlined Back, so the weak
+    // action was the eye's terminal landing point and the bare-mono ghost read
+    // as the narrator line's sibling. The row shape (primary exit leading)
+    // restores the system's order and disambiguates the ghost's interactivity.
+    render(
+      <RecapView recap={READY} identity={IDENTITY} labels={LABELS} onBack={vi.fn()} onCopyLink={vi.fn()} />,
+    )
+    const back = screen.getByTestId('recap-back')
+    const copy = screen.getByTestId('recap-copy-link')
+    // Same horizontal row container…
+    const row = back.parentElement
+    expect(row).toBe(copy.parentElement)
+    expect(row?.classList.contains('flex-row')).toBe(true)
+    // …with the outlined exit FIRST.
+    expect((back.compareDocumentPosition(copy) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
+  })
+
   it('pending: shows the writing-up beat + the wait contract, not the summary', () => {
     const pending: SessionRecap = { sessionNumber: 3, endedAt: null, status: 'pending' }
     render(<RecapView recap={pending} identity={IDENTITY} labels={LABELS} onBack={vi.fn()} />)

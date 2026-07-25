@@ -35,10 +35,12 @@ export type AvatarColor =
  * token surface. Either way the avatar carries `name` as its accessible label,
  * so the identity is never silent to assistive tech.
  *
- * Avatars are the brand's one sanctioned ROUND shape (like the radio dot) — a
- * conventional affordance the flat-1-bit register makes an explicit exception
- * for. The contract stays platform-neutral (§9): no className/style/DOM events;
- * `name` is plain identity text (not an i18n chrome key — it's the user's name).
+ * Avatars are SQUARE, like everything else — 0px radius, no exception. (This
+ * doc once claimed them as the brand's one sanctioned round shape; the shipped
+ * component has been `rounded-none` throughout, and the no-circles rule has no
+ * carve-outs. myth-q4zfp corrected the comment, not the component.) The contract
+ * stays platform-neutral (§9): no className/style/DOM events; `name` is plain
+ * identity text (not an i18n chrome key — it's the user's name).
  */
 export interface AvatarProps extends BaseProps {
   /** The identity this avatar represents — its accessible name AND the source

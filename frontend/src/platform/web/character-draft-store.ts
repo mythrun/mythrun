@@ -1,12 +1,14 @@
 import type { SessionDraftStore } from '@mythrun/client-core'
 
-// Web realization of the draft-store port for CHARACTER creation, backed by
-// localStorage — NOT sessionStorage like the campaign guided-picks draft
-// (src/platform/web/guided-draft-store.ts). Character creation is a higher-
-// investment surface: the player writes freeform prose, then waits on a ~30s LLM
-// pipeline that CAN fail, and the failure surface explicitly invites "Start over".
+// Web realization of the draft-store port for the surfaces where the player writes
+// PROSE, backed by localStorage — NOT sessionStorage like the campaign guided-picks
+// draft (src/platform/web/guided-draft-store.ts). Character creation was the first:
+// the player writes freeform prose, then waits on a ~30s LLM pipeline that CAN fail,
+// and the failure surface explicitly invites "Start over". The freeform WORLD concept
+// (myth-5fi4q) is the same bargain — prose, then a slow credit-metered build.
 // localStorage keeps their OWN written words across a reload, a tab close, or a
-// crash — never lost, which is the whole point of this fix.
+// crash — never lost, which is the whole point of this fix. Key-agnostic, so each
+// draft seam brings its own key (`characterDraftKey`, `WORLD_CONCEPT_DRAFT_KEY`).
 //
 // Lives under src/platform/web/** (the one place web globals are allowed, R1); the
 // client-core draft accessor reaches it only through the injected port. Every call

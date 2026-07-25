@@ -129,6 +129,17 @@ const button = cva(
   },
 )
 
+// `flush="start"` — a negative inline-start margin exactly equal to the size's
+// horizontal padding, so the VISIBLE left edge (glyph/label) seats flush on the
+// content grid while the hit area keeps its full padding (ux-run3 myth-4jbmr:
+// the funnel Back's ghost padding indented its arrow ~15px off the grid the
+// eyebrow/heading sit on). Logical margin (`ms`) so RTL mirrors correctly.
+const FLUSH_START_CLASS: Record<ButtonSize, string> = {
+  sm: '-ms-[var(--space-3)]',
+  md: '-ms-[var(--space-4)]',
+  lg: '-ms-[var(--space-5)]',
+}
+
 // The in-button Spinner footprint tracks the control size, sized to sit
 // PROPORTIONATE to the label rather than tower over it. sm/md buttons (12/14px
 // labels) get the 12px `xs` spinner; the bigger lg control (16px label) gets the
@@ -147,6 +158,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     onPress,
     type = 'button',
     icon,
+    flush,
     children,
     ...rest
   },
@@ -166,7 +178,11 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       onClick={isInactive ? undefined : onPress}
       disabled={isInactive}
       aria-busy={isBusy || undefined}
-      className={cn(button({ variant, size }), icon !== undefined && ICON_GAP)}
+      className={cn(
+        button({ variant, size }),
+        icon !== undefined && ICON_GAP,
+        flush === 'start' && FLUSH_START_CLASS[size],
+      )}
       {...rest}
     >
       {/* Leading-icon slot — decorative (the label is the accessible name), fixed

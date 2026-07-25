@@ -73,6 +73,54 @@ describe('shared/prose-register block', () => {
     expect(block).toMatch(/interiority belongs to the player/i)
     expect(block).toMatch(/inside a player character'?s head/i)
   })
+
+  // The tasting flight's decisive finding: the two candidates that stayed clean
+  // (B positive-exemplar, F combined) were the only two carrying a passage to
+  // imitate. The four rules-only candidates all reproduced the same trailing
+  // personified verdict ("the only building on the block that hasn't called it
+  // a night"). Naming a ban makes the model substitute a different flourish;
+  // showing a passage re-anchors the sentence rhythm. Pin the exemplar so a
+  // future edit can't quietly demote it back to a told rule.
+  it('shows a target-register exemplar, not just rules about one', () => {
+    const block = readRaw('shared/prose-register')
+    expect(block).toMatch(/read it for rhythm/i)
+    expect(block).toContain('The common room is low and warm.')
+    expect(block).toContain('Rain has stopped, but the street still runs with it.')
+    // The exemplar is framed as rhythm-not-content: the block binds 12 templates,
+    // most of which are not tavern narration.
+    expect(block).toMatch(/not for subject matter/i)
+  })
+
+  it('names the closing-verdict tell the rules-only candidates all produced', () => {
+    const block = readRaw('shared/prose-register')
+    expect(block).toMatch(/closing verdict/i)
+    expect(block).toMatch(/hasn't called it a night/i)
+  })
+
+  it('scopes itself to every passage, not just the worked examples', () => {
+    expect(readRaw('shared/prose-register')).toMatch(
+      /applies to every passage you write, every turn/i,
+    )
+  })
+})
+
+describe('session-prep depth-marker example models the register', () => {
+  // The prompt used to teach the disease: its worked depth marker literally read
+  // "There is more to Voss than meets the eye" — the mystery-signal the shared
+  // block forbids — so session-prep trained the failure it was wired to prevent.
+  it('does not model mystery-signalling in its worked depth marker', () => {
+    const raw = readRaw('prep/session-prep')
+    expect(raw).not.toMatch(/more to Voss than meets the eye/i)
+    expect(raw).not.toMatch(/hints at a life before/i)
+  })
+
+  it('directs the marker to observable conduct instead', () => {
+    const raw = readRaw('prep/session-prep')
+    expect(raw).toMatch(/never as an assertion that a mystery exists/i)
+    expect(raw).toMatch(/counts the room before she answers/i)
+    // The protocol's own function is preserved: play the weight, invent nothing.
+    expect(raw).toMatch(/Do not invent what the past is/i)
+  })
 })
 
 describe('every wired prompt carries the register after resolution', () => {

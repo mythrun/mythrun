@@ -2,6 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { render, screen, within, cleanup, fireEvent, act, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from '@mythrun/ui'
 import {
   reduceLedger,
@@ -82,9 +83,9 @@ const SHEET: CuratedSheet = {
   name: KESSA,
   identityLine: 'Level 3 · Human Fighter · Toll-clerk of Greenward',
   stats: [
-    { label: 'AC', value: '16' },
-    { label: 'HP', value: '28 / 28' },
-    { label: 'Speed', value: '30 ft' },
+    { key: 'ac', label: 'AC', value: '16' },
+    { key: 'hp', label: 'HP', value: '28 / 28' },
+    { key: 'speed', label: 'Speed', value: '30 ft' },
   ],
   abilities: [
     { abbrev: 'STR', score: 16, modifier: 3 },
@@ -110,13 +111,14 @@ function cacheHook(cache: KnowledgeCache): PlayKnowledgeHooks['useCache'] {
   }
 }
 
-/** A sheet hook that FOLDS the viewer's ledger frames on the passed character name
- *  (mirrors the real `useSessionSheet` overlay so the resolved-name feedback drives a
- *  real HP update), returning the given base sheet. */
+/** A sheet hook that FOLDS the viewer's ledger frames, mirroring the real
+ *  `useSessionSheet`: it matches frames against the name of the character IT
+ *  resolved (myth-3xttt — the hook self-derives it; nobody passes one in), and
+ *  returns the given base sheet. */
 function sheetHook(sheet: CuratedSheet | null): PlayKnowledgeHooks['useSheet'] {
-  return (_campaignId, _viewerUserId, viewerCharacterName, frames) => {
+  return (_campaignId, _viewerUserId, frames) => {
     const overlay = frames
-      .filter((frame) => frame.characterName === viewerCharacterName)
+      .filter((frame) => frame.characterName === sheet?.name)
       .reduce(reduceLedger, emptyOverlay)
     const state: SessionSheetState = { sheet, overlay, loading: false, failed: sheet === null }
     return state
@@ -205,7 +207,7 @@ interface ShellOptions {
   readonly hooks?: PlayKnowledgeHooks
 }
 
-function shellTree(options: ShellOptions) {
+function shellTree(options: ShellOptions, queryClient: QueryClient) {
   const { items = [DM_ITEM], status = 'connected', characterName = '', hooks = READY_HOOKS } = options
   const props: SessionShellProps = {
     ctx: testCtx,
@@ -220,22 +222,28 @@ function shellTree(options: ShellOptions) {
     knowledgeHooks: hooks,
   }
   return (
-    <ThemeProvider>
-      <I18nextProvider i18n={i18n}>
-        <MemoryRouter>
-          <SessionShell {...props} />
-        </MemoryRouter>
-      </I18nextProvider>
-    </ThemeProvider>
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <I18nextProvider i18n={i18n}>
+          <MemoryRouter>
+            <SessionShell {...props} />
+          </MemoryRouter>
+        </I18nextProvider>
+      </ThemeProvider>
+    </QueryClientProvider>
   )
 }
 
 function renderShell(options: ShellOptions = {}) {
-  const result = render(shellTree(options))
+  // One client per render — the shell's mount-time balance invalidation
+  // (myth-q53lj) reads the query client; a rerender keeps the SAME client so
+  // the shell doesn't remount its query context mid-assertion.
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const result = render(shellTree(options, queryClient))
   return {
     ...result,
     rerenderShell: (next: ShellOptions) => {
-      result.rerender(shellTree(next))
+      result.rerender(shellTree(next, queryClient))
     },
   }
 }
@@ -405,5 +413,64 @@ describe('play knowledge composition — responsive + boundary refetch', () => {
     const before = lastRefreshToken
     rerenderShell({ status: 'connected' })
     expect(lastRefreshToken).toBe(before + 1)
+  })
+})
+
+// ux-run3 myth-ry14g — the sidebar's index stops being a memory test: each name
+// carries a one-line handle, and the people this session has already NAMED lead
+// their group. The transcript is the only source of "already named" — the same
+// mechanical matcher that underlines them in the prose.
+describe('play knowledge composition — the People index (ux-run3 myth-ry14g)', () => {
+  const OTHER = 'Renn Delaqua'
+  const TWO_NPC_SNAPSHOT: WorldGenSnapshot = {
+    entities: [
+      { id: 'npc-kessa', entityType: 'npc', name: KESSA },
+      { id: 'npc-renn', entityType: 'npc', name: OTHER },
+    ],
+    facts: [
+      { id: 'f1', entityId: 'npc-kessa', topic: 'role', content: 'A toll-clerk turned adventurer.' },
+      { id: 'f2', entityId: 'npc-renn', topic: 'role', content: 'Keeps the ferry, and the gossip.' },
+    ],
+    entityHierarchy: [],
+    relationships: [],
+  }
+  const TWO_NPC_HOOKS: PlayKnowledgeHooks = {
+    useCache: cacheHook({
+      wiki: toWikiViewModel(TWO_NPC_SNAPSHOT),
+      graph: snapshotToGraph(TWO_NPC_SNAPSHOT),
+      index: makeIndex(KESSA, 'npc-kessa', 'npc'),
+      loading: false,
+      failed: false,
+    }),
+    useSheet: sheetHook(SHEET),
+  }
+
+  it('gives every index row its one-line handle', () => {
+    renderShell({ hooks: TWO_NPC_HOOKS })
+    const wiki = screen.getByTestId('knowledge-wiki')
+    const handles = within(wiki).getAllByTestId('wiki-row-handle')
+    expect(handles.map((h) => h.textContent)).toContain('A toll-clerk turned adventurer.')
+    expect(handles.map((h) => h.textContent)).toContain('Keeps the ferry, and the gossip.')
+  })
+
+  it('leads the group with the person the session has named, under the presence label', () => {
+    renderShell({ hooks: TWO_NPC_HOOKS })
+    const wiki = screen.getByTestId('knowledge-wiki')
+    const present = within(wiki).getByText(i18n.t('play.knowledge.wiki.present'))
+    const elsewhere = within(wiki).getByText(i18n.t('play.knowledge.wiki.elsewhere'))
+    // Alphabetically Kessa Vurm files AFTER Renn Delaqua; naming her in the DM
+    // prose lifts her above him.
+    const named = within(wiki).getByRole('button', { name: KESSA })
+    const unnamed = within(wiki).getByRole('button', { name: OTHER })
+    expect(present.compareDocumentPosition(named) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(named.compareDocumentPosition(elsewhere) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(elsewhere.compareDocumentPosition(unnamed) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('shows no presence labels before the session has named anyone', () => {
+    renderShell({ hooks: TWO_NPC_HOOKS, items: [] })
+    const wiki = screen.getByTestId('knowledge-wiki')
+    expect(within(wiki).queryByText(i18n.t('play.knowledge.wiki.present'))).toBeNull()
+    expect(within(wiki).queryByText(i18n.t('play.knowledge.wiki.elsewhere'))).toBeNull()
   })
 })

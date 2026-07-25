@@ -83,6 +83,11 @@ const MEMBER_CLASS = cn(
 // The square 1-bit tile — an ink-edged paper square carrying the hatch.
 const TILE_CLASS = 'block size-10 flex-none rounded-none border border-border-strong bg-bg'
 const TILE_EMPTY_CLASS = 'block size-10 flex-none rounded-none border border-dashed border-border bg-bg'
+// A MADE character's tile (ux-run3 myth-6g8x4): the hatch is the system's
+// "missing" mark, and a made character is not missing — their square carries
+// the character's serif initial (the token treatment until portraits exist).
+const TILE_INITIAL_CLASS =
+  'flex size-10 flex-none items-center justify-center rounded-none border border-border-strong bg-bg font-body text-base font-semibold text-ink'
 // The name column — grows and shrinks; the name truncates before it overflows.
 const WHO_CLASS = 'flex min-w-0 flex-1 flex-col gap-[2px]'
 const NAME_CLASS = 'truncate font-body text-base font-semibold leading-tight text-ink'
@@ -128,16 +133,39 @@ function YouMark(): React.JSX.Element {
 // demotes to the mono secondary line beneath it — the lobby shows who is about to
 // walk in, not who logged in. Until then the account stays primary over the
 // creating/gathering stand-in prose.
-function MemberRow({ member, labels }: { member: RosterMember; labels: PartyRosterLabels }): React.JSX.Element {
+function MemberRow({
+  member,
+  labels,
+  suppressReady,
+}: {
+  member: RosterMember
+  labels: PartyRosterLabels
+  /** Party of ONE (ux-run3 myth-6g8x4): the solo host's READY marker gates
+   *  nothing (no toggle, Begin fires regardless) — suppress it until a second
+   *  seat exists. Waiting states keep their markers (they carry information). */
+  suppressReady: boolean
+}): React.JSX.Element {
   // The invite slot is excluded upstream, so any non-`empty` status maps to its own
   // marker; a stray `empty` (defensive) settles to the quiet `ready` marker.
   const status: MemberStatus = member.status === 'empty' ? 'ready' : member.status
   const standIn =
     member.status === 'creating' ? labels.creating : member.status === 'gathering' ? labels.gathering : undefined
+  const showMarker = !(suppressReady && status === 'ready')
+  // The initial is the name's first CODE POINT (codePointAt keeps a surrogate
+  // pair whole where charAt would split it) — no full grapheme segmentation
+  // needed for a single leading letter.
+  const initialCp = member.characterName?.trim().codePointAt(0)
   return (
     <li data-testid="party-roster-member" data-status={member.status} className={MEMBER_CLASS}>
-      {/* The hatched square is the character portrait slot. */}
-      <span aria-hidden="true" className={TILE_CLASS} style={{ backgroundImage: TILE_HATCH }} />
+      {/* The character portrait slot: a made character's serif initial, or the
+          hatched "missing" square while they are still being made. */}
+      {initialCp !== undefined ? (
+        <span aria-hidden="true" data-testid="party-roster-initial" className={TILE_INITIAL_CLASS}>
+          {String.fromCodePoint(initialCp)}
+        </span>
+      ) : (
+        <span aria-hidden="true" className={TILE_CLASS} style={{ backgroundImage: TILE_HATCH }} />
+      )}
       <span className={WHO_CLASS}>
         {member.characterName !== undefined ? (
           <>
@@ -157,9 +185,11 @@ function MemberRow({ member, labels }: { member: RosterMember; labels: PartyRost
           </>
         )}
       </span>
-      <span data-testid="party-roster-status" className={cn(STATUS_CLASS, STATUS_TONE[status])}>
-        {STATUS_MARK[status]}
-      </span>
+      {showMarker && (
+        <span data-testid="party-roster-status" className={cn(STATUS_CLASS, STATUS_TONE[status])}>
+          {STATUS_MARK[status]}
+        </span>
+      )}
     </li>
   )
 }
@@ -216,7 +246,7 @@ export const PartyRoster = forwardRef<HTMLDivElement, PartyRosterProps>(function
           member.status === 'empty' ? (
             <InviteRow key={member.userId} onInvite={onInvite} inviteSub={labels.inviteSub} />
           ) : (
-            <MemberRow key={member.userId} member={member} labels={labels} />
+            <MemberRow key={member.userId} member={member} labels={labels} suppressReady={realCount <= 1} />
           ),
         )}
       </ul>

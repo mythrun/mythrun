@@ -8,9 +8,12 @@ import {
 } from '@mythrun/contract/events'
 import {
   clampEtaMonotonic,
+  dampEta,
+  dampedBucket,
   remainingWaitMs,
   waitDisplay,
   worldGenAccretion,
+  type DampedEta,
   type StageTiming,
   type WorldGenStream,
 } from '@mythrun/client-core'
@@ -74,6 +77,12 @@ interface GeneratingViewProps
   /** Historical per-stage average durations (the route's `getStageTimings` fetch),
    *  or `null` before it resolves / on cold-start → the card shows no estimate. */
   readonly stageTimings?: readonly StageTiming[] | null
+  /** The campaign whose world is being woven — the key into the session LAYOUT CACHE
+   *  (ux-run3 myth-aftau). The live map is an unmountable surface (every "Wait
+   *  quietly" toggle unmounts it, and so does leaving the route); without this the
+   *  settled constellation and the terrain died with the component and every re-entry
+   *  re-rolled the world under the same name. */
+  readonly campaignId?: string
 }
 
 /** The 1-second tick behind the countdown (MYT-89 waiting-feedback): the current
@@ -111,17 +120,35 @@ interface WaitLines {
   readonly stalledLabel?: string
 }
 
-function waitLinesFrom(remainingMs: number | null, t: TFunction): WaitLines {
+/** One whisper dwell — the ETA damper's release cadence (ux-run3 myth-b965d).
+ *  Mirrors WorldGenLoading's ~10s DEFAULT_INTERVAL_MS: the shown minute count
+ *  moves at most once per whisper. */
+const ETA_HOLD_MS = 10_000
+
+/** The damped wait lines (ux-run3 myth-b965d). Run 3: the estimate shed 2
+ *  minutes in 45 seconds — every re-estimate surfaced at once and the number
+ *  read as nervous guessing. On top of the monotonic clamp (direction), the
+ *  display now folds through `dampEta` (cadence): adopt the first estimate
+ *  fully, then step down ONE whole minute at most once per whisper dwell.
+ *  Exhaustion bypasses the damper — the stalled line is honesty, not display.
+ *  The damper state lives in a ref for the LIFE of this view (both acts — one
+ *  clock); the render-time ref fold is idempotent at a fixed instant, so a
+ *  StrictMode double render is safe (the useMonotonicEtaMs idiom). */
+function useDampedWaitLines(remainingMs: number | null, nowMs: number, t: TFunction): WaitLines {
+  const dampRef = useRef<DampedEta | null>(null)
   const display = waitDisplay({
     remainingMs,
     elapsedMs: 0,
     noHistoryStallMs: Number.POSITIVE_INFINITY,
   })
-  if (display.kind === 'estimate') {
-    return { countdownLabel: t('worldGen.countdown', { time: coarseWaitTime(display.bucket, t) }) }
+  if (display.kind !== 'estimate') {
+    dampRef.current = null
+    return display.kind === 'stalled' ? { stalledLabel: t('shared.wait.stalled') } : {}
   }
-  if (display.kind === 'stalled') return { stalledLabel: t('shared.wait.stalled') }
-  return {}
+  const damped = dampEta(display.bucket, dampRef.current, nowMs, ETA_HOLD_MS)
+  dampRef.current = damped
+  const bucket = damped === null ? display.bucket : dampedBucket(damped)
+  return { countdownLabel: t('worldGen.countdown', { time: coarseWaitTime(bucket, t) }) }
 }
 
 /** The MONOTONIC fold over the raw aggregate estimate (ux-run2 myth-uz1bn): the
@@ -251,6 +278,7 @@ export function GeneratingView({
   stages,
   stageTimings = null,
   resumedMidGen,
+  campaignId,
 }: GeneratingViewProps): React.JSX.Element {
   const { t } = useTranslation()
   // The act state: 'loading' (act one — the generic loading screen) until the
@@ -291,7 +319,7 @@ export function GeneratingView({
     [stageTimings, stages, nowMs],
   )
   const remainingMs = useMonotonicEtaMs(rawRemainingMs)
-  const { countdownLabel, stalledLabel } = useMemo(() => waitLinesFrom(remainingMs, t), [remainingMs, t])
+  const { countdownLabel, stalledLabel } = useDampedWaitLines(remainingMs, nowMs, t)
 
   // E1 (MYT-89 Phase E) — the SR announcer's PHASE signal: the running watched-entity
   // stage's friendly label (a change flushes the live region at once); before or between
@@ -318,7 +346,10 @@ export function GeneratingView({
           accretion={worldGenAccretion(stages, nodes.length)}
           // Permission to leave — re-entry lands back here with progress intact
           // (the stream re-snapshots; a populated world resumes on the graph).
+          // The hold line closes the loop with the concrete resumption promise
+          // (ux-run3 myth-b965d).
           leaveLabel={t('worldGen.safeToLeave')}
+          holdLabel={t('worldGen.safeToLeaveHold')}
           // The SAME aggregate countdown act two shows (one budget, monotonic).
           // Omit absent keys — exactOptionalPropertyTypes forbids an explicit
           // `undefined`.
@@ -383,6 +414,25 @@ export function GeneratingView({
           phaseLabel: generationPhaseLabel,
           entitiesLabel: t('worldGen.a11y.entities', { count: nodes.length }),
         }}
+        // The MARKER KEY (ux-run3 myth-fi1v1): the live map draws squares and
+        // diamonds for minutes before the reveal ever explains them, so a watcher had
+        // to infer the vocabulary. The same quiet row the reveal carries, speaking the
+        // same wiki group-heading labels — no new copy, one map. Hollow marks aren't
+        // documented here: during generation an unlabeled mark is a name still on its
+        // way, not a settled state.
+        legend={{
+          faction: t('worldReveal.group.faction'),
+          location: t('worldReveal.group.location'),
+          npc: t('worldReveal.group.npc'),
+          item: t('worldReveal.group.item'),
+        }}
+        // The world's LAYOUT HOME (ux-run3 myth-aftau): pin-on-settle persists each
+        // frozen placement (and the run's one terrain seed) into a session cache keyed
+        // by the campaign, so toggling back to the calm wait and returning finds the
+        // SAME constellation on the SAME ground — stage 2 reads as stage 1 plus
+        // accretion, never a re-roll. Omit the key rather than pass `undefined`
+        // (exactOptionalPropertyTypes).
+        {...(campaignId !== undefined ? { layoutCacheKey: campaignId } : {})}
       />
     </FullBleedStage>
   )

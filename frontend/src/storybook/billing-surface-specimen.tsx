@@ -33,12 +33,18 @@ function sku(over: Partial<SkuListing> & Pick<SkuListing, 'lookup_key' | 'displa
   return { sessionsGranted: 8, worldsGranted: 1, price: { unit_amount_cents: 1200, currency: 'usd' }, ...over }
 }
 
+// The real catalogue shape (backend/src/billing/lookup-keys.ts): the per-tier grants
+// are what the cards' ledgers compare, so the specimen must carry the REAL ladder —
+// a fixture where every tier grants the same thing would show three identical cards
+// and quietly re-stage the decidability defect this surface was fixed for
+// (myth-9jrh9). The world SKU grants a world AND a session (a bought world arrives
+// playable).
 const SKUS: readonly SkuListing[] = [
-  sku({ lookup_key: 'tier_wayfarer', displayName: 'Wayfarer', type: 'recurring', price: { unit_amount_cents: 1200, currency: 'usd' } }),
-  sku({ lookup_key: 'tier_sojourner', displayName: 'Sojourner', type: 'recurring', price: { unit_amount_cents: 2400, currency: 'usd' } }),
-  sku({ lookup_key: 'tier_mythwright', displayName: 'Mythwright', type: 'recurring', price: { unit_amount_cents: 4800, currency: 'usd' } }),
-  sku({ lookup_key: 'sku_session', displayName: 'Session', type: 'one_time', price: { unit_amount_cents: 500, currency: 'usd' } }),
-  sku({ lookup_key: 'sku_world', displayName: 'World', type: 'one_time', price: { unit_amount_cents: 800, currency: 'usd' } }),
+  sku({ lookup_key: 'tier_wayfarer', displayName: 'Wayfarer', type: 'recurring', sessionsGranted: 4, worldsGranted: 1, price: { unit_amount_cents: 1500, currency: 'usd' } }),
+  sku({ lookup_key: 'tier_sojourner', displayName: 'Sojourner', type: 'recurring', sessionsGranted: 8, worldsGranted: 2, price: { unit_amount_cents: 2500, currency: 'usd' } }),
+  sku({ lookup_key: 'tier_mythwright', displayName: 'Mythwright', type: 'recurring', sessionsGranted: 16, worldsGranted: 4, price: { unit_amount_cents: 4500, currency: 'usd' } }),
+  sku({ lookup_key: 'sku_session', displayName: 'Session', type: 'one_time', sessionsGranted: 1, worldsGranted: 0, price: { unit_amount_cents: 500, currency: 'usd' } }),
+  sku({ lookup_key: 'sku_world', displayName: 'World', type: 'one_time', sessionsGranted: 1, worldsGranted: 1, price: { unit_amount_cents: 800, currency: 'usd' } }),
 ]
 
 const HISTORY_EVENTS: readonly BillingHistoryEvent[] = [

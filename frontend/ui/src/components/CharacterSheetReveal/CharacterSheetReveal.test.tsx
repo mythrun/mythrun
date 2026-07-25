@@ -12,11 +12,11 @@ const MARTIAL_CURATED: CuratedSheet = {
   name: 'Kessa Vurm',
   identityLine: 'Level 3 · Human Fighter · Champion · Toll-clerk of Greenward',
   stats: [
-    { label: 'Armor Class', value: '16' },
-    { label: 'Hit Points', value: '28' },
-    { label: 'Proficiency', value: '+2' },
-    { label: 'Hit Die', value: 'd10' },
-    { label: 'Speed', value: '30 ft' },
+    { key: 'ac', label: 'Armor Class', value: '16' },
+    { key: 'hp', label: 'Hit Points', value: '28' },
+    { key: 'proficiency', label: 'Proficiency', value: '+2' },
+    { key: 'hitDie', label: 'Hit Die', value: 'd10' },
+    { key: 'speed', label: 'Speed', value: '30 ft' },
   ],
   abilities: [
     { abbrev: 'STR', score: 16, modifier: 3 },
@@ -203,6 +203,51 @@ describe('CharacterSheetReveal', () => {
     const saves = getByTestId('character-sheet-reveal-saves-curated')
     expect(saves.textContent).toContain('Strength')
     expect(saves.textContent).toContain('Constitution')
+  })
+
+  // ux-run3 myth-vmadj: the vitals band (AC/HP — the two numbers a player checks
+  // constantly) sets its values a full display step above body size, centred so
+  // the value owns the cell; the abilities stay the hero one step above.
+  it('sets the vitals values one display step up, centred in their cells (myth-vmadj)', () => {
+    const { getByTestId } = render(<CharacterSheetReveal {...baseProps()} />)
+    const cell = getByTestId('character-sheet-reveal-stripe').firstElementChild
+    expect(cell?.className).toContain('text-center')
+    expect(cell?.lastElementChild?.className).toContain('text-xl')
+  })
+
+  it('equalises the ability-grid rows — a casting tag never staggers the lattice (myth-vmadj)', () => {
+    const { getAllByTestId } = render(<CharacterSheetReveal {...baseProps()} />)
+    const grid = getAllByTestId('character-sheet-reveal-ability')[0]?.parentElement
+    expect(grid?.classList.contains('auto-rows-fr')).toBe(true)
+  })
+
+  it('sets the feature rule-quote gloss ROMAN — the left rule carries the quotation, not italics (myth-vmadj)', () => {
+    const { getByTestId } = render(<CharacterSheetReveal {...baseProps()} />)
+    const gloss = getByTestId('character-sheet-reveal-features').querySelector('.border-l-2')
+    expect(gloss).not.toBeNull()
+    expect(gloss?.className).not.toContain('italic')
+  })
+
+  // ux-run3 myth-vshy0: the caster's WHAT THEY CAN CAST panel sits in the LEFT
+  // column beneath SAVING THROWS — levelling the columns (the ~220px bottom
+  // void) and grouping capabilities left / possessions right.
+  it('seats the curated spells panel in the LEFT column under saving throws (myth-vshy0)', () => {
+    const caster = render(
+      <CharacterSheetReveal {...baseProps({ curated: CASTER_CURATED, full: CASTER_FULL })} />,
+    )
+    const saves = caster.getByTestId('character-sheet-reveal-saves-curated')
+    const spells = caster.getByTestId('character-sheet-reveal-spells')
+    expect(spells.parentElement).toBe(saves.parentElement)
+    expect(saves.nextElementSibling).toBe(spells)
+    // …and no longer beside the features/equipment (possessions) column.
+    const features = caster.getByTestId('character-sheet-reveal-features')
+    expect(features.parentElement).not.toBe(spells.parentElement)
+  })
+
+  it('reserves the inline-confirm height so the action row never drops (myth-vshy0)', () => {
+    const { getByText } = render(<CharacterSheetReveal {...baseProps()} />)
+    const slot = getByText('Start over').closest('div')
+    expect(slot?.className).toContain('sm:min-h-[4.25rem]')
   })
 
   it('hides the full sheet when expanded=false', () => {

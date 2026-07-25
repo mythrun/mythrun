@@ -4,6 +4,7 @@ import {
   FOG_PARAM_RANGES,
   FOG_PARAMS,
   MIN_EXPECTED_ENTITIES,
+  terrainSeedFor,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
 } from '@mythrun/client-core/worldgen'
@@ -180,5 +181,47 @@ export const ReducedMotion: Story = {
   name: 'Reduced motion',
   render: () => <FogTuner reducedMotion />,
   // Same 900px tuner harness — wide-by-design, gate-exempt.
+  parameters: { overflowGate: false },
+}
+
+// The SEEDED GROUND (ux-run3 myth-rlbku + myth-llqj7). With a `terrainSeed` the layer
+// stops being weather alone: a static landmass field is drawn under the drain, so the
+// tiles cohere into a coastline against negative-space sea, the lower band of the pane
+// carries world instead of dead paper, and the field is dense enough over land to clear
+// a true 3:1 against the page ground (measured off rendered pixels in
+// terrain-contrast.test.ts). The seed is derived from the campaign, so one world always
+// draws the same coastline — this story fixes one so the specimen is stable.
+//
+// FULLY DRAINED: the fog has blown off and only the ground remains, which is what the
+// player reads for most of the generation and the whole of the reveal.
+export const SeededTerrain: Story = {
+  name: 'Seeded terrain (drained)',
+  render: () => (
+    <FogStage>
+      <WorldGenFogField
+        entities={ENTS.slice(0, FOG_PARAMS.entities)}
+        shownEntities={MIN_EXPECTED_ENTITIES}
+        totalEntities={MIN_EXPECTED_ENTITIES}
+        terrainSeed={terrainSeedFor('story-world')}
+      />
+    </FogStage>
+  ),
+  parameters: { overflowGate: false },
+}
+
+// The same seed mid-generation: the weather still rolling over its own ground. The
+// coastline underneath is identical to the story above — that is the point.
+export const SeededTerrainWithFog: Story = {
+  name: 'Seeded terrain (fog still rolling)',
+  render: () => (
+    <FogStage>
+      <WorldGenFogField
+        entities={ENTS.slice(0, FOG_PARAMS.entities)}
+        shownEntities={Math.round(MIN_EXPECTED_ENTITIES / 3)}
+        totalEntities={MIN_EXPECTED_ENTITIES}
+        terrainSeed={terrainSeedFor('story-world')}
+      />
+    </FogStage>
+  ),
   parameters: { overflowGate: false },
 }

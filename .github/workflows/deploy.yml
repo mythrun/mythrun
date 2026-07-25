@@ -10,6 +10,19 @@ on:
       - 'wiki/**'
       - '.github/wiki/**'
       - 'frontend/**'
+  # Manual dispatch is deliberately STAGING-ONLY. Every job in this file targets
+  # mythrun-staging-*; there is no production job here yet.
+  #
+  # myth-0eb, for whoever adds the production deploy job: it must NOT be
+  # reachable by workflow_dispatch. Dispatch widens the authorization boundary in
+  # a way a push does not — a leaked PAT with repo write can run
+  # `gh workflow run deploy.yml`, which satisfies every OIDC trust condition
+  # (environment and ref both match) and ships whatever HEAD happens to be, with
+  # no record of the decision anywhere but the Actions log. The equivalent
+  # deliberate act, `git commit --allow-empty -m redeploy && git push`, leaves
+  # the same effect in git history where it can be reviewed. Give the production
+  # job `if: github.event_name != 'workflow_dispatch'`, or put it in its own
+  # workflow file with a push-only trigger.
   workflow_dispatch:
 
 permissions:

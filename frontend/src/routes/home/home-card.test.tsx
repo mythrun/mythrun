@@ -76,15 +76,17 @@ describe('CampaignCard — cardPhase → mono state line', () => {
     expect(screen.getByTestId('card-state').textContent).toBe(i18n.t(key))
   })
 
-  it('lifts the needs-character line to the accent cta — never metadata gray (myth-rhvkt)', () => {
-    // Run 2: "Author your character →" sat at the same ink as "N sessions ·
-    // last played…", so a stalled campaign (a high-value re-engagement target)
-    // didn't pop when scanning a full grid. It now renders as the card's accent
-    // cta line (weight/color only — no badge, state-as-prose), replacing the
-    // muted state line.
+  it('lifts the needs-character line to the accent cta, at the WHISPER tier (myth-rhvkt → myth-7jc1h)', () => {
+    // Run 2 lifted "Author your character →" out of metadata gray; run 3 found
+    // the pendulum overswung — cold starts wore the grid's brightest accent
+    // while invested campaigns looked inert. The line stays an accent cta but
+    // drops to the quietest weight tier, and the state line keeps its RESERVED
+    // slot (a blank ledger line) so the foot zones hold one fixed offset.
     renderCard(makeCampaign({ cardPhase: 'needs-character' }))
-    expect(screen.getByTestId('cover-card-cta').textContent).toBe(i18n.t('home.card.needsCharacter'))
-    expect(screen.queryByTestId('card-state')).toBeNull()
+    const cta = screen.getByTestId('cover-card-cta')
+    expect(cta.textContent).toBe(i18n.t('home.card.needsCharacter'))
+    expect(cta.classList.contains('font-normal')).toBe(true)
+    expect(screen.getByTestId('card-state').textContent).toBe('\u00A0')
   })
 
   it('renders the play record for the played phase (N sessions · relative)', () => {
@@ -213,29 +215,39 @@ describe('CampaignCard — assembling party (built vs building seals)', () => {
   })
 })
 
-// ── myth-z9eiq: the premier slot's continue-session cue ─────────────────────
-describe('CampaignCard — premier continue-session cue', () => {
-  // The hub passes `premier` to exactly one card (the most-recent-activity,
-  // top-left cell). A premier card WITH a play record carries the accent
-  // "Continue session →" cta — the resume affordance the returning player came
-  // for. A premier card not yet played keeps its ordinary state line only.
-  it('renders the continue-session cta on a premier played card', () => {
-    renderCard(makeCampaign({ cardPhase: 'played', sessionCount: 3, lastPlayedAt: '2026-06-01T10:00:00.000Z' }), {
-      premier: true,
-    })
-    expect(screen.getByTestId('cover-card-cta').textContent).toBe(i18n.t('home.card.continueSession'))
+// ── myth-z9eiq → myth-7jc1h: the resume hierarchy ───────────────────────────
+describe('CampaignCard — resume hierarchy (myth-7jc1h)', () => {
+  // Run 3 (P1): EVERY played campaign carries a resume affordance — the premier
+  // (most-recent-activity) card the loud "Continue session →" plus the promoted
+  // treatment, a dormant played card the quieter "Resume →" — live-vs-dormant
+  // is encoded in the words and the weight, never in cta presence/absence.
+  const played = { cardPhase: 'played', sessionCount: 3, lastPlayedAt: '2026-06-01T10:00:00.000Z' } as const
+
+  it('renders the loud continue-session cta + the promoted treatment on a premier played card', () => {
+    renderCard(makeCampaign(played), { premier: true })
+    const cta = screen.getByTestId('cover-card-cta')
+    expect(cta.textContent).toBe(i18n.t('home.card.continueSession'))
+    expect(cta.classList.contains('font-semibold')).toBe(true)
+    // The promoted imprint — the thin accent rule above the cta.
+    expect(screen.getByTestId('cover-card-promoted-rule')).toBeDefined()
     // The record line still reads alongside it.
     expect(screen.getByTestId('card-state').textContent).toContain('3 sessions')
   })
 
-  it('renders no cta on a premier card that has not been played', () => {
-    renderCard(makeCampaign({ cardPhase: 'not-played' }), { premier: true })
-    expect(screen.queryByTestId('cover-card-cta')).toBeNull()
+  it('renders the quiet resume cta on a DORMANT played card — never an inert card (run-3 blocker)', () => {
+    renderCard(makeCampaign(played))
+    const cta = screen.getByTestId('cover-card-cta')
+    expect(cta.textContent).toBe(i18n.t('home.card.resume'))
+    expect(cta.classList.contains('font-medium')).toBe(true)
+    expect(screen.queryByTestId('cover-card-promoted-rule')).toBeNull()
   })
 
-  it('renders no cta on a non-premier played card', () => {
-    renderCard(makeCampaign({ cardPhase: 'played', sessionCount: 3, lastPlayedAt: '2026-06-01T10:00:00.000Z' }))
+  it('renders no cta and no promotion on a premier card that has not been played', () => {
+    // An unplayed premier slot has no "jump back in" story — promoting it would
+    // spotlight a cold start, the exact inversion this bead removes.
+    renderCard(makeCampaign({ cardPhase: 'not-played' }), { premier: true })
     expect(screen.queryByTestId('cover-card-cta')).toBeNull()
+    expect(screen.queryByTestId('cover-card-promoted-rule')).toBeNull()
   })
 })
 

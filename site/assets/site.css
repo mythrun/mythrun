@@ -1,0 +1,666 @@
+/* Mythrun — Parchment & Ink.
+ *
+ * Near-monochrome. Ember is the only saturated colour and appears once per page.
+ * Square corners everywhere. Depth comes from hairlines, never shadow. No smooth
+ * gradients: the one gradient moment is the Bayer dither band that grades the
+ * page into the inverted footer.
+ */
+
+/* ── Fonts (self-hosted; no third-party requests anywhere on this site) ── */
+
+@font-face {
+  font-family: 'Source Serif 4';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('fonts/source-serif-4-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Source Serif 4';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('fonts/source-serif-4-latin-400-italic.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Source Serif 4';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('fonts/source-serif-4-latin-600-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('fonts/ibm-plex-mono-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('fonts/ibm-plex-mono-latin-500-normal.woff2') format('woff2');
+}
+
+/* ── Palette (verbatim from colors.generated.css) ── */
+
+:root {
+  --paper-50: #f8f4ea;
+  --paper-100: #efe9dc;
+  --paper-200: #e1d9c6;
+  --paper-300: #c9bfa8;
+  --paper-400: #a89f8a;
+  --paper-500: #877f72;
+  --paper-600: #66604f;
+  --paper-700: #3d3528;
+  --paper-800: #2d2519;
+  --paper-900: #231b12;
+  --ember-200: #cca178;
+  --ember-300: #b17f56;
+  --ember-400: #94603c;
+  --ember-500: #8a5a3c;
+  --ember-600: #754a31;
+
+  --font-body: 'Source Serif 4', ui-serif, Georgia, serif;
+  --font-ui: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 40px;
+  --space-8: 48px;
+  --space-9: 64px;
+
+  /* One column, book width. The brand is patient and literary, so the page is a
+     measure of prose with a rule under it, not a wide marketing grid. Section
+     hairlines, the pricing table, the nav and the footer all share this width so
+     nothing floats in dead space on a large screen. */
+  --measure: 62ch;
+  --page: 44rem;
+
+  /* Semantic layer, light. Contrast ratios carried over from semantic.css. */
+  --bg: var(--paper-100);
+  --surface: var(--paper-50);
+  --border: var(--paper-300);
+  --border-strong: var(--paper-500);
+  --ink: var(--paper-900);
+  --ink-secondary: var(--paper-700);
+  --ink-tertiary: var(--paper-600);
+  --accent: var(--ember-500);
+  --accent-hover: var(--ember-600);
+  --accent-fg: var(--ember-500);
+  --accent-fg-hover: var(--ember-600);
+  --on-accent: var(--paper-50);
+  --dither: url('dither-light.svg');
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: var(--paper-900);
+    --surface: var(--paper-800);
+    --border: var(--paper-700);
+    --border-strong: var(--paper-500);
+    --ink: var(--paper-100);
+    --ink-secondary: var(--paper-300);
+    --ink-tertiary: var(--paper-400);
+    --accent: var(--ember-400);
+    --accent-hover: var(--ember-500);
+    --accent-fg: var(--ember-300);
+    --accent-fg-hover: var(--ember-200);
+    --on-accent: var(--paper-50);
+    --dither: url('dither-dark.svg');
+  }
+}
+
+/* ── Reset ── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+img,
+svg {
+  max-width: 100%;
+}
+
+/* ── Type ── */
+
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  line-height: 1.2;
+  margin: 0;
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: clamp(1.75rem, 5.5vw, 2.25rem);
+}
+
+h2 {
+  font-size: 1.375rem;
+  line-height: 1.4;
+}
+
+h3 {
+  font-size: 1.125rem;
+  line-height: 1.4;
+}
+
+p {
+  margin: 0;
+  max-width: var(--measure);
+}
+
+a {
+  color: var(--accent-fg);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  color: var(--accent-fg-hover);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-fg);
+  outline-offset: 2px;
+}
+
+/* The mono chrome voice: labels, kickers, data, nav. Always wide-tracked and
+   upper-case so it reads as machinery next to the serif prose. */
+.kicker {
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  line-height: 1.5;
+  text-transform: uppercase;
+  color: var(--ink-tertiary);
+  margin: 0;
+}
+
+.mono {
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--ink-secondary);
+}
+
+.lede {
+  font-size: 1.125rem;
+  color: var(--ink-secondary);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.skip-link {
+  position: absolute;
+  left: var(--space-4);
+  top: -100%;
+  z-index: 10;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+}
+
+.skip-link:focus {
+  top: var(--space-4);
+}
+
+/* ── Brand marks (SVG as a mask so they inherit the ink token) ── */
+
+.mark {
+  display: block;
+  flex: none;
+  background-color: var(--ink);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+.mark--horizontal {
+  width: 132px;
+  height: 56px;
+  -webkit-mask-image: url('lockup-horizontal.svg');
+  mask-image: url('lockup-horizontal.svg');
+}
+
+.mark--stacked {
+  width: 172px;
+  height: 130px;
+  -webkit-mask-image: url('lockup-stacked.svg');
+  mask-image: url('lockup-stacked.svg');
+}
+
+/* If masks are unavailable the brand name must still be visible, so the
+   wordmark falls back to plain text rather than disappearing. */
+@supports not ((mask-size: contain) or (-webkit-mask-size: contain)) {
+  .mark {
+    display: none;
+  }
+
+  .brand-fallback {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    font-family: var(--font-body);
+    font-size: 1.375rem;
+    font-weight: 600;
+  }
+}
+
+/* ── Page scaffold ── */
+
+.wrap {
+  width: 100%;
+  max-width: var(--page);
+  margin-inline: auto;
+  padding-inline: var(--space-5);
+}
+
+main {
+  flex: 1 0 auto;
+  min-width: 0;
+}
+
+.nav {
+  border-bottom: 1px solid var(--border);
+}
+
+.nav__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 80px;
+  padding-block: var(--space-3);
+}
+
+.nav__links {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+}
+
+.nav__links a {
+  color: var(--ink-secondary);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  padding-block: var(--space-1);
+}
+
+.nav__links a:hover,
+.nav__links a[aria-current='page'] {
+  color: var(--ink);
+  border-bottom-color: var(--border-strong);
+}
+
+/* ── Hero ── */
+
+.hero {
+  padding-block: var(--space-9) var(--space-8);
+}
+
+.hero__lockup {
+  margin-bottom: var(--space-7);
+}
+
+.hero h1 {
+  max-width: 22ch;
+}
+
+.hero p {
+  margin-top: var(--space-5);
+}
+
+.hero__actions {
+  margin-top: var(--space-7);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4) var(--space-5);
+}
+
+/* The page's single ember moment. */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding-inline: var(--space-5);
+  background: var(--accent);
+  color: var(--on-accent);
+  border: 1px solid var(--accent);
+  border-radius: 0;
+  font-family: var(--font-ui);
+  font-size: 0.9375rem;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+}
+
+.button:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: var(--on-accent);
+}
+
+/* ── Sections ── */
+
+.section {
+  padding-block: var(--space-7);
+  border-top: 1px solid var(--border);
+}
+
+.section > * + * {
+  margin-top: var(--space-4);
+}
+
+.section h2 + p,
+.section h3 + p {
+  margin-top: var(--space-3);
+}
+
+.stack > * + * {
+  margin-top: var(--space-5);
+}
+
+.notes > * + * {
+  margin-top: var(--space-6);
+}
+
+.note h3 {
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-tertiary);
+}
+
+.note p {
+  margin-top: var(--space-3);
+}
+
+/* ── Prose pages (terms, privacy, refunds, contact) ── */
+
+.prose {
+  padding-block: var(--space-8) var(--space-9);
+}
+
+.prose h1 + .mono {
+  margin-top: var(--space-3);
+}
+
+.prose h2 {
+  margin-top: var(--space-8);
+}
+
+.prose h3 {
+  margin-top: var(--space-6);
+  font-size: 1rem;
+}
+
+.prose p,
+.prose ul {
+  margin-top: var(--space-4);
+}
+
+.prose .notes {
+  margin-top: var(--space-5);
+}
+
+.prose .table-scroll {
+  margin-top: var(--space-4);
+}
+
+/* Square markers, not discs. The register has no circles in it. */
+.prose ul {
+  padding-left: var(--space-5);
+  max-width: var(--measure);
+  list-style-type: square;
+}
+
+.prose li + li {
+  margin-top: var(--space-2);
+}
+
+.prose li::marker {
+  color: var(--ink-tertiary);
+}
+
+/* Unresolved-value marker. Long markers wrap, and the box is cloned onto each
+   line fragment so a wrapped marker still reads as one boxed unit. */
+.todo {
+  font-family: var(--font-ui);
+  font-size: 0.9em;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--accent-fg);
+  color: var(--accent-fg);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* Draft banner. */
+.draft {
+  border: 1px solid var(--accent-fg);
+  padding: var(--space-4);
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--ink-secondary);
+  margin-bottom: var(--space-7);
+}
+
+.draft strong {
+  color: var(--accent-fg);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ── Tables ── */
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+  text-align: left;
+}
+
+caption {
+  text-align: left;
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-tertiary);
+  padding-bottom: var(--space-3);
+}
+
+th,
+td {
+  padding: var(--space-3) var(--space-4) var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+thead th {
+  font-weight: 500;
+  color: var(--ink-tertiary);
+  border-bottom-color: var(--border-strong);
+}
+
+tbody th {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+tbody tr:last-child th,
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table-note {
+  margin-top: var(--space-4);
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  color: var(--ink-tertiary);
+  max-width: var(--measure);
+}
+
+/* ── Dither → footer ── */
+
+/* The brand's only sanctioned gradient: the locked 4x4 Bayer band, 6px cells,
+   generated from the same math as the app's <Dither scale="hero" />. It tiles
+   horizontally and terminates in the inverted footer below it. */
+.dither {
+  height: 120px;
+  background-image: var(--dither);
+  background-repeat: repeat-x;
+  background-size: 144px 120px;
+  background-position: left top;
+}
+
+.footer {
+  background: var(--paper-900);
+  color: var(--paper-100);
+  padding-block: var(--space-8);
+}
+
+@media (prefers-color-scheme: dark) {
+  .footer {
+    background: var(--paper-100);
+    color: var(--paper-900);
+  }
+}
+
+.footer a {
+  color: inherit;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.footer__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+  list-style: none;
+  margin: 0 0 var(--space-6);
+  padding: 0;
+}
+
+/* The ember accent is tuned against the page, not the inverted footer, and the
+   fine print sits at 0.75 opacity. In the footer the marker rides its own ink. */
+.footer .todo {
+  border-color: currentColor;
+  color: inherit;
+}
+
+.footer__fine {
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  line-height: 1.7;
+  opacity: 0.75;
+  max-width: var(--measure);
+}
+
+.footer__fine p + p {
+  margin-top: var(--space-2);
+}
+
+/* ── Narrow screens ── */
+
+@media (max-width: 480px) {
+  .wrap {
+    padding-inline: var(--space-4);
+  }
+
+  .nav__inner {
+    min-height: 64px;
+  }
+
+  .nav__links {
+    gap: var(--space-4);
+  }
+
+  .mark--horizontal {
+    width: 106px;
+    height: 45px;
+  }
+
+  .mark--stacked {
+    width: 140px;
+    height: 106px;
+  }
+
+  .hero {
+    padding-block: var(--space-7) var(--space-6);
+  }
+
+  .button {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

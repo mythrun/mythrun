@@ -173,6 +173,41 @@ describe('CharacterLoadingSurface', () => {
     ).toBeDefined()
   })
 
+  it('the kicker is the FACTUAL stage counter, not a second headline (ux-run3 myth-1yxfr)', () => {
+    // "Your character is coming together" (the serif H1) + "BRINGING THEM TO
+    // LIFE…" were two headlines for one thought — and the kicker's ellipsis
+    // competed with the active rung's. The kicker is now the factual position:
+    // 2 done + 1 active → "Stage 3 of 4", paired on the same row with the
+    // estimate when one exists.
+    renderSurface({ beats: MID_BEATS })
+    expect(screen.getByTestId('character-loading-beat-header').textContent).toContain(
+      i18n.t('characterCreate.loading.stage', { current: 3, total: 4 }),
+    )
+  })
+
+  it('seats the wait toward the optical center — the lower two-thirds are not left blank (ux-run3 myth-5ekb5)', () => {
+    // The page-floored column + 2/3 grow spacers (the myth-ma8yv seat idiom):
+    // the block rides optically above center instead of hugging the top.
+    renderSurface()
+    const center = screen.getByTestId('character-loading-center')
+    expect(center.className).toMatch(/min-h-\[/)
+    expect(center.contains(screen.getByTestId('character-loading'))).toBe(true)
+  })
+
+  it('the kicker opens at Stage 1 before any beat resolves, and rests at the last stage when all are done', () => {
+    const pending = MID_BEATS.map((b) => ({ ...b, state: 'pending' as const }))
+    renderSurface({ beats: pending })
+    expect(screen.getByTestId('character-loading-beat-header').textContent).toContain(
+      i18n.t('characterCreate.loading.stage', { current: 1, total: 4 }),
+    )
+    cleanup()
+    mockMatchMedia(false)
+    renderSurface({ beats: DONE_BEATS })
+    expect(screen.getByTestId('character-loading-beat-header').textContent).toContain(
+      i18n.t('characterCreate.loading.stage', { current: 4, total: 4 }),
+    )
+  })
+
   it('closes with the invite setup line — context for the collapsed invite affordance below (ux-run2 myth-3bl24)', () => {
     renderSurface()
     expect(screen.getByTestId('character-loading-table-room').textContent).toBe(

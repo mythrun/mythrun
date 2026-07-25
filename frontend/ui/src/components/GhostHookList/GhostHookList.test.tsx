@@ -92,6 +92,39 @@ describe('GhostHookList', () => {
     expect(ref.current).toBeInstanceOf(HTMLDivElement)
   })
 
+  // ux-run3 myth-407fa: the card ends where its content ends — capped at the
+  // prose measure plus its furniture instead of running the full content column
+  // with a dead rail. The cap must stay WIDER than the measure + furniture, or
+  // it squeezes the prose below 62ch and adds the lines the padding shave saved.
+  it('caps each card at the measure plus furniture, with tighter vertical padding', () => {
+    const { getAllByRole, container } = render(
+      <GhostHookList items={hooks()} actionLabel="Open here" />,
+    )
+    for (const btn of getAllByRole('button')) {
+      expect(btn.className).toContain('max-w-[43rem]')
+      expect(btn.className).toContain('py-[var(--space-4)]')
+    }
+    // The measure itself is unchanged — the card was narrowed to it, not below.
+    expect(container.querySelector('.max-w-\\[62ch\\]')).not.toBeNull()
+  })
+
+  // ux-run3 myth-407fa: the enter cue can carry a quiet verb so the header's
+  // commitment reaches the point of action.
+  it('renders the shared action verb beside the arrow when actionLabel is given', () => {
+    const { getAllByRole, rerender } = render(
+      <GhostHookList items={hooks()} actionLabel="Open here" />,
+    )
+    for (const btn of getAllByRole('button')) {
+      expect(btn.textContent).toContain('Open here')
+    }
+    // The verb is decorative — the title stays the accessible name.
+    expect(getAllByRole('button', { name: /The harbour/ }).length).toBeGreaterThan(0)
+    rerender(<GhostHookList items={hooks()} />)
+    for (const btn of getAllByRole('button')) {
+      expect(btn.textContent).not.toContain('Open here')
+    }
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(<GhostHookList items={hooks()} />)
     expect(await axe(container)).toHaveNoViolations()

@@ -86,7 +86,7 @@ export type {
 // CoverCard (MYT-87) — a portrait "made-object" card: a full-bleed cover header
 // (a CoverDither) over an ink seam, then a body with narrative content at the top
 // and a foot-pinned imprint. Fixed 3:2 geometry the neutral Card doesn't model.
-export type { CoverCardProps } from './cover-card.ts'
+export type { CoverCardProps, CoverCardCtaTone } from './cover-card.ts'
 
 // GhostChoiceList (MYT-89) — a borderless "paper" choice list (flat 1-bit): each
 // item is a real <button> styled as a ghost (transparent, surface-hover token-swap,
@@ -139,6 +139,7 @@ export type { WorldGenFogFieldProps, WorldGenCameraSource, FogFieldEntity, FogOb
 // a consumer reads the model shape off the same contract surface as the props.
 export type {
   WorldWikiProps,
+  WikiPresence,
   WikiViewModel,
   WikiGroup,
   WikiEntity,
@@ -146,6 +147,8 @@ export type {
   WikiRelatedLink,
   WikiIntroduction,
   WikiIntroReference,
+  WikiNavigation,
+  WikiLocation,
 } from './world-wiki.ts'
 
 // RevealTransition (MYT-89 Phase D, §3.8) — the gen→reveal reward moment: the
@@ -243,6 +246,7 @@ export type {
   AbilityAbbrev,
   AbilityTile,
   SheetStat,
+  SheetStatKey,
   SheetEntry,
   SheetSkill,
   CuratedSheet,
@@ -276,6 +280,8 @@ export type {
   DmCorrectionProps,
   PlayerMessageProps,
   SessionInputProps,
+  TableTalkProps,
+  TableTalkView,
   ThinkingIndicatorProps,
   SessionStartBeatProps,
   SessionPreparingProps,
@@ -302,7 +308,7 @@ export type {
 // @mythrun/ui components on the Sessions & Billing settings surface. Type-only
 // (§9): pure data + shell-owned i18n'd labels, no React/DOM types.
 export type { CreditBalanceProps } from './billing/index.ts'
-export type { PackListProps, SubscriptionTierView, AlaCarteView } from './billing/index.ts'
+export type { PackListProps, SubscriptionTierView, AlaCarteView, PackGrant } from './billing/index.ts'
 export type { PurchasePromptProps } from './billing/index.ts'
 export type { PurchaseHistoryProps, PurchaseHistoryRow } from './billing/index.ts'
 

@@ -33,11 +33,15 @@ function specimen(
   pair: { from: WorldColor; to: WorldColor } | null,
   seals: number,
   record: string,
+  action?: { cta: string; tone: 'loud' | 'quiet' | 'whisper'; promoted?: boolean },
 ) {
   const names = ['Ada', 'Bram', 'Cyra', 'Dane', 'Esk', 'Fenn', 'Gale']
   return (
     <CoverCard
       width={230}
+      {...(action !== undefined
+        ? { cta: action.cta, ctaTone: action.tone, promoted: action.promoted === true }
+        : {})}
       cover={
         pair !== null ? (
           <CoverDither size="band" from={pair.from} to={pair.to} />
@@ -80,6 +84,33 @@ export const Shelf: Story = {
       {specimen('The Drowned Cathedral', 'Aerthmoor', { from: 'lapis-100', to: 'lapis-900' }, 3, '11 sessions · last week')}
       {specimen('The Rose Assembly', 'Ondemor · by Bram', { from: 'rose-100', to: 'rose-800' }, 7, '4 sessions · 2 days ago')}
       {specimen('The Unwritten', 'Shaping your world', null, 1, 'Generating world…')}
+    </div>
+  ),
+}
+
+// The resume hierarchy (myth-7jc1h): one PROMOTED premier object (2px edge,
+// accent rule, loud "Continue session →"), a dormant played card's quiet
+// "Resume →", a cold start's whisper "Author your character →", and a card with
+// no action (its cta line reserved empty) — four cards whose foot zones hold one
+// fixed offset, ranked by weight alone.
+export const ResumeHierarchy: Story = {
+  name: 'Resume hierarchy (cta tiers + promoted)',
+  render: () => (
+    <div className="flex flex-wrap items-start gap-[var(--space-4)]">
+      {specimen('The Drowned Cathedral', 'Aerthmoor', { from: 'lapis-100', to: 'lapis-900' }, 3, '11 sessions · last played today', {
+        cta: 'Continue session →',
+        tone: 'loud',
+        promoted: true,
+      })}
+      {specimen('The Rose Assembly', 'Ondemor · by Bram', { from: 'rose-100', to: 'rose-800' }, 4, '4 sessions · last played last week', {
+        cta: 'Resume →',
+        tone: 'quiet',
+      })}
+      {specimen('The Verdigris Court', 'Selavere', { from: 'verdigris-200', to: 'moss-800' }, 2, ' ', {
+        cta: 'Author your character →',
+        tone: 'whisper',
+      })}
+      {specimen('The Coral Throne', 'The Reef', { from: 'sienna-200', to: 'verdigris-800' }, 1, 'The table waits for its first session')}
     </div>
   ),
 }

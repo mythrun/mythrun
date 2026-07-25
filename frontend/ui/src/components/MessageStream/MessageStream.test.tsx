@@ -373,20 +373,76 @@ describe('MessageStream', () => {
     expect(scrollTo).not.toHaveBeenCalled()
   })
 
-  it('reveals a jump-to-latest control once the reader scrolls up, and hides it after jumping', async () => {
+  it('reveals a labeled jump-to-latest pill once the reader scrolls up, and hides it after jumping', async () => {
     const user = userEvent.setup()
     render(<MessageStream {...streamProps({ items: MIXED })} />)
     const scroller = screen.getByTestId('message-stream-scroll')
-    // No jump while pinned to the bottom.
-    expect(screen.queryByRole('button', { name: 'Jump to latest' })).not.toBeInTheDocument()
+    // No pill while pinned to the bottom.
+    expect(screen.queryByRole('button', { name: 'Jump to latest ↓' })).not.toBeInTheDocument()
     // Scroll up: 1000 content, 200 viewport, at top → not at bottom.
     const scrollTo = stubScroll(scroller, { scrollHeight: 1000, clientHeight: 200 })
     fireEvent.scroll(scroller)
-    const jump = screen.getByRole('button', { name: 'Jump to latest' })
+    const jump = screen.getByRole('button', { name: 'Jump to latest ↓' })
     expect(jump).toBeInTheDocument()
     await user.click(jump)
     expect(scrollTo).toHaveBeenCalled()
-    expect(screen.queryByRole('button', { name: 'Jump to latest' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Jump to latest ↓' })).not.toBeInTheDocument()
+  })
+
+  // ── myth-em6bg — new content while scrolled up must announce itself ─────────
+  it('swaps the pill to the new-messages label when content lands below the fold, and announces it', () => {
+    const labels = { jumpLabel: 'Jump to latest ↓', newMessagesLabel: 'New messages ↓' }
+    const { rerender } = render(<MessageStream {...streamProps({ items: [DM_SETTLED], ...labels })} />)
+    const scroller = screen.getByTestId('message-stream-scroll')
+    stubScroll(scroller, { scrollHeight: 1000, clientHeight: 200 })
+    fireEvent.scroll(scroller) // the reader has scrolled up
+    expect(screen.getByRole('button', { name: 'Jump to latest ↓' })).toBeInTheDocument()
+    // An answer posts below the fold → the pill announces NEW content.
+    rerender(<MessageStream {...streamProps({ items: [DM_SETTLED, PLAYER_CONFIRMED], ...labels })} />)
+    expect(screen.getByRole('button', { name: 'New messages ↓' })).toBeInTheDocument()
+    // The polite live region carries the announcement (never a silent arrival).
+    const announcements = screen
+      .getAllByRole('status')
+      .filter((el) => el.textContent === 'New messages ↓')
+    expect(announcements).toHaveLength(1)
+  })
+
+  it('streaming growth below the fold arms the new-messages pill too', () => {
+    const labels = { jumpLabel: 'Jump to latest ↓', newMessagesLabel: 'New messages ↓' }
+    const { rerender } = render(<MessageStream {...streamProps({ items: [DM_STREAMING], ...labels })} />)
+    const scroller = screen.getByTestId('message-stream-scroll')
+    stubScroll(scroller, { scrollHeight: 1000, clientHeight: 200 })
+    fireEvent.scroll(scroller)
+    const grown: TranscriptItem = { ...DM_STREAMING, text: DM_STREAMING.text + ' and lowers their hood.' }
+    rerender(<MessageStream {...streamProps({ items: [grown], ...labels })} />)
+    expect(screen.getByRole('button', { name: 'New messages ↓' })).toBeInTheDocument()
+  })
+
+  it('clicking the new-messages pill jumps to the tail and clears the announcement', async () => {
+    const user = userEvent.setup()
+    const labels = { jumpLabel: 'Jump to latest ↓', newMessagesLabel: 'New messages ↓' }
+    const { rerender } = render(<MessageStream {...streamProps({ items: [DM_SETTLED], ...labels })} />)
+    const scroller = screen.getByTestId('message-stream-scroll')
+    const scrollTo = stubScroll(scroller, { scrollHeight: 1000, clientHeight: 200 })
+    fireEvent.scroll(scroller)
+    rerender(<MessageStream {...streamProps({ items: [DM_SETTLED, PLAYER_CONFIRMED], ...labels })} />)
+    await user.click(screen.getByRole('button', { name: 'New messages ↓' }))
+    expect(scrollTo).toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'New messages ↓' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Jump to latest ↓' })).not.toBeInTheDocument()
+  })
+
+  it('returning to the bottom by hand clears the pill and the new-content state', () => {
+    const labels = { jumpLabel: 'Jump to latest ↓', newMessagesLabel: 'New messages ↓' }
+    const { rerender } = render(<MessageStream {...streamProps({ items: [DM_SETTLED], ...labels })} />)
+    const scroller = screen.getByTestId('message-stream-scroll')
+    stubScroll(scroller, { scrollHeight: 1000, clientHeight: 200 })
+    fireEvent.scroll(scroller)
+    rerender(<MessageStream {...streamProps({ items: [DM_SETTLED, PLAYER_CONFIRMED], ...labels })} />)
+    // Scroll back to the tail: content == viewport → at bottom again.
+    stubScroll(scroller, { scrollHeight: 200, clientHeight: 200 })
+    fireEvent.scroll(scroller)
+    expect(screen.queryByRole('button', { name: 'New messages ↓' })).not.toBeInTheDocument()
   })
 
   it('does NOT auto-follow when the reader has scrolled up', () => {
@@ -439,6 +495,117 @@ describe('MessageStream', () => {
       <MessageStream {...streamProps({ items: MECHANICAL, connectionLine: 'Finding your way back…' })} />,
     )
     expect(await axe(withLine.container)).toHaveNoViolations()
+  })
+})
+
+// ── myth-1msig — the table-talk frame: an @dm exchange wraps in the marked OOC
+// block. MessageStream stays presentational: the grouping (`tableTalk`) is computed
+// route-side (client-core `buildTableTalkView`) and threaded in as plain data. ────
+describe('MessageStream — the table-talk frame (myth-1msig)', () => {
+  const ASK_DM: TranscriptItem = {
+    kind: 'player',
+    key: 'q-1',
+    turnId: null,
+    seq: 6,
+    userId: 'u1',
+    displayName: 'Miklos',
+    characterName: 'Kessa Vurm',
+    text: '@dm what does the brass key open?',
+    pending: false,
+  }
+  const ANSWER: TranscriptItem = {
+    kind: 'dm',
+    key: 'a-1',
+    turnId: 'TT1',
+    text: 'Not common knowledge at her tier. Back to you.',
+    streaming: false,
+  }
+  const TT_LABEL = 'Table talk'
+
+  it('wraps the attributed question AND the answer inside one marked block with the eyebrow', () => {
+    render(
+      <MessageStream
+        {...streamProps({
+          items: [DM_SETTLED, ASK_DM, ANSWER],
+          tableTalk: { blockByKey: { 'q-1': 0, 'a-1': 0 } },
+          tableTalkLabel: TT_LABEL,
+        })}
+      />,
+    )
+    const frame = screen.getByRole('note')
+    expect(frame).toHaveAttribute('data-table-talk')
+    expect(frame).toHaveTextContent(TT_LABEL)
+    // The question is attributed INSIDE the same block as the answer (the record
+    // keeps the Q with the A).
+    expect(frame).toHaveTextContent(ASK_DM.text)
+    expect(frame).toHaveTextContent('Kessa Vurm')
+    expect(frame).toHaveTextContent(ANSWER.text)
+    // The surrounding narration stays OUTSIDE the frame.
+    expect(frame).not.toHaveTextContent(DM_SETTLED.text)
+  })
+
+  it('renders no frame when no grouping is threaded (back-compat)', () => {
+    render(<MessageStream {...streamProps({ items: [DM_SETTLED, ASK_DM, ANSWER] })} />)
+    expect(screen.queryByRole('note')).not.toBeInTheDocument()
+    expect(screen.getByText(ANSWER.text)).toBeInTheDocument()
+  })
+
+  it('a question framed alone (interrupted exchange) still gets its block', () => {
+    render(
+      <MessageStream
+        {...streamProps({
+          items: [ASK_DM, PLAYER_CONFIRMED],
+          tableTalk: { blockByKey: { 'q-1': 0 } },
+          tableTalkLabel: TT_LABEL,
+        })}
+      />,
+    )
+    const frame = screen.getByRole('note')
+    expect(frame).toHaveTextContent(ASK_DM.text)
+    expect(frame).not.toHaveTextContent(PLAYER_CONFIRMED.text)
+  })
+
+  it('suppresses the scene divider inside a framed exchange (the frame carries the boundary)', () => {
+    // DM_SETTLED (T1) → ASK_DM → ANSWER (TT1): un-framed, the answer would draw a
+    // scene rule (a dm turn opening after a different turn). Framed, it must not.
+    render(
+      <MessageStream
+        {...streamProps({
+          items: [DM_SETTLED, ASK_DM, ANSWER],
+          tableTalk: { blockByKey: { 'q-1': 0, 'a-1': 0 } },
+          tableTalkLabel: TT_LABEL,
+        })}
+      />,
+    )
+    expect(screen.queryByRole('separator')).not.toBeInTheDocument()
+  })
+
+  it('two distinct exchanges render as two frames', () => {
+    const ask2: TranscriptItem = { ...ASK_DM, key: 'q-2', seq: 7, text: '@dm and the cord?' }
+    const answer2: TranscriptItem = { ...ANSWER, key: 'a-2', turnId: 'TT2', text: 'Waxed hemp. Back to you.' }
+    render(
+      <MessageStream
+        {...streamProps({
+          items: [ASK_DM, ANSWER, ask2, answer2],
+          tableTalk: { blockByKey: { 'q-1': 0, 'a-1': 0, 'q-2': 1, 'a-2': 1 } },
+          tableTalkLabel: TT_LABEL,
+        })}
+      />,
+    )
+    expect(screen.getAllByRole('note')).toHaveLength(2)
+  })
+
+  it('has no a11y violations with a framed exchange in the stream', async () => {
+    const { container } = render(
+      <MessageStream
+        {...streamProps({
+          items: [DM_SETTLED, ASK_DM, ANSWER],
+          tableTalk: { blockByKey: { 'q-1': 0, 'a-1': 0 } },
+          tableTalkLabel: TT_LABEL,
+        })}
+      />,
+    )
+    expect(await axe(container)).toHaveNoViolations()
   })
 })
 

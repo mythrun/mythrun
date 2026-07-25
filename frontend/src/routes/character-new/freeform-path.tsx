@@ -28,9 +28,6 @@ import { useCharacterDraft, type SessionDraftStore } from '@mythrun/client-core/
  *  as a calm nudge rather than bouncing off the request boundary as a 400. */
 const MIN_CHARS = 20
 
-/** The two one-at-a-time freeform steps — also the step indicator's numerator. */
-const TOTAL_STEPS = 2
-
 /** Which of the two one-at-a-time freeform steps is showing. */
 type Step = 'concept' | 'grounding'
 /** The calm inline notice state: a too-short nudge, a failed-submit retry, or none. */
@@ -155,11 +152,16 @@ export function FreeformPath({
     submitFreeform({ conceptText, groundingText, submit, onSubmitted, setNotice, submitting })
   }
 
-  /** The quiet "N of 2" signpost over the current prompt. */
-  const stepIndicator = t('characterCreate.freeform.stepIndicator', {
-    current: step === 'concept' ? 1 : TOTAL_STEPS,
-    total: TOTAL_STEPS,
-  })
+  /** The quiet NAMED signpost over the current prompt (ux-run3 myth-7ceqw c):
+   *  "1 of 2 · Who you are" — the count tells the player another question
+   *  follows, the name tells them what each door asks, so nobody front-loads
+   *  their whole answer into the first. */
+  const stepIndicator = t(
+    step === 'concept'
+      ? 'characterCreate.freeform.stepConcept'
+      : 'characterCreate.freeform.stepGrounding',
+  )
+  const currentValue = step === 'concept' ? conceptText : groundingText
 
   return (
     <Stack gap={5}>
@@ -179,6 +181,10 @@ export function FreeformPath({
           grounding whisper is the situation's bespoke invitation — the DM's
           voice, promoted past hint chrome (ux-run2 myth-4gnrp). */}
       <FreeformPrompt
+        // Remount per step so focusOnMount re-fires — each step's one next
+        // action is typing (ux-run3 myth-en2jj).
+        key={step}
+        focusOnMount
         stepIndicator={stepIndicator}
         prompt={
           step === 'concept'
@@ -187,10 +193,22 @@ export function FreeformPath({
         }
         whisper={step === 'concept' ? t('characterCreate.freeform.conceptWhisper') : groundingWhisper}
         {...(step === 'concept' ? {} : { whisperVoice: 'dm' as const })}
-        value={step === 'concept' ? conceptText : groundingText}
+        // The grounding step answers a long DM invitation with a sentence or
+        // two, so it takes the detail floor rather than the essay floor — the
+        // essay floor walked the field's own bottom edge and the Continue off
+        // a 1280x720 frame (ux-run3 myth-21lpi). The concept step keeps the
+        // essay floor: "Who are you?" is the blank page that wants room.
+        compact={step === 'grounding'}
+        value={currentValue}
         onChange={step === 'concept' ? handleConceptChange : handleGroundingChange}
         onSubmit={step === 'concept' ? handleConcept : handleGrounding}
         submitLabel={t('characterCreate.freeform.continue')}
+        // Honest gating (myth-7ceqw b): Continue stands down while the field is
+        // empty; the too-short floor below MIN_CHARS stays a calm notice.
+        submitDisabled={currentValue.trim() === ''}
+        // The grounding Continue is the character-generation trigger — it
+        // carries the commit disclosure (myth-g3mt6).
+        {...(step === 'grounding' && { submitHint: t('characterCreate.freeform.cost') })}
         onBack={handleBack}
         backLabel={t('back')}
       />

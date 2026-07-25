@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+// Resolves to the `Worker` from the `vi.mock('bullmq', ...)` factory below —
+// the myth-jykft ordering assertions read its invocationCallOrder.
+import { Worker as BullmqWorkerCtor } from 'bullmq'
 import * as queueEventsModule from '../session/session-turn-queue-events.js'
 
 vi.mock('../config/env.js', () => ({
@@ -61,8 +64,15 @@ vi.mock('../db/postgres.js', () => ({
   }),
 }))
 
+// myth-jykft: the health server is two-phase — startHealthServer(port) BINDS
+// (the same-host duplicate-worker guard), arm(deps) supplies the probes once
+// boot finishes. The mock keeps both so the ordering assertions below can see
+// bind-before-registration and arm-after-registration.
 const healthCloseMock = vi.fn(() => Promise.resolve())
-const startHealthServerMock = vi.fn(() => Promise.resolve({ close: healthCloseMock }))
+const healthArmMock = vi.fn()
+const startHealthServerMock = vi.fn(() =>
+  Promise.resolve({ arm: healthArmMock, close: healthCloseMock }),
+)
 
 vi.mock('../worker/health-server.js', () => ({
   startHealthServer: startHealthServerMock,
@@ -137,8 +147,11 @@ describe('worker.main()', () => {
     pgQueryMock.mockClear()
     pgEndMock.mockClear()
     healthCloseMock.mockClear()
+    healthArmMock.mockClear()
+    startHealthServerMock.mockClear()
     batchDuplicateMock.mockClear()
     batchDuplicateQuitMock.mockClear()
+    vi.mocked(BullmqWorkerCtor).mockClear()
     workerInstances.length = 0
     queueEventsInstances.length = 0
   })
@@ -204,7 +217,18 @@ describe('worker.main()', () => {
     expect(realtimePingMock).toHaveBeenCalledTimes(1)
     expect(pgQueryMock).toHaveBeenCalledWith('SELECT 1')
     // Default health port when WORKER_HEALTH_PORT is unset.
-    expect(startHealthServerMock).toHaveBeenCalledWith(3001, expect.anything())
+    expect(startHealthServerMock).toHaveBeenCalledWith(3001)
+    // myth-jykft: the bind is the duplicate-consumer guard, so it MUST precede
+    // every BullMQ worker registration — otherwise a second worker on this host
+    // has already started stealing jobs by the time the port check fires. The
+    // arm() phase runs on the other side, once all nine workers exist, so an
+    // un-armed worker never reports green.
+    const registrations = vi.mocked(BullmqWorkerCtor).mock.invocationCallOrder
+    const bindOrder = startHealthServerMock.mock.invocationCallOrder[0] ?? Infinity
+    const armOrder = healthArmMock.mock.invocationCallOrder[0] ?? -Infinity
+    expect(bindOrder).toBeLessThan(Math.min(...registrations))
+    expect(armOrder).toBeGreaterThan(Math.max(...registrations))
+    expect(healthArmMock).toHaveBeenCalledTimes(1)
 
     process.emit('SIGTERM', 'SIGTERM' as NodeJS.Signals)
 
@@ -237,15 +261,46 @@ describe('worker.main()', () => {
 
     void main() // never awaited — main blocks forever on Promise<never>
 
+    // Wait on arm(), not on the bind: myth-jykft moved the bind to the TOP of
+    // main(), so a bind-only wait would fire the SIGTERM below before the
+    // signal handlers exist. arm() is the last step of boot.
     await vi.waitFor(() => {
-      expect(startHealthServerMock).toHaveBeenCalled()
+      expect(healthArmMock).toHaveBeenCalled()
     })
-    expect(startHealthServerMock).toHaveBeenCalledWith(3901, expect.anything())
+    expect(startHealthServerMock).toHaveBeenCalledWith(3901)
 
     process.emit('SIGTERM', 'SIGTERM' as NodeJS.Signals)
     await vi.waitFor(() => {
       expect(exitSpy).toHaveBeenCalledWith(0)
     })
     vi.unstubAllEnvs()
+  })
+
+  // myth-jykft: the duplicate-consumer guard. A second worker on the same host
+  // loses the health-port bind and must refuse to boot LOUDLY — silently
+  // registering as a competing consumer is the bug.
+  it('refuses to boot when the health port is taken, registering NO queue consumer', async () => {
+    const { main } = await import('../worker.js')
+    const { logger } = await import('../llm/logger.js')
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => undefined)
+    const baseUnhandled = process.listenerCount('unhandledRejection')
+    startHealthServerMock.mockRejectedValueOnce(
+      Object.assign(new Error('listen EADDRINUSE: address already in use 127.0.0.1:3001'), {
+        code: 'EADDRINUSE',
+      }),
+    )
+
+    await expect(main()).rejects.toThrow(/EADDRINUSE/)
+
+    // The whole point: nothing consumed a queue before the port check.
+    expect(workerInstances).toHaveLength(0)
+    // Loud, and classified as a config error rather than a transient.
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'worker.health_port_in_use', healthPort: 3001 }),
+      expect.stringContaining('already in use'),
+    )
+    // The bind precedes the escape-guard install, so the EADDRINUSE throw fails
+    // the process instead of being contained into a consumer-less zombie.
+    expect(process.listenerCount('unhandledRejection')).toBe(baseUnhandled)
   })
 })

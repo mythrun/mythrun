@@ -280,10 +280,28 @@ describe('CampaignPage — last-session threads (myth-8x3uh)', () => {
     const block = await screen.findByTestId('campaign-last-session')
     expect(block.textContent).toContain('The middle gate was unbarred.')
     expect(block.textContent).toContain('Halix expects her price.')
+    // Label honesty (ux-run3 myth-y3jbw): the block holds FORWARD-looking
+    // content (open threads), so it reuses the recap's honest "Threads left
+    // open" label rather than claiming to be the last session itself.
+    expect(block.textContent).toContain(i18n.t('recap.threadsHeading'))
     // The recap page's numbered-index treatment, shared verbatim.
     expect(screen.getByTestId('recap-thread-marker-1').textContent).toBe('01')
     const link = screen.getByTestId('campaign-read-recap')
     expect(link.getAttribute('href')).toBe('/campaigns/c1/recap')
+  })
+
+  it('puts the whole page on ONE centred content column — header through threads (myth-kn9th/myth-y3jbw)', async () => {
+    // Run 3: the campaign header sat on the chrome margin while the working
+    // column centred, and the thread lines ran ~130ch full-bleed — two grids on
+    // one page. The route root is now the single content column (the lobby's
+    // deliberate ~720px measure), so the header, the character beat, and the
+    // threads share one left edge.
+    renderPage(() => Promise.resolve([PLAYED]), 'c1', DEFAULT_INVITE_DEPS, () =>
+      Promise.resolve(READY_RECAP),
+    )
+    const root = await screen.findByTestId('route-campaign-detail')
+    expect(root.classList.contains('max-w-[45rem]')).toBe(true)
+    expect(root.classList.contains('mx-auto')).toBe(true)
   })
 
   it('never fetches the recap for an unplayed campaign', async () => {

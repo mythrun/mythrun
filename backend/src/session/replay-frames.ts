@@ -12,7 +12,7 @@
 // deliberately opposite postures for opposite audiences.)
 
 import type { SessionMessage } from '../repo/types.js'
-import type { ServerFrame } from '../contract/session-events.js'
+import type { ActiveCondition, ServerFrame } from '../contract/session-events.js'
 import type { LedgerUpdatePayload } from './tiers/types.js'
 import { DEPARTED_AUTHOR_NAME } from './attribution.js'
 
@@ -336,10 +336,31 @@ function payloadToLedgerFrame(
     ...strField('featureName', payload.featureName),
     ...numField('usesRemaining', payload.usesRemaining),
     ...strField('condition', payload.condition),
+    ...activeConditionsField(payload.activeConditions),
     ...(Array.isArray(dice) && dice.every((d): d is number => typeof d === 'number')
       ? { diceRolled: dice }
       : {}),
   }
+}
+
+/** myth-hlydp spread-helper: the persisted `activeConditions` array, kept only
+ *  when EVERY entry is well-shaped. Same posture as the other optional value
+ *  fields — an ill-typed one degrades to absent rather than dropping the whole
+ *  frame (the always-present `summary` still narrates the change). Absent and
+ *  empty are distinct on the wire: absent means "this tool cannot touch
+ *  conditions", empty means "this character has none". */
+function activeConditionsField(
+  v: unknown,
+): Record<string, readonly ActiveCondition[]> {
+  if (!Array.isArray(v)) return {}
+  const parsed: ActiveCondition[] = []
+  for (const raw of v) {
+    const entry = asRecord(raw)
+    if (entry === null || typeof entry.condition !== 'string') return {}
+    if (entry.level !== null && typeof entry.level !== 'number') return {}
+    parsed.push({ condition: entry.condition, level: entry.level })
+  }
+  return { activeConditions: parsed }
 }
 
 /** Spread-helper: `{ [k]: v }` when `v` is a number, else `{}` (field absent).

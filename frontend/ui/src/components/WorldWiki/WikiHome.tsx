@@ -1,7 +1,8 @@
 import { useLayoutEffect, useRef } from 'react'
 import type { RefObject } from 'react'
-import type { WikiEntity, WikiIntroduction, WikiViewModel, WorldWikiProps } from '@mythrun/client-core/contract'
+import type { WikiEntity, WikiIntroduction, WikiPresence, WikiViewModel, WorldWikiProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
+import { TYPE_ROLE_CLASS } from '../../lib/typography.ts'
 import { Text } from '../Text/Text.tsx'
 import { Heading } from '../Heading/Heading.tsx'
 import { Divider } from '../Divider/Divider.tsx'
@@ -12,6 +13,7 @@ import { WikiScrollFrame } from './WikiScrollFrame.tsx'
 import { RelatedFooter } from './RelatedFooter.tsx'
 import { filterWikiModel } from './filter-model.ts'
 import { resolveKindLabel } from './kind-label.ts'
+import { splitByPresence } from './presence-split.ts'
 import { smartQuotes } from './smart-quotes.ts'
 
 // WikiHome (MYT-89 D4; intro-as-home myth-b9bap; MYT-100 tabbed IA) — the wiki's
@@ -61,6 +63,18 @@ const NESTED_LIST_CLASS = 'pl-[var(--space-4)]'
 // The mono small-caps section-label idiom (shared vocabulary with WikiPage's
 // kind tag and RelatedFooter's section label) for the INDEX line.
 const INDEX_LABEL_CLASS = 'font-ui text-[0.65rem] uppercase tracking-wide text-ink-tertiary'
+// The presence sub-label (ux-run3 myth-ry14g): the same small-caps idiom one
+// level in — inset to the rows' own gutter so the label reads as the block's
+// head, with a little air above it. Prose register: a label, never a chip.
+const SUB_LABEL_CLASS = cn(INDEX_LABEL_CLASS, 'px-[var(--space-3)] pt-[var(--space-2)]')
+// The row's one-line gloss (ux-run3 myth-ry14g): the quiet meta register on the
+// rows' own gutter, single-line with an ellipsis — a long prose kernel must
+// narrow the index, never widen or lengthen it.
+const HANDLE_CLASS = cn(
+  TYPE_ROLE_CLASS.meta,
+  'px-[var(--space-3)] pb-[var(--space-2)]',
+  'overflow-hidden text-ellipsis whitespace-nowrap',
+)
 
 interface EntityNodeProps {
   entity: WikiEntity
@@ -68,11 +82,22 @@ interface EntityNodeProps {
   onOpen: (entityId: string) => void
 }
 
-/** One browse row: the entity button (opens its page) and a nested <ul> of
- *  child entities (recursing) indented under it. */
+/** One browse row: the entity button (opens its page), its quiet one-line HANDLE
+ *  beneath (ux-run3 myth-ry14g — the line that turns a bare name into a
+ *  reference), and a nested <ul> of child entities (recursing) indented under
+ *  it. The handle is model DATA (the kernel's first sentence, else the first
+ *  known fact), truncated to one line so a long kernel never turns the index
+ *  into a wall; an entity without one keeps the bare name, unchanged.
+ *
+ *  The handle sits OUTSIDE the button deliberately: a button flattens its
+ *  content into ONE accessible name, so a handle inside would make every row
+ *  announce as "Vellin Ashar" plus a whole sentence. Outside, the row keeps its
+ *  clean name AND a screen reader still reads the gloss on the very next line —
+ *  a printed index's entry-then-gloss, in the same order for everyone. */
 function EntityNode({ entity, selectedId, onOpen }: EntityNodeProps): React.JSX.Element {
   const selected = entity.id === selectedId
   const children = entity.children ?? []
+  const handle = entity.handle
   return (
     <li>
       <button
@@ -82,12 +107,19 @@ function EntityNode({ entity, selectedId, onOpen }: EntityNodeProps): React.JSX.
         }}
         aria-current={selected ? 'true' : undefined}
         data-selected={selected ? 'true' : undefined}
-        className={cn(ITEM_CLASS, selected && 'bg-surface-active')}
+        // A handle follows: drop the row's bottom padding so the name and its
+        // gloss read as ONE entry, not two floating lines.
+        className={cn(ITEM_CLASS, handle !== undefined && 'pb-0', selected && 'bg-surface-active')}
       >
         <Text role="prose-body" truncate>
           {entity.name}
         </Text>
       </button>
+      {handle !== undefined && (
+        <p className={HANDLE_CLASS} data-testid="wiki-row-handle">
+          {handle}
+        </p>
+      )}
       {children.length > 0 && (
         <ul className={NESTED_LIST_CLASS}>
           {children.map((child) => (
@@ -99,6 +131,23 @@ function EntityNode({ entity, selectedId, onOpen }: EntityNodeProps): React.JSX.
   )
 }
 
+interface EntityListProps {
+  entities: readonly WikiEntity[]
+  selectedId: string | undefined
+  onOpen: (entityId: string) => void
+}
+
+/** One <ul> of browse rows (a whole group, or one half of a presence split). */
+function EntityList({ entities, selectedId, onOpen }: EntityListProps): React.JSX.Element {
+  return (
+    <ul className="min-w-0">
+      {entities.map((entity) => (
+        <EntityNode key={entity.id} entity={entity} selectedId={selectedId} onOpen={onOpen} />
+      ))}
+    </ul>
+  )
+}
+
 interface BrowseGroupsProps {
   model: WikiViewModel
   query: string
@@ -106,11 +155,18 @@ interface BrowseGroupsProps {
   onOpen: (entityId: string) => void
   groupLabels?: WorldWikiProps['groupLabels']
   emptyLabel: string
+  presence?: WikiPresence
 }
 
 /** The browse-by-kind groups, query-filtered — the body of the index view. The
  *  glossary is NOT here anymore (it's its own view); the empty note shows when no
- *  entity survives the filter. */
+ *  entity survives the filter.
+ *
+ *  ux-run3 myth-ry14g: with a `presence` set, each group leads with the entities
+ *  the live session has already named, under a quiet mono sub-label, and files
+ *  the rest below its own. Splitting only when BOTH halves are non-empty keeps a
+ *  lonely heading off a group where the split says nothing (and keeps the reveal
+ *  — which passes no presence at all — byte-identical to before). */
 function BrowseGroups({
   model,
   query,
@@ -118,8 +174,10 @@ function BrowseGroups({
   onOpen,
   groupLabels,
   emptyLabel,
+  presence,
 }: BrowseGroupsProps): React.JSX.Element {
   const filtered = filterWikiModel(model, query)
+  const presentIds = new Set(presence?.ids ?? [])
   if (filtered.groups.length === 0) {
     return (
       <Text role="prose-body" as="p">
@@ -129,19 +187,29 @@ function BrowseGroups({
   }
   return (
     <>
-      {filtered.groups.map((group, index) => (
-        <section key={group.kind}>
-          {index > 0 && <Divider tone="border" />}
-          <Heading level={2} role="title">
-            {resolveKindLabel(group.kind, groupLabels)}
-          </Heading>
-          <ul className="min-w-0">
-            {group.entities.map((entity) => (
-              <EntityNode key={entity.id} entity={entity} selectedId={selectedId} onOpen={onOpen} />
-            ))}
-          </ul>
-        </section>
-      ))}
+      {filtered.groups.map((group, index) => {
+        const { present, rest } = splitByPresence(group.entities, presentIds)
+        // A split only earns its two headings when BOTH halves have entries.
+        const split = present.length > 0 && rest.length > 0 ? presence : undefined
+        return (
+          <section key={group.kind}>
+            {index > 0 && <Divider tone="border" />}
+            <Heading level={2} role="title">
+              {resolveKindLabel(group.kind, groupLabels)}
+            </Heading>
+            {split !== undefined ? (
+              <>
+                <p className={SUB_LABEL_CLASS}>{split.presentLabel}</p>
+                <EntityList entities={present} selectedId={selectedId} onOpen={onOpen} />
+                <p className={SUB_LABEL_CLASS}>{split.elsewhereLabel}</p>
+                <EntityList entities={rest} selectedId={selectedId} onOpen={onOpen} />
+              </>
+            ) : (
+              <EntityList entities={group.entities} selectedId={selectedId} onOpen={onOpen} />
+            )}
+          </section>
+        )
+      })}
     </>
   )
 }
@@ -271,6 +339,8 @@ interface IndexViewProps {
   /** The active creation step's topic (ux-run2 myth-ehcf4) — surfaces the
    *  step-relevant strip at the top of the view. Absent/empty → no strip. */
   stepContext?: string
+  /** The browse groups' presence split (ux-run3 myth-ry14g). */
+  presence?: WikiPresence
 }
 
 /** The INDEX view: the step-relevant strip (when a `stepContext` is set and the
@@ -292,6 +362,7 @@ function IndexView({
   indexLabel,
   hasSwitch,
   stepContext,
+  presence,
 }: IndexViewProps): React.JSX.Element {
   const introduction = model.introduction
   // The step strip stands down while the reader is actively searching — the
@@ -316,6 +387,7 @@ function IndexView({
         onOpen={onOpen}
         emptyLabel={emptyLabel}
         {...(groupLabels !== undefined ? { groupLabels } : {})}
+        {...(presence !== undefined ? { presence } : {})}
       />
     </>
   )
@@ -375,6 +447,10 @@ export interface WikiHomeProps {
   /** The active creation step's topic (ux-run2 myth-ehcf4) — a short display
    *  string that is ALSO the match needle for the step-relevant strip. */
   stepContext?: string
+  /** The index's presence split (ux-run3 myth-ry14g) — the live session's named
+   *  entities lead each group under a quiet sub-label. Absent ⇒ the plain
+   *  alphabetized index (the reveal). */
+  presence?: WikiPresence
   /** The retained scroll offset (px) to seat the reader at on mount — the
    *  shell's home scroll memory. */
   scroll?: number
@@ -399,6 +475,7 @@ export function WikiHome({
   indexLabel,
   glossaryLabel,
   stepContext,
+  presence,
   scroll = 0,
   scrollRef,
 }: WikiHomeProps): React.JSX.Element {
@@ -439,7 +516,9 @@ export function WikiHome({
           <WikiViewSwitch value={activeView} onChange={onViewChange} indexLabel={indexLabel} glossaryLabel={glossaryLabel} />
         </div>
       )}
-      <WikiScrollFrame scrollRef={containerRef} contentClassName="pb-[var(--space-4)]">
+      {/* No bottom-padding class here: the frame's own one-line floor (ux-run3)
+          owns the bottom inset. */}
+      <WikiScrollFrame scrollRef={containerRef}>
         {activeView === 'glossary' ? (
           <WikiGlossary glossary={model.glossary} />
         ) : (
@@ -457,6 +536,7 @@ export function WikiHome({
             hasSwitch={hasGlossary}
             {...(stepContext !== undefined ? { stepContext } : {})}
             {...(groupLabels !== undefined ? { groupLabels } : {})}
+            {...(presence !== undefined ? { presence } : {})}
           />
         )}
       </WikiScrollFrame>

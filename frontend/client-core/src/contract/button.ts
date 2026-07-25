@@ -44,6 +44,15 @@ export interface ButtonProps extends BaseProps {
    */
   icon?: ReactNode
   /**
+   * Bleed the control's own start padding (negative inline-start margin equal
+   * to the size's horizontal padding) so its VISIBLE left edge — the glyph or
+   * label — sits flush on the content grid. For ghost controls seated on a text
+   * column (the funnel's Back affordances): the hit-area padding otherwise
+   * indents the glyph ~12-24px off the grid the headings sit on (ux-run3
+   * myth-4jbmr). Hit area is unchanged; only the seat shifts.
+   */
+  flush?: 'start'
+  /**
    * Busy state: Spinner + `aria-busy`, non-interactive, muted (no accent fill —
    * the control visibly stands down while the system works, and snaps back to
    * its full treatment when re-enabled). The label stays visible (`busyLabel`

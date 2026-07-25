@@ -129,6 +129,29 @@ describe('GhostChoiceList', () => {
     }
   })
 
+  it('renders the cost-of-path meta line when supplied (and omits it otherwise)', () => {
+    // ux-run3 myth-t6pxy: the fork doors earn their height with a real decision
+    // criterion — the quiet mono cost line at the card's foot.
+    const items: GhostChoiceItem[] = [
+      { id: 'a', title: 'Describe your character', meta: 'About a minute.', onSelect: vi.fn() },
+      { id: 'b', title: 'Build step by step', onSelect: vi.fn() },
+    ]
+    const { getByText, getByRole } = render(<GhostChoiceList items={items} columns={2} />)
+    expect(getByText('About a minute.')).toBeInTheDocument()
+    // The card without a meta renders no extra line.
+    expect(getByRole('button', { name: /Build step by step/ }).textContent).not.toContain(
+      'minute',
+    )
+  })
+
+  it('docks the meta line at the card foot (mt-auto inside a stretched text column)', () => {
+    const items: GhostChoiceItem[] = [
+      { id: 'a', title: 'Describe your character', meta: 'About a minute.', onSelect: vi.fn() },
+    ]
+    const { getByText } = render(<GhostChoiceList items={items} columns={2} />)
+    expect(getByText('About a minute.').className).toContain('mt-auto')
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(<GhostChoiceList items={fork()} />)
     expect(await axe(container)).toHaveNoViolations()

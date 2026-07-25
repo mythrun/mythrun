@@ -331,6 +331,113 @@ describe('rules-lawyer vitals (adjust_hp / update_condition / take_rest)', () =>
     expect(await hasCondition(id, 'unconscious')).toBe(false)
   })
 
+  // ===== myth-hlydp: the authoritative activeConditions set ==================
+  //
+  // The whole point of carrying the FULL post-mutation set instead of a
+  // per-frame add/remove flag: conditions move on frames whose `kind` is NOT
+  // 'condition'. These four cases are the ones a direction flag provably could
+  // not express.
+
+  it('adjust_hp to 0: activeConditions reports the HP-DERIVED unconscious (no condition frame exists)', async () => {
+    // `applyHpAndSyncUnconscious` applies the condition; the turn emits only a
+    // kind:'hp' frame. If the set didn't ride that frame, a downed character
+    // would render with no conditions at all.
+    const id = await seedCharacter({ name: 'Dropped', hitPoints: 5, maxHitPoints: 20 })
+    await applyConditionDirect(id, 'poisoned', null)
+    const res = await resolveAdjustHp(makeDeps(), {
+      character_name: 'Dropped',
+      kind: 'damage',
+      amount: 99,
+    })
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected ok')
+    expect(res.payload.hp).toBe(0)
+    // Authoritative and COMPLETE: the derived unconscious AND the pre-existing
+    // poisoned, ordered by condition name.
+    expect(res.payload.activeConditions).toEqual([
+      { condition: 'poisoned', level: null },
+      { condition: 'unconscious', level: null },
+    ])
+  })
+
+  it('adjust_hp healing above 0: activeConditions drops the lifted unconscious', async () => {
+    const id = await seedCharacter({ name: 'Roused', hitPoints: 0, maxHitPoints: 20 })
+    await applyConditionDirect(id, 'unconscious', null)
+    const res = await resolveAdjustHp(makeDeps(), {
+      character_name: 'Roused',
+      kind: 'heal',
+      amount: 6,
+    })
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected ok')
+    // Empty is a STATEMENT ("this character has none"), distinct from absent.
+    expect(res.payload.activeConditions).toEqual([])
+    expect(await hasCondition(id, 'unconscious')).toBe(false)
+  })
+
+  it('take_rest long: activeConditions reports BOTH the cleared unconscious and the decremented exhaustion', async () => {
+    // The case that kills the direction-flag design: ONE long rest moves TWO
+    // conditions per character (HP→max clears unconscious via the §5a owner;
+    // exhaustion decrements), and emits ONE kind:'rest' frame per character.
+    const id = await seedCharacter({
+      name: 'Weary',
+      level: 4,
+      hitPoints: 0,
+      maxHitPoints: 30,
+    })
+    await applyConditionDirect(id, 'unconscious', null)
+    await applyConditionDirect(id, 'exhaustion', 3)
+    await applyConditionDirect(id, 'poisoned', null) // a rest does not touch this
+
+    const res = await resolveTakeRest(makeDeps(), { type: 'long' })
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected ok')
+    const entry = res.payload.find((p) => p.characterName === 'Weary')
+    expect(entry).toBeDefined()
+    // unconscious gone, exhaustion 3 → 2 WITH its level, poisoned untouched.
+    expect(entry?.activeConditions).toEqual([
+      { condition: 'exhaustion', level: 2 },
+      { condition: 'poisoned', level: null },
+    ])
+    // The level is the reason the wire shape is {condition, level} pairs: a
+    // bare-name set could not render "Exhaustion 2" without parsing prose.
+    expect(await conditionLevel(id, 'exhaustion')).toBe(2)
+    expect(await hasCondition(id, 'unconscious')).toBe(false)
+  })
+
+  it('update_condition apply: activeConditions is the FULL post-write set, not just the one that moved', async () => {
+    const id = await seedCharacter({ name: 'Stacker', hitPoints: 20, maxHitPoints: 20 })
+    await applyConditionDirect(id, 'blinded', null)
+    const res = await resolveUpdateCondition(makeDeps(), {
+      character_name: 'Stacker',
+      condition: 'exhaustion',
+      action: 'apply',
+      level: 4,
+    })
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected ok')
+    expect(res.payload.changed).toBe(true)
+    expect(res.payload.activeConditions).toEqual([
+      { condition: 'blinded', level: null },
+      { condition: 'exhaustion', level: 4 },
+    ])
+  })
+
+  it('update_condition idempotent no-op: still reports the current set', async () => {
+    const id = await seedCharacter({ name: 'Unchanged', hitPoints: 20, maxHitPoints: 20 })
+    await applyConditionDirect(id, 'prone', null)
+    // Clearing a condition the character does not have → changed:false, no frame.
+    const res = await resolveUpdateCondition(makeDeps(), {
+      character_name: 'Unchanged',
+      condition: 'charmed',
+      action: 'clear',
+    })
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected ok')
+    expect(res.payload.changed).toBe(false)
+    expect(res.payload.activeConditions).toEqual([{ condition: 'prone', level: null }])
+  })
+
   it('adjust_hp: neither amount nor dice → fail-soft UNRESOLVED', async () => {
     await seedCharacter({ name: 'Empty' })
     const res = await resolveAdjustHp(makeDeps(), { character_name: 'Empty', kind: 'damage' })

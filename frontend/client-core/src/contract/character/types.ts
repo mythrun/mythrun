@@ -69,9 +69,16 @@ export interface AbilityTile {
   casting?: boolean
 }
 
+/** WHICH cell of the stat stripe this is, independent of what it's called
+ *  (myth-qeyqq). A consumer that needs to find one particular cell — the
+ *  in-session sheet's live-HP overlay — matches on this, so renaming a label
+ *  stays a copy change instead of silently switching behaviour off. */
+export type SheetStatKey = 'ac' | 'hp' | 'proficiency' | 'hitDie' | 'speed'
+
 /** One cell of the AC / HP / Proficiency / Hit Die / Speed stripe — a resolved
- *  label over its display value. */
+ *  label over its display value, plus the structural key naming which cell it is. */
 export interface SheetStat {
+  key: SheetStatKey
   label: string
   value: string
 }

@@ -1223,6 +1223,76 @@ describe('ws-session route (integration)', () => {
     }
   })
 
+  it('myth-hlydp: a persisted activeConditions set replays intact; a malformed one degrades to absent', async () => {
+    // The replay must reconstruct the SAME authoritative set the live frame
+    // carried, so a reconnect converges on identical client state. A malformed
+    // entry degrades the field to absent rather than dropping the whole frame —
+    // the summary still narrates the change (existing posture for optionals).
+    const repo = createRepo(pool)
+    const turnId = '01900000-0000-7000-8000-00000000a00c'
+    const conditionRow = (
+      toolCallId: string,
+      activeConditions: unknown,
+    ): { kind: 'update_condition'; content: string } => ({
+      kind: 'update_condition',
+      content: JSON.stringify({
+        toolCallId,
+        input: { characterName: sheetInput.name, condition: 'exhaustion', apply: true },
+        output: {
+          ok: true,
+          payload: {
+            characterName: sheetInput.name,
+            kind: 'condition',
+            changed: true,
+            summary: `${sheetInput.name} is exhausted.`,
+            condition: 'exhaustion',
+            activeConditions,
+          },
+        },
+      }),
+    })
+    await repo.sessionMessages.appendDmTurn({
+      sessionId,
+      turnId,
+      rows: [
+        conditionRow('tc-ac-good', [
+          { condition: 'exhaustion', level: 3 },
+          { condition: 'poisoned', level: null },
+        ]),
+        // Two distinct malformed shapes: a bad `level` type, and an entry that
+        // isn't an object at all (a bare condition name).
+        conditionRow('tc-ac-bad-level', [{ condition: 'exhaustion', level: 'three' }]),
+        conditionRow('tc-ac-bad-entry', ['exhaustion']),
+      ],
+      seqs: [1, 2, 3],
+    })
+
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      if (first?.type !== 'session_reconnect') throw new Error('expected session_reconnect')
+      expect(first.messages).toHaveLength(3)
+      // Round-trips element-for-element, level included.
+      expect(first.messages[0]).toMatchObject({
+        type: 'ledger_update',
+        seq: 1,
+        activeConditions: [
+          { condition: 'exhaustion', level: 3 },
+          { condition: 'poisoned', level: null },
+        ],
+      })
+      // Either malformation makes the whole field untrustworthy → absent, but
+      // the frame still replays.
+      expect(first.messages[1]).toMatchObject({ type: 'ledger_update', seq: 2 })
+      expect(first.messages[1]).not.toHaveProperty('activeConditions')
+      expect(first.messages[2]).toMatchObject({ type: 'ledger_update', seq: 3 })
+      expect(first.messages[2]).not.toHaveProperty('activeConditions')
+    } finally {
+      ws.terminate()
+    }
+  })
+
   it('MYT-70 §8: a corrupt ledger blob is dropped + warned (distinct from the silent ok:false skip)', async () => {
     const repo = createRepo(pool)
     const turnId = '01900000-0000-7000-8000-00000000a006'

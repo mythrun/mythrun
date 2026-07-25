@@ -18,6 +18,17 @@ import { cn } from '../../lib/cn.ts'
 // current line stays at body-quiet scale. The ledger fades by AGE via an
 // opacity ladder — decorative texture (aria-hidden), deliberately sub-AA as it
 // recedes; state never rides on it.
+//
+// STABILITY (ux-run3 myth-5ekb5): the ledger grows inside a FIXED-HEIGHT WELL
+// reserved from first paint, and the hero current line reserves two text lines
+// — so neither a settling whisper nor a wrapping one re-centers the column (the
+// mark above stays anchored). Overflow clips at the bottom, where the oldest,
+// most-faded line lives.
+//
+// MARKS (ux-run3 myth-1yxfr): each settled line leads with a quiet 1-bit
+// FILLED SQUARE (bg-current — it inherits the line's ink and age fade; square
+// per register, never a dot or checkmark), flipping the log from decoration to
+// progress without touching the prose. The live line carries no mark.
 
 type WhisperSize = 'hero' | 'sub'
 
@@ -37,15 +48,29 @@ const WRAP_CLASS = 'flex min-w-0 flex-col items-center gap-[var(--space-2)] text
 
 const CURRENT_CLASS: Record<WhisperSize, string> = {
   // The only content on the screen — a headline's job at a whisper's volume.
-  hero: 'font-body text-xl text-ink-secondary leading-[1.4] max-w-[28rem]',
+  // min-h reserves TWO lines (a one-line whisper centers in the slot), so a
+  // wrapping line never shifts the mark above (myth-5ekb5).
+  hero: 'flex min-h-[3.5rem] items-center justify-center font-body text-xl text-ink-secondary leading-[1.4] max-w-[28rem]',
   sub: 'font-body text-sm text-ink-secondary leading-[1.4] max-w-[24rem]',
+}
+
+// The reserved well (myth-5ekb5): height fixed at first paint — four settled
+// lines plus gaps — with overflow clipped at the bottom (the oldest, most-faded
+// line). Present even while empty, so the first settle displaces nothing.
+const WELL_CLASS: Record<WhisperSize, string> = {
+  hero: 'h-[5.75rem] w-full overflow-hidden',
+  sub: 'h-[5rem] w-full overflow-hidden',
 }
 
 const LEDGER_CLASS = 'flex list-none flex-col items-center gap-[var(--space-1)] p-0'
 const LEDGER_LINE_CLASS: Record<WhisperSize, string> = {
-  hero: 'font-body text-sm text-ink-tertiary leading-[1.4] max-w-[28rem]',
-  sub: 'font-body text-xs text-ink-tertiary leading-[1.4] max-w-[24rem]',
+  hero: 'flex items-baseline justify-center gap-[var(--space-2)] font-body text-sm text-ink-tertiary leading-[1.4] max-w-[28rem]',
+  sub: 'flex items-baseline justify-center gap-[var(--space-2)] font-body text-xs text-ink-tertiary leading-[1.4] max-w-[24rem]',
 }
+// The settled line's 1-bit completion mark (myth-1yxfr): a filled square in the
+// line's own ink (bg-current rides the li's color + age opacity). Square, never
+// a dot — the paper register has no circles.
+const MARK_CLASS = 'size-[5px] shrink-0 self-center rounded-none bg-current'
 // The age fade — index 0 is the most recently settled line. Decorative
 // (aria-hidden) texture; the terminal opacity keeps the oldest line a ghost.
 const AGE_OPACITY = ['opacity-80', 'opacity-60', 'opacity-40', 'opacity-25'] as const
@@ -64,25 +89,30 @@ export const WhisperLedger = forwardRef<HTMLDivElement, WhisperLedgerProps>(
             {current}
           </p>
         )}
-        {history.length > 0 && (
-          <ul data-testid="whisper-ledger-history" className={LEDGER_CLASS}>
-            {history.map((line, i) => (
-              <li
-                // Position joins the key: a line can legitimately recur after a
-                // reshuffle, so text alone cannot key; the ledger re-stacks
-                // wholesale on each advance anyway.
-                key={`${String(i)}-${line}`}
-                data-testid="whisper-ledger-line"
-                className={cn(
-                  LEDGER_LINE_CLASS[size],
-                  AGE_OPACITY[Math.min(i, AGE_OPACITY.length - 1)],
-                )}
-              >
-                {line}
-              </li>
-            ))}
-          </ul>
-        )}
+        {/* The fixed-height well the ledger grows into — reserved from first
+            paint so a settling line never re-centers the column (myth-5ekb5). */}
+        <div data-testid="whisper-ledger-well" className={WELL_CLASS[size]}>
+          {history.length > 0 && (
+            <ul data-testid="whisper-ledger-history" className={LEDGER_CLASS}>
+              {history.map((line, i) => (
+                <li
+                  // Position joins the key: a line can legitimately recur after a
+                  // reshuffle, so text alone cannot key; the ledger re-stacks
+                  // wholesale on each advance anyway.
+                  key={`${String(i)}-${line}`}
+                  data-testid="whisper-ledger-line"
+                  className={cn(
+                    LEDGER_LINE_CLASS[size],
+                    AGE_OPACITY[Math.min(i, AGE_OPACITY.length - 1)],
+                  )}
+                >
+                  <span aria-hidden="true" data-testid="whisper-ledger-mark" className={MARK_CLASS} />
+                  {line}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     )
   },

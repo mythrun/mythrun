@@ -197,8 +197,27 @@ resource "aws_secretsmanager_secret_version" "redis_auth" {
   }
 }
 
+locals {
+  redis_replication_group_id = "mythrun-redis"
+
+  # ElastiCache names the members of a non-cluster-mode replication group
+  # "<group-id>-001", "-002", … in creation order. This list is DERIVED from
+  # configured values rather than read back from the resource's computed
+  # `member_clusters` attribute on purpose: alarm resources fan out over it with
+  # for_each, and for_each keys must be known at plan time. Reading the computed
+  # attribute would make a fresh-account `terraform plan` fail outright with
+  # "the for_each value depends on resource attributes that cannot be determined
+  # until apply". The check block below asserts the derived list against the real
+  # one, so if AWS ever changes that naming we hear about it instead of quietly
+  # alarming on a metric that does not exist.
+  redis_member_cluster_ids = [
+    for i in range(1, var.redis_num_cache_clusters + 1) :
+    format("%s-%03d", local.redis_replication_group_id, i)
+  ]
+}
+
 resource "aws_elasticache_replication_group" "main" {
-  replication_group_id = "mythrun-redis"
+  replication_group_id = local.redis_replication_group_id
   description          = "Mythrun shared Redis (staging + prod)"
 
   engine         = "redis"
@@ -206,7 +225,7 @@ resource "aws_elasticache_replication_group" "main" {
   node_type      = var.redis_node_type
   port           = 6379
 
-  num_cache_clusters         = 1
+  num_cache_clusters         = var.redis_num_cache_clusters
   automatic_failover_enabled = false
 
   at_rest_encryption_enabled = true
@@ -229,5 +248,22 @@ resource "aws_elasticache_replication_group" "main" {
   lifecycle {
     prevent_destroy = true
     ignore_changes  = [auth_token]
+  }
+}
+
+# Guards the derived member-cluster naming in local.redis_member_cluster_ids.
+# The Redis memory alarms (infra/environments/shared/alarms.tf) key their
+# CacheClusterId dimension off that list; if the derivation ever stops matching
+# reality, the alarms would sit in INSUFFICIENT_DATA forever and nobody would
+# notice. A check block surfaces the divergence as a plan/apply warning instead.
+# Skipped automatically while member_clusters is still unknown (first create).
+check "redis_member_cluster_naming" {
+  assert {
+    condition = setunion(
+      aws_elasticache_replication_group.main.member_clusters,
+      toset(local.redis_member_cluster_ids),
+    ) == aws_elasticache_replication_group.main.member_clusters
+
+    error_message = "Derived Redis member-cluster IDs (${join(", ", local.redis_member_cluster_ids)}) are not a subset of the real member_clusters. The CacheClusterId dimension on the Redis memory alarms is wrong and those alarms are watching nothing — fix local.redis_member_cluster_ids in infra/modules/data/main.tf."
   }
 }

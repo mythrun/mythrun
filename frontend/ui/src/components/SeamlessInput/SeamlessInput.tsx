@@ -84,17 +84,38 @@ const SINGLE_LINE_CLASS = 'py-[var(--space-2)] text-ellipsis'
 
 // Multiline auto-grow: `field-sizing-content` (Tailwind v4 / native) sizes the
 // textarea to its content so long world-creation prose grows the field instead
-// of scrolling — up to a CAP of ~8 visible lines (ux-run2 myth-x9ugl: unbounded
-// growth walked the CTA off the fold), past which the field scrolls internally
-// (`overflow-y-auto` — the scrollbar only appears once the cap is hit).
-// `resize-none` keeps the clean ghost surface (no resize handle). A
-// prose-inviting FLOOR (`min-h` of ~4 lines + the field's own vertical padding,
+// of scrolling — up to a cap of ~14 visible lines clamped at 55dvh (ux-run3
+// myth-en2jj raised the old 8-line cap: the field grows generously with a long
+// concept, to at most ~55% of the viewport), past which the field scrolls
+// internally (`overflow-y-auto`). `resize-none` keeps the clean ghost surface
+// (no resize handle). A prose-inviting FLOOR (`min-h` of ~4 lines + padding,
 // tracked in `1lh`/token units so it follows the type scale) keeps an empty
 // concept field from collapsing to a single-line box — the box should look like
 // it wants a paragraph, not a search bar (ux-run1 0xao0 / screen 009).
+//
+// The OVERFLOW GUARD (ux-run3 myth-en2jj — the critic watched the field
+// horizontally guillotine the player's own last line under the bottom rule):
+//  1. bottom padding of one full line-height (`pb-[1lh]`), so at the browser's
+//     caret-follow scroll the last line sits a full line above the edge;
+//  2. an alpha-carrier mask (`black` paints nothing — a mask reads only alpha)
+//     fading the bottom 1lh, so a mid-scroll line dissolves instead of being
+//     sliced mid-glyph;
+//  3. the border/ground/focus chrome moves to a SHELL wrapper — a mask clips
+//     everything the element paints, border included, and the field's bottom
+//     rule must hold. The shell shows the focus stroke via `:has()`.
 const MULTILINE_CLASS = cn(
-  'field-sizing-content resize-none overflow-y-auto py-[var(--space-3)]',
-  'min-h-[calc(4*1lh+2*var(--space-3))] max-h-[calc(8*1lh+2*var(--space-3))]',
+  'field-sizing-content resize-none overflow-y-auto pt-[var(--space-3)] pb-[1lh]',
+  'min-h-[calc(4*1lh+var(--space-3)+1lh)] max-h-[min(calc(14*1lh+var(--space-3)+1lh),55dvh)]',
+  'border-0 bg-transparent focus-visible:outline-none',
+  '[mask-image:linear-gradient(to_bottom,black_calc(100%-1lh),transparent)]',
+)
+// The multiline shell: the same defined-paper chrome the flat field wears, with
+// the one-contiguous-accent-stroke focus (ux-run2 myth-1pzjw) driven by the
+// inner textarea's focus state.
+const MULTILINE_SHELL_CLASS = cn(
+  'rounded-none border border-border-strong bg-surface',
+  'has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-0',
+  'has-[textarea:focus-visible]:outline-accent-fg has-[textarea:focus-visible]:border-accent-fg',
 )
 
 // `field-sizing: content` is the CSS path (Chrome/Safari). Firefox doesn't support
@@ -147,6 +168,7 @@ export const SeamlessInput = forwardRef<SeamlessInputElement, SeamlessInputProps
       describedBy,
       disabled = false,
       required = false,
+      focusOnMount = false,
       ...rest
     },
     ref,
@@ -189,7 +211,10 @@ export const SeamlessInput = forwardRef<SeamlessInputElement, SeamlessInputProps
     }, [multiline, value, defaultValue, resizeToContent])
 
     // Shared native attributes — the controlled/uncontrolled value shape, the
-    // a11y relationships, and the form wiring, identical across both arms.
+    // a11y relationships, and the form wiring, identical across both arms. The
+    // contract's platform-neutral focusOnMount maps to native autoFocus here
+    // (a spread, not a literal JSX attribute — the jsx-a11y autofocus lint
+    // keeps guarding accidental uses; this is the deliberate DS opt-in).
     const shared = {
       id: fieldId,
       value,
@@ -200,6 +225,7 @@ export const SeamlessInput = forwardRef<SeamlessInputElement, SeamlessInputProps
       'aria-describedby': describedBy,
       disabled,
       required,
+      ...(focusOnMount && { autoFocus: true }),
     }
 
     return (
@@ -208,12 +234,16 @@ export const SeamlessInput = forwardRef<SeamlessInputElement, SeamlessInputProps
           {label}
         </label>
         {multiline ? (
-          <textarea
-            ref={setTextareaRefs(innerRef, ref as ForwardedRef<HTMLTextAreaElement>)}
-            {...shared}
-            className={cn(FIELD_CLASS, MULTILINE_CLASS)}
-            {...rest}
-          />
+          // The shell carries the border/ground/focus chrome the fade mask
+          // would otherwise clip off the field (see MULTILINE_CLASS rationale).
+          <div data-testid="seamless-fade-shell" className={MULTILINE_SHELL_CLASS}>
+            <textarea
+              ref={setTextareaRefs(innerRef, ref as ForwardedRef<HTMLTextAreaElement>)}
+              {...shared}
+              className={cn(FIELD_CLASS, MULTILINE_CLASS)}
+              {...rest}
+            />
+          </div>
         ) : (
           <input
             ref={ref as Ref<HTMLInputElement>}

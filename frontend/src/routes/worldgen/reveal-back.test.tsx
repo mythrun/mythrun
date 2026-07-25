@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { render, screen, cleanup, act, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, cleanup, act, waitFor, fireEvent, within } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
@@ -168,6 +168,44 @@ describe('WorldReveal — mobile Back precedence (close-drawer → leave-route)'
     })
     expect(screen.queryByTestId('prev-page')).toBeNull()
     expect(screen.getByTestId('reveal-stage')).toBeDefined()
+  })
+
+  // myth-g7kg6 — the FULL precedence: a reader three pages deep into the wiki
+  // expects Back to walk back OUT of the wiki before the sheet disappears from
+  // under them. Page-back first, then close-drawer, then leave-route.
+  it('Back POPS the wiki PAGE before closing the drawer, then leaves the route', async () => {
+    mockNarrow()
+    const { router } = renderMobileReveal()
+    // A graph tap opens the drawer ONTO that entity's page.
+    fireEvent.click(screen.getByRole('button', { name: 'Ashfen Reach' }))
+    const sheet = await screen.findByTestId('reveal-drawer')
+    await waitFor(() => {
+      expect(sheet.getAttribute('data-state')).toBe('open')
+    })
+    const backLabel = i18n.t('worldReveal.wikiBack')
+    // The page's own back affordance is the marker for "a page is in view".
+    await waitFor(() => {
+      expect(within(sheet).getByRole('button', { name: backLabel })).toBeDefined()
+    })
+
+    // Back #1 — pops the wiki page. The drawer is STILL OPEN, on wiki home.
+    await back(router)
+    await waitFor(() => {
+      expect(within(sheet).queryByRole('button', { name: backLabel })).toBeNull()
+    })
+    expect(sheet.getAttribute('data-state')).toBe('open')
+    expect(screen.queryByTestId('prev-page')).toBeNull()
+
+    // Back #2 — nothing left in the wiki stack, so the drawer closes.
+    await back(router)
+    await waitFor(() => {
+      expect(sheet.getAttribute('data-state')).toBe('closed')
+    })
+    expect(screen.queryByTestId('prev-page')).toBeNull()
+
+    // Back #3 — leaves the route.
+    await back(router)
+    expect(await screen.findByTestId('prev-page')).toBeDefined()
   })
 
   it('Back LEAVES the route when the drawer is already closed', async () => {

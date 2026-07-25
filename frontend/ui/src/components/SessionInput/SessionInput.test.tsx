@@ -225,6 +225,43 @@ describe('SessionInput — busy gating (myth-dd63v: no silent send-swallow)', ()
   })
 })
 
+describe('SessionInput — the gated visual state (myth-lkm09)', () => {
+  const BUSY = 'The DM is writing…'
+
+  it('busy drops the FIELD to the subdued mute (quiet edge on the page ground), and back', () => {
+    const { getByRole, rerender } = render(<ControlledSessionInput busy busyLabel={BUSY} />)
+    expect(getByRole('textbox').className).toContain('bg-bg')
+    rerender(<ControlledSessionInput busy={false} busyLabel={BUSY} />)
+    expect(getByRole('textbox').className).not.toContain('bg-bg')
+  })
+
+  it('busy blanks the VISIBLE placeholder (the field must not ask "what next" while gated) but keeps the SR name', () => {
+    const { getByRole } = render(<ControlledSessionInput busy busyLabel={BUSY} />)
+    const field = getByRole('textbox')
+    expect(field).not.toHaveAttribute('placeholder')
+    // The accessible name survives the blank — it rides the SR-only label.
+    expect(getByRole('textbox', { name: LABELS.placeholder })).toBe(field)
+  })
+
+  it('terminal disabled blanks the visible placeholder too (a farewell must not solicit moves)', () => {
+    const { getByRole } = render(<ControlledSessionInput disabled />)
+    expect(getByRole('textbox')).not.toHaveAttribute('placeholder')
+  })
+
+  it('while gated Send stands down to the quiet borderless treatment; idle keeps the solid primary', () => {
+    const { getByRole, rerender } = render(<ControlledSessionInput busy busyLabel={BUSY} />)
+    expect(getByRole('button', { name: LABELS.sendLabel }).className).toContain('bg-transparent')
+    rerender(<ControlledSessionInput busy={false} busyLabel={BUSY} />)
+    expect(getByRole('button', { name: LABELS.sendLabel }).className).toContain('bg-accent')
+  })
+
+  it('the summon hint never resurfaces the placeholder while gated', () => {
+    const { getByRole } = render(<ControlledSessionInput busy busyLabel={BUSY} summonHint={SUMMON_HINT} />)
+    fireEvent.mouseEnter(getByRole('button', { name: LABELS.summonLabel }))
+    expect(getByRole('textbox')).not.toHaveAttribute('placeholder')
+  })
+})
+
 describe('SessionInput — the @DM modality hint (myth-cimi3)', () => {
   it('hovering the @DM summon shifts the placeholder to the out-of-character hint, and back on leave', () => {
     const { getByRole } = render(<ControlledSessionInput summonHint={SUMMON_HINT} />)

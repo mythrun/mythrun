@@ -295,6 +295,79 @@ describe('TextArea — autoSize', () => {
   })
 })
 
+// scrollFade (ux-run3 myth-en2jj): the freeform writing surfaces' overflow
+// guard — 1lh bottom padding + a bottom alpha fade so the last line is never
+// guillotined mid-glyph, with the border moved to a shell wrapper (a mask
+// clips everything the element paints, border included).
+describe('TextArea — scrollFade (the freeform overflow guard)', () => {
+  it('wraps the field in a bordered shell and strips the inner border', () => {
+    const { getByRole, getByTestId } = render(<TextArea autoSize scrollFade />)
+    const shell = getByTestId('textarea-fade-shell')
+    expect(shell.className).toContain('border-border-strong')
+    expect(shell.className).toContain('bg-surface')
+    const el = getByRole('textbox')
+    expect(shell.contains(el)).toBe(true)
+    expect(el.className).toContain('border-0')
+    expect(el.className).toContain('bg-transparent')
+  })
+
+  it('pads the bottom a full line-height and fades the scroll edge', () => {
+    const { getByRole } = render(<TextArea autoSize scrollFade />)
+    const el = getByRole('textbox')
+    expect(el.className).toContain('pb-[1lh]')
+    expect(el.className).toContain('mask-image:linear-gradient')
+  })
+
+  it('bounds at rows + top pad + 1lh, capped to 55dvh', () => {
+    const { getByRole } = render(<TextArea autoSize scrollFade size="lg" minRows={6} maxRows={16} />)
+    const el = getByRole('textbox') as HTMLTextAreaElement
+    expect(el.style.minHeight).toBe('calc(6 * 1lh + var(--space-3) + 1lh)')
+    expect(el.style.maxHeight).toBe('min(calc(16 * 1lh + var(--space-3) + 1lh), 55dvh)')
+  })
+
+  it('moves the focus ring to the shell (inner ring suppressed)', () => {
+    const { getByRole, getByTestId } = render(<TextArea autoSize scrollFade />)
+    expect(getByTestId('textarea-fade-shell').className).toContain(
+      'has-[textarea:focus-visible]:outline-2',
+    )
+    expect(getByRole('textbox').className).toContain('focus-visible:outline-none')
+  })
+
+  it('renders NO shell without scrollFade (the flat field is unchanged)', () => {
+    const { queryByTestId } = render(<TextArea autoSize />)
+    expect(queryByTestId('textarea-fade-shell')).not.toBeInTheDocument()
+  })
+
+  it('is axe-clean with a bound label', async () => {
+    const { container } = render(
+      <div>
+        <label htmlFor="concept">Who are you?</label>
+        <TextArea id="concept" autoSize scrollFade minRows={6} maxRows={16} />
+      </div>,
+    )
+    expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+describe('TextArea — measure + autoFocus (the freeform writing surfaces)', () => {
+  it('measure="writing" pads the text inward to the ~70ch cap', () => {
+    // ux-run3 myth-7ceqw: the field keeps its column width; the TEXT wraps at
+    // ~70ch via symmetric inner padding with the size's pad as the floor.
+    const { getByRole } = render(<TextArea measure="writing" />)
+    expect(getByRole('textbox').className).toContain('px-[max(var(--space-4),calc((100%-70ch)/2))]')
+  })
+
+  it('omits the measure padding by default', () => {
+    const { getByRole } = render(<TextArea />)
+    expect(getByRole('textbox').className).not.toContain('70ch')
+  })
+
+  it('focusOnMount focuses the field on mount (the platform-neutral autofocus opt-in)', () => {
+    const { getByRole } = render(<TextArea focusOnMount />)
+    expect(getByRole('textbox')).toHaveFocus()
+  })
+})
+
 describe('TextArea — subdued (the gated-composer visual mute)', () => {
   it('quiets the chrome while staying fully interactive (no disabled semantics)', async () => {
     const onChange = vi.fn()

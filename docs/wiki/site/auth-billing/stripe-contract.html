@@ -25,7 +25,12 @@
       <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html">JWT middleware</a></li><li><a href="../auth-billing/onboarding.html">Onboarding & invites</a></li><li><a href="../auth-billing/access-control-ws-ticket.html">Access control & WS ticket</a></li><li><a href="../auth-billing/stripe-contract.html" class="active">Stripe contract</a></li><li><a href="../auth-billing/billing-webhook.html">Billing webhook</a></li><li><a href="../auth-billing/billing-routes.html">Billing routes</a></li><li><a href="../auth-billing/billing-metering.html">Billing metering</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Auth & Billing › Stripe contract</div>
-        <article>
+        <article><div class="wiki-drift-banner" role="alert">
+  <strong>⚠️ Source has drifted.</strong>
+  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
+  <div class="wiki-drift-paths">source: <code>backend/src/billing/lookup-keys.ts</code>, <code>backend/src/billing/stripe-client.ts</code>, <code>backend/src/billing/probe.ts</code>, <code>backend/src/billing/sku-cache.ts</code>, <code>backend/src/config/env.ts</code>, <code>backend/src/server.ts</code>, <code>backend/eslint-rules/no-stripe-price-mutations.cjs</code>, <code>backend/eslint-rules/no-stripe-subscription-price-mutation.cjs</code>, <code>eslint.config.js</code></div>
+</div>
+
 <h1>Stripe contract</h1>
 
 <p class="lead">
@@ -409,7 +414,7 @@
   <code>vi.mock</code>); they do not reach into this cache.
 </aside>
 
-<h3 id="the-boot-probe-and-its-four-error-classes">The boot probe and its four error classes</h3>
+<h3 id="the-boot-probe-and-its-error-classes">The boot probe and its error classes</h3>
 
 <p>
   <code>probe.ts</code> exports <code>probeStripeContract(stripe, logger)</code>. It runs
@@ -427,10 +432,12 @@
   the rest of the system can resolve <code>lookup_key</code> ↔ <code>price_id</code> without hitting
   Stripe at request time. The probe then performs a second contract check against the account's
   default <a href="#the-customer-portal-config-probe">Customer Portal configuration</a>
-  to verify the asymmetric upgrade-immediate / downgrade-at-renewal shape downgrades depend on.
+  to verify the asymmetric upgrade-immediate / downgrade-at-renewal shape downgrades depend on, and
+  a third against every enabled
+  <a href="#the-webhook-endpoint-api_version-probe">webhook endpoint's <code>api_version</code></a>.
 </p>
 
-<p>The probe distinguishes four failure modes by throwing different typed errors:</p>
+<p>The price-list pass distinguishes four failure modes by throwing different typed errors:</p>
 
 <ul>
   <li>
@@ -460,16 +467,25 @@
   </li>
 </ul>
 
+<p>
+  The two config passes that follow add one typed error each:
+  <code>BillingProbePortalConfigError</code> and <code>BillingProbeWebhookVersionError</code>. Both
+  mean the same thing operationally — Stripe's configuration drifted from what the code requires,
+  and the fix is in the Dashboard.
+</p>
+
 <aside class="wiki-rationale">
-  <strong>Four error classes, not one generic "probe failed"</strong> — a single error class would
-  put the operator in front of a stack trace and force them to read it to know which knob to turn.
-  The four classes encode the actual decision tree on the error type: auth → rotate the secret;
+  <strong>Distinct error classes, not one generic "probe failed"</strong> — a single error class
+  would put the operator in front of a stack trace and force them to read it to know which knob to
+  turn. The classes encode the actual decision tree on the error type: auth → rotate the secret;
   contract → fix the Dashboard; API change → write code; transient → wait, then retry. Each class
   carries a <code>bootId</code> (a UUID generated per probe invocation) so a CloudWatch query can
-  reconstruct one boot's probe events end-to-end across the four log lines the probe emits
+  reconstruct one boot's probe events end-to-end across the log lines the probe emits
   (<code>billing.probe_started</code>, <code>billing.probe_transient_retry</code>,
   <code>billing.probe_passed</code> / <code>billing.probe_failed</code> /
-  <code>billing.probe_auth_failed</code> / <code>billing.probe_transient_failed</code>).
+  <code>billing.probe_auth_failed</code> / <code>billing.probe_transient_failed</code>, plus the
+  portal and <code>billing.probe_webhook_version_*</code> events). The
+  <a href="../infra/serving.html">billing CloudWatch alarms</a> are wired to these same event names.
 </aside>
 
 <aside class="wiki-rationale">
@@ -536,6 +552,56 @@
   verifies the Portal config carries this asymmetric shape; without it, downgrades would take effect
   immediately and the user would lose tier access they'd already paid for.
 </aside>
+
+<h3 id="the-webhook-endpoint-api-version-probe">The webhook-endpoint api_version probe</h3>
+
+<p>
+  After the Portal pass, the probe runs a third check:
+  <code>stripe.webhookEndpoints.list({ limit: 100 })</code>, asserting that every endpoint with
+  <code>status: 'enabled'</code> is pinned to the same <code>api_version</code> as
+  <code>STRIPE_API_VERSION</code>. An endpoint on a different version — or one with
+  <code>api_version: null</code>, meaning it silently follows the mutable account default — throws
+  <code>BillingProbeWebhookVersionError</code> and fails the deploy. Disabled endpoints are ignored:
+  they deliver nothing, so their version cannot cost anything. The check lives in
+  <code>probe-webhook-version.ts</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why this has to be a boot check (myth-e3ary)</strong> — the
+  <a href="./billing-webhook.html">webhook dispatcher</a> fails closed when a delivered event's
+  <code>api_version</code> doesn't match the pin, because typed field access against the wrong
+  version is silent corruption. It cannot recover by re-fetching: a Stripe Event is immutable,
+  rendered once at the delivering endpoint's version, and <code>GET /v1/events/:id</code> returns
+  those exact bytes whatever <code>Stripe-Version</code> the request carries. So a drifted endpoint
+  means every delivery is acked 200 and dropped — paid customers charged and never credited,
+  silently. There is no in-band repair; the only place to catch it is against the endpoint itself,
+  before the task serves traffic.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Three cases that deliberately warn instead of failing the boot</strong> — unlike the price
+  and Portal checks, this one degrades rather than crashlooping when it simply can't see the answer,
+  because none of these is evidence of drift and each would otherwise take the service down for a
+  non-problem. An <strong>empty endpoint list</strong>: the Stripe CLI forwards without registering
+  an endpoint (the entire local dev flow), and Stripe's newer v2 event destinations don't appear in
+  the v1 list at all, so absence proves nothing —
+  <code>billing.probe_webhook_version_skipped</code>. A <strong>permission error</strong>: production
+  runs a restricted key, and if it lacks the <code>webhook_endpoints: read</code> scope the right
+  answer is to note the gate is disarmed, not to refuse to boot —
+  <code>billing.probe_webhook_version_unavailable</code>. A <strong>transient Stripe error</strong>:
+  a Stripe blip must not block a rollout on a defense-in-depth check. In all three the runtime
+  <code>stripe_webhook_api_version_mismatch</code> alarm remains the backstop.
+</aside>
+
+<p>
+  Every one of these log lines carries an explicit <code>classification</code> field so the operator
+  doesn't have to infer the failure class from a stack trace. The drift failure is
+  <code>classification: 'config'</code> — retrying will produce the same answer forever, so the
+  crashloop it causes is intentional and must not be read as a flaky dependency to wait out; it also
+  carries <code>expected_api_version</code> and a <code>remedy</code> string. The two non-fatal paths
+  are <code>'permission'</code> (remedy: grant the <code>webhook_endpoints: read</code> scope) and
+  <code>'transient'</code> (the gate re-arms on the next boot).
+</p>
 
 <h3 id="the-boot-gate-wiring">The boot-gate wiring</h3>
 
@@ -916,7 +982,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-closed-enum-and-what-it-carries">The closed enum and what it carries</a></li><li style="padding-left:12px"><a href="#the-cached-sdk-client">The cached SDK client</a></li><li style="padding-left:12px"><a href="#the-boot-probe-and-its-four-error-classes">The boot probe and its four error classes</a></li><li style="padding-left:12px"><a href="#the-sku-cache-and-its-public-projection">The SKU cache and its public projection</a></li><li style="padding-left:12px"><a href="#the-customer-portal-config-probe">The Customer Portal config probe</a></li><li style="padding-left:12px"><a href="#the-boot-gate-wiring">The boot-gate wiring</a></li><li style="padding-left:12px"><a href="#the-restricted-key-boundary">The restricted-key boundary</a></li><li style="padding-left:12px"><a href="#the-eslint-ast-tripwires">The ESLint AST tripwires</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#rotate-the-stripe-restricted-key">Rotate the Stripe restricted key</a></li><li style="padding-left:12px"><a href="#diagnose-a-failed-billing-probe">Diagnose a failed billing probe</a></li><li style="padding-left:12px"><a href="#add-a-new-tier-or-sku">Add a new tier or SKU</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#lookup-keys">Lookup keys</a></li><li style="padding-left:12px"><a href="#probe-error-classes">Probe error classes</a></li><li style="padding-left:12px"><a href="#environment-variables">Environment variables</a></li><li style="padding-left:12px"><a href="#probe-log-events">Probe log events</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-closed-enum-and-what-it-carries">The closed enum and what it carries</a></li><li style="padding-left:12px"><a href="#the-cached-sdk-client">The cached SDK client</a></li><li style="padding-left:12px"><a href="#the-boot-probe-and-its-error-classes">The boot probe and its error classes</a></li><li style="padding-left:12px"><a href="#the-sku-cache-and-its-public-projection">The SKU cache and its public projection</a></li><li style="padding-left:12px"><a href="#the-customer-portal-config-probe">The Customer Portal config probe</a></li><li style="padding-left:12px"><a href="#the-webhook-endpoint-api-version-probe">The webhook-endpoint api_version probe</a></li><li style="padding-left:12px"><a href="#the-boot-gate-wiring">The boot-gate wiring</a></li><li style="padding-left:12px"><a href="#the-restricted-key-boundary">The restricted-key boundary</a></li><li style="padding-left:12px"><a href="#the-eslint-ast-tripwires">The ESLint AST tripwires</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#rotate-the-stripe-restricted-key">Rotate the Stripe restricted key</a></li><li style="padding-left:12px"><a href="#diagnose-a-failed-billing-probe">Diagnose a failed billing probe</a></li><li style="padding-left:12px"><a href="#add-a-new-tier-or-sku">Add a new tier or SKU</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#lookup-keys">Lookup keys</a></li><li style="padding-left:12px"><a href="#probe-error-classes">Probe error classes</a></li><li style="padding-left:12px"><a href="#environment-variables">Environment variables</a></li><li style="padding-left:12px"><a href="#probe-log-events">Probe log events</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

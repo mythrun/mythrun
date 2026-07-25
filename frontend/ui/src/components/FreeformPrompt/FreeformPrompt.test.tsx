@@ -169,6 +169,56 @@ describe('FreeformPrompt', () => {
     expect(await axe(container)).toHaveNoViolations()
   })
 
+  // ux-run3 myth-7ceqw (b): the commit control is honestly gated — muted while
+  // the required field is empty, full accent once content exists.
+  it('disables the submit control when submitDisabled (and not otherwise)', () => {
+    const gated = render(<FreeformPrompt {...props({ submitDisabled: true })} />)
+    expect(gated.getByRole('button', { name: 'Continue' })).toBeDisabled()
+    gated.unmount()
+    const open = render(<FreeformPrompt {...props()} />)
+    expect(open.getByRole('button', { name: 'Continue' })).toBeEnabled()
+  })
+
+  // ux-run3 myth-g3mt6: the commit disclosure — a quiet mono line by the CTA.
+  it('renders the submit hint when given, omits it otherwise', () => {
+    const withHint = render(
+      <FreeformPrompt {...props({ submitHint: 'Building your character takes about a minute.' })} />,
+    )
+    expect(
+      withHint.getByText('Building your character takes about a minute.'),
+    ).toBeInTheDocument()
+    withHint.unmount()
+    const bare = render(<FreeformPrompt {...props()} />)
+    expect(bare.queryByTestId('freeform-submit-hint')).not.toBeInTheDocument()
+  })
+
+  // ux-run3 myth-21lpi: the disclosure rides the action row's commit cluster —
+  // beside the control it discloses, costing the composition no vertical band
+  // of its own (the grounding step has none to spare above the 720px fold).
+  it('seats the submit hint inside the commit cluster, beside the control', () => {
+    const { getByTestId, getByRole } = render(
+      <FreeformPrompt {...props({ submitHint: 'Building your character takes about a minute.' })} />,
+    )
+    expect(getByTestId('freeform-submit-hint').parentElement).toBe(
+      getByRole('button', { name: 'Continue' }).parentElement,
+    )
+  })
+
+  // ux-run3 myth-en2jj: typing is the step's one next action.
+  it('focuses the field on mount when focusOnMount is set', () => {
+    const { getByRole } = render(<FreeformPrompt {...props({ focusOnMount: true })} />)
+    expect(getByRole('textbox')).toHaveFocus()
+  })
+
+  // ux-run3 myth-en2jj / myth-7ceqw (a): the writing surface wears the freeform
+  // overflow guard and the ~70ch writing measure.
+  it('wears the scroll-fade guard and the writing measure on the field', () => {
+    const { getByRole } = render(<FreeformPrompt {...props()} />)
+    const el = getByRole('textbox')
+    expect(el.className).toContain('pb-[1lh]')
+    expect(el.className).toContain('70ch')
+  })
+
   it('forwards the ref to the container element', () => {
     const ref = createRef<HTMLDivElement>()
     render(<FreeformPrompt ref={ref} {...props()} />)

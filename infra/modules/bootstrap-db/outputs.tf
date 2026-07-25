@@ -42,12 +42,12 @@ locals {
   )
 
   _modes = {
-    verify              = ["--env", var.environment, "--verify"]
-    secret_only         = ["--env", var.environment, "--secret-only"]
-    reset_password      = ["--env", var.environment, "--reset-password"]
-    user_only           = ["--env", var.environment, "--user-only"]
-    default             = ["--env", var.environment]
-    seed_smoke_credits  = ["--env", var.environment, "--seed-smoke-credits"]
+    verify             = ["--env", var.environment, "--verify"]
+    secret_only        = ["--env", var.environment, "--secret-only"]
+    reset_password     = ["--env", var.environment, "--reset-password"]
+    user_only          = ["--env", var.environment, "--user-only"]
+    default            = ["--env", var.environment]
+    seed_smoke_credits = ["--env", var.environment, "--seed-smoke-credits"]
   }
 
   _run_task_template = "aws ecs run-task --cluster %s --task-definition %s --launch-type FARGATE --network-configuration '%s' --overrides %s"

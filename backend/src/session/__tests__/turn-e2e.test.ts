@@ -48,6 +48,7 @@ function inertCombatLedger(): LedgerOps {
   return {
     findLedgerCharacterByName: () => unsupported('findLedgerCharacterByName'),
     readPartyLedgerSnapshot: () => unsupported('readPartyLedgerSnapshot'),
+    readConditions: () => unsupported('readConditions'),
     writeHp: () => unsupported('writeHp'),
     findLedgerEvent: () => unsupported('findLedgerEvent'),
     writeLedgerEvent: () => unsupported('writeLedgerEvent'),

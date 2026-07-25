@@ -61,6 +61,31 @@ export interface TextAreaProps extends BaseProps {
   /** Auto-grow cap: rows shown before the textarea scrolls when `autoSize`. Default `8`. */
   maxRows?: number
   /**
+   * Focus the field on mount (web maps it to native `autoFocus`). For the
+   * funnel's one-question writing screens, where typing IS the player's next
+   * action (ux-run3 myth-en2jj); leave unset anywhere focus-stealing could
+   * surprise. Platform-neutral name — the deliberate, documented opt-in the
+   * jsx-a11y autofocus lint deliberately still guards against elsewhere.
+   */
+  focusOnMount?: boolean
+  /**
+   * The freeform writing surfaces' overflow guard (ux-run3 myth-en2jj): a full
+   * line-height of inner bottom padding plus a subtle alpha fade at the scroll
+   * edge, so the last line of the player's own writing is fully shown or fully
+   * hidden — never guillotined mid-glyph under the bottom rule — and the
+   * auto-grow cap is clamped to ~55dvh (grows generously with long prose,
+   * never swallows the viewport). The field's border moves to a shell wrapper
+   * (the fade must not eat the rule). Only meaningful with `autoSize`.
+   */
+  scrollFade?: boolean
+  /**
+   * Cap the WRITABLE text measure at ~70ch by padding the text inward while
+   * the field keeps its full column width for compositional weight — the
+   * freeform character surfaces otherwise wrap at ~95-100ch (ux-run3
+   * myth-7ceqw). `writing` is the one measure so far.
+   */
+  measure?: 'writing'
+  /**
    * Quiet the field's chrome — hairline muted edge on the page ground with
    * secondary ink — while it stays FULLY interactive. The visual mute for a
    * gated-but-not-disabled control (the play composer between turns): unlike

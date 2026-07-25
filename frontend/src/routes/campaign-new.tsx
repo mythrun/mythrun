@@ -2,7 +2,13 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Stack, Button, Icon } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
-import { clearGuidedDraft, type SynthesisStream } from '@mythrun/client-core'
+import {
+  clearGuidedDraft,
+  useWorldConceptDraft,
+  type SessionDraftStore,
+  type SynthesisStream,
+} from '@mythrun/client-core'
+import { createWebLocalDraftStore } from '../platform/web/character-draft-store.ts'
 import { ForkScreen } from './campaign-new/fork.tsx'
 import { FreeformScreen } from './campaign-new/freeform.tsx'
 import { GuidedScreen } from './campaign-new/guided.tsx'
@@ -51,6 +57,7 @@ function FlowTopAffordance({
       <Button
         variant="ghost"
         size="sm"
+        flush="start"
         icon={<Icon name="arrow-left" decorative />}
         onPress={current === 'fork' ? onExitHome : onBack}
         data-testid="campaign-new-back"
@@ -61,7 +68,35 @@ function FlowTopAffordance({
   )
 }
 
-export function CampaignNewRoute(): React.JSX.Element {
+/** The freeform concept, held DURABLY (myth-5fi4q): seeded from the persisted draft
+ *  and written back on every keystroke, so a reload — or a tab closed and reopened —
+ *  returns the player to the world they had already described. The guided sibling in
+ *  this same flow has kept its picks since §11; the freeform field silently threw
+ *  them away, which is the bug this closes. Lives in the CONTROLLER (not the screen)
+ *  because the screen unmounts between flow steps. */
+function useFreeformConcept(draftStore: SessionDraftStore) {
+  const draft = useWorldConceptDraft(draftStore)
+  const [concept, setConcept] = useState(draft.initial)
+  const change = (next: string): void => {
+    setConcept(next)
+    draft.update(next)
+  }
+  return { concept, change, clear: draft.clear }
+}
+
+export interface CampaignNewRouteProps {
+  /** The world-concept draft store — defaults to the real localStorage-backed web
+   *  store; tests substitute an in-memory fake to assert persistence/restore. */
+  draftStore?: SessionDraftStore
+}
+
+/** The default store, built once at module scope so a re-render never hands the
+ *  draft hook a fresh identity. */
+const DEFAULT_DRAFT_STORE: SessionDraftStore = createWebLocalDraftStore()
+
+export function CampaignNewRoute({
+  draftStore = DEFAULT_DRAFT_STORE,
+}: CampaignNewRouteProps = {}): React.JSX.Element {
   const navigate = useNavigate()
   // The back-history stack: the last entry is the current screen; `fork` is the
   // permanent root (never popped) — its top affordance exits the flow to home
@@ -71,13 +106,13 @@ export function CampaignNewRoute(): React.JSX.Element {
   // The carried payloads. `synthesis` is the live guided stream the
   // synthesizing screen renders; `previewPayload` is the completed synthesis
   // the preview screen renders + commits; `rejection` is the reason the
-  // rejection screen shows; `freeformPrefill` seeds the freeform field
-  // (default blank; the rejection screen's "edit as freeform" drops the judged
-  // concept in here).
+  // rejection screen shows; `freeform` is the freeform field's text, held HERE
+  // (and persisted) so it survives the screen's unmount between flow steps — the
+  // rejection screen's "edit as freeform" writes the judged concept into it.
   const [synthesis, setSynthesis] = useState<SynthesisStream | null>(null)
   const [previewPayload, setPreviewPayload] = useState<PreviewPayload | null>(null)
   const [rejection, setRejection] = useState<RejectionState | null>(null)
-  const [freeformPrefill, setFreeformPrefill] = useState('')
+  const freeform = useFreeformConcept(draftStore)
 
   // Stream lifecycle backstop: whenever the handle is replaced — and when the
   // route unmounts — close the PRIOR stream. Closing a terminal stream is a
@@ -107,9 +142,11 @@ export function CampaignNewRoute(): React.JSX.Element {
     }
     setHistory((h) => (h.length > 1 ? h.slice(0, -1) : h))
   }
-  // A fresh (blank) entry to freeform — clears any stale "edit as freeform" seed.
-  const goFreeformBlank = (): void => {
-    setFreeformPrefill('')
+  // Entry to freeform. It no longer blanks the field first (myth-5fi4q): whatever
+  // is there is the player's own words — either what they typed before wandering
+  // off to the guided path, or the judged concept they chose to edit — and
+  // discarding those on the way in was the same loss the reload bug caused.
+  const goFreeform = (): void => {
     go('freeform')
   }
   // The generating route (Phase C makes it phase-aware). A real campaign create —
@@ -122,6 +159,9 @@ export function CampaignNewRoute(): React.JSX.Element {
   // neutral intent; the controller owns the route.
   const toCampaign = (campaignId: string): void => {
     clearGuidedDraft()
+    // The freeform concept is dropped at the same moment and for the same reason:
+    // it has become a real world, so there is nothing left to protect.
+    freeform.clear()
     void navigate(`/campaigns/${campaignId}`)
   }
 
@@ -135,10 +175,11 @@ export function CampaignNewRoute(): React.JSX.Element {
         onExitHome={() => { void navigate('/') }}
       />
       {current === 'fork' ? (
-        <ForkScreen onFreeform={goFreeformBlank} onGuided={() => { go('guided') }} />
+        <ForkScreen onFreeform={goFreeform} onGuided={() => { go('guided') }} />
       ) : current === 'freeform' ? (
         <FreeformScreen
-          initialConcept={freeformPrefill}
+          initialConcept={freeform.concept}
+          onConceptChange={freeform.change}
           onCommitted={toCampaign}
           onGuided={() => { go('guided') }}
         />
@@ -148,7 +189,7 @@ export function CampaignNewRoute(): React.JSX.Element {
             setSynthesis(stream)
             go('synthesizing')
           }}
-          onFreeform={goFreeformBlank}
+          onFreeform={goFreeform}
         />
       ) : current === 'synthesizing' && synthesis ? (
         <SynthesizingScreen
@@ -178,7 +219,9 @@ export function CampaignNewRoute(): React.JSX.Element {
         <RejectionScreen
           rejection={rejection}
           onEditAsFreeform={(concept) => {
-            setFreeformPrefill(concept)
+            // The judged concept becomes the player's working text — persisted
+            // like anything else they'd typed, so a reload keeps it too.
+            freeform.change(concept)
             go('freeform')
           }}
           onStartOver={() => { go('guided') }}

@@ -95,7 +95,9 @@ export function WikiPage({
         <span aria-hidden="true">‹</span>
         {backLabel}
       </button>
-      <WikiScrollFrame as="article" scrollRef={articleRef} contentClassName="px-[var(--space-3)] pb-[var(--space-4)]">
+      {/* Horizontal inset only — the frame's own one-line floor (ux-run3) owns
+          the bottom padding. */}
+      <WikiScrollFrame as="article" scrollRef={articleRef} contentClassName="px-[var(--space-3)]">
         <header className="flex flex-col gap-[var(--space-1)] pb-[var(--space-4)] pt-[var(--space-2)]">
           <p className={KIND_CLASS}>{kindLabel}</p>
           <Heading level={2} role="heading">

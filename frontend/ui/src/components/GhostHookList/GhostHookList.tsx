@@ -20,8 +20,18 @@ import { cn } from '../../lib/cn.ts'
 // generates).
 const CARD_CLASS = cn(
   'group flex w-full min-w-0 items-start justify-between gap-[var(--space-4)] text-left',
+  // The card ends where its content ends (ux-run3 myth-407fa): the prose
+  // measure PLUS its furniture — NOT the full content column, which left a
+  // ~170px dead right rail owned by nothing but the corner arrow. 43rem =
+  // the 62ch measure (~33rem at text-base serif) + 2×space-5 padding + the
+  // space-4 gap + the enter cue's slot ("Open here →"). Sized so the MEASURE
+  // never binds against the card: narrowing past this would squeeze the prose
+  // below 62ch, adding lines and undoing the vertical shave below.
+  'max-w-[43rem]',
   'rounded-none border border-border-strong bg-surface cursor-pointer select-none',
-  'p-[var(--space-5)]',
+  // Vertical padding one step tighter than horizontal (myth-407fa: card 3's
+  // title must clear a 720px fold; the shave comes from chrome, not prose).
+  'px-[var(--space-5)] py-[var(--space-4)]',
   'transition-[border-color,background-color] duration-[var(--duration-fast)]',
   'hover:border-ink hover:bg-surface-hover active:bg-surface-active',
   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
@@ -36,14 +46,18 @@ const PROSE_CLASS = 'font-body text-base text-ink-secondary leading-[1.5]'
 // The trailing ember affordance — the card's "enter" cue (decorative; the title is
 // the accessible name). Docked top-right on the title's line (leading matches the
 // title's line box), nudging right on hover so the whole card reads as pressable.
-// `shrink-0` so it never squishes beside the wrapping content column.
+// `shrink-0` so it never squishes beside the wrapping content column. With an
+// `actionLabel` the cue carries a quiet verb ("Open here →" — ux-run3
+// myth-407fa: the commitment the header states reaches the point of action);
+// the verb wears the mono machine register a size below the arrow.
 const ARROW_CLASS = cn(
   'shrink-0 font-ui text-xl leading-[1.4] text-accent-fg',
   'transition-transform duration-[var(--duration-fast)] group-hover:translate-x-[2px]',
 )
+const ACTION_LABEL_CLASS = 'text-sm tracking-wide'
 
 export const GhostHookList = forwardRef<HTMLDivElement, GhostHookListProps>(
-  function GhostHookList({ items, ...rest }, ref) {
+  function GhostHookList({ items, actionLabel, ...rest }, ref) {
     return (
       <div ref={ref} className="flex flex-col gap-[var(--space-4)]" {...rest}>
         {items.map((item) => (
@@ -56,6 +70,11 @@ export const GhostHookList = forwardRef<HTMLDivElement, GhostHookListProps>(
               <span className={PROSE_CLASS}>{item.prose}</span>
             </span>
             <span aria-hidden="true" className={ARROW_CLASS}>
+              {actionLabel !== undefined && (
+                <>
+                  <span className={ACTION_LABEL_CLASS}>{actionLabel}</span>{' '}
+                </>
+              )}
               →
             </span>
           </button>

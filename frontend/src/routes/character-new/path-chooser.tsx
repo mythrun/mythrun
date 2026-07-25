@@ -21,10 +21,11 @@ import { useTranslation } from 'react-i18next'
 // quadrant. Spacers collapse on short viewports.
 //
 // PLACE + HIERARCHY (ux-run2 myth-80an1 + myth-aynpf): a quiet Back over an
-// altitude eyebrow ("Creating your character") tells the player where they are
-// and how to leave, and the page QUESTION carries the display scale — the one
-// moment on the page that earns it (the sidebar's world title is reference, not
-// a second front page).
+// altitude eyebrow ("Taking your seat") tells the player where they are and how
+// to leave, and the page QUESTION carries the display scale — the one moment on
+// the page that earns it (the sidebar's world title is reference, not a second
+// front page). The eyebrow deliberately avoids a third "character" on one
+// screen (ux-run3 myth-t6pxy — the prompt + freeform CTA already carry it).
 
 export interface PathChooserProps {
   /** Chose the freeform ("describe them in your own words") path. */
@@ -42,11 +43,14 @@ export function PathChooser({
   onBack,
 }: PathChooserProps): React.JSX.Element {
   const { t } = useTranslation()
+  // Each door carries its cost-of-path meta line (ux-run3 myth-t6pxy) — the
+  // real decision criterion between the two, seated at the card's foot.
   const choices: GhostChoiceItem[] = [
     {
       id: 'freeform',
       title: t('characterCreate.chooser.freeform.cta'),
       subtitle: t('characterCreate.chooser.freeform.body'),
+      meta: t('characterCreate.chooser.freeform.cost'),
       onSelect: onChooseFreeform,
       testId: 'chooser-freeform',
     },
@@ -54,6 +58,7 @@ export function PathChooser({
       id: 'guided',
       title: t('characterCreate.chooser.guided.cta'),
       subtitle: t('characterCreate.chooser.guided.body'),
+      meta: t('characterCreate.chooser.guided.cost'),
       onSelect: onChooseGuided,
       testId: 'chooser-guided',
     },
@@ -64,7 +69,7 @@ export function PathChooser({
       <Stack gap={5} maxWidth="wide">
         <Stack gap={2}>
           <Stack direction="row">
-            <Button variant="ghost" size="sm" data-testid="chooser-back" onPress={onBack}>
+            <Button variant="ghost" size="sm" flush="start" data-testid="chooser-back" onPress={onBack}>
               {t('back')}
             </Button>
           </Stack>

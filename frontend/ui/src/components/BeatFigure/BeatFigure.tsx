@@ -4,9 +4,12 @@ import { CELL_PX, ROWS, clamp01 } from './develop.ts'
 import { useBeatCanvas, type BeatMode } from './use-beat-canvas.ts'
 
 // BeatFigure — the loading-beat family's shared FULL-WIDTH quantized dither figure. A single
-// decorative canvas (aria-hidden; the composing beat owns the a11y live region) that either
-// FILLS as a quantized meter (`mode="fill"`, driven by a 0..1 `level`) or BREATHES as an
-// indeterminate density field (`mode="breathe"`). All motion is cells-as-units: hard binary
+// decorative canvas (aria-hidden; the composing beat owns the a11y live region) that FILLS as
+// a quantized meter (`mode="fill"`, driven by a 0..1 `level`), BREATHES as an indeterminate
+// density field (`mode="breathe"` — the no-progress ambient hold), or IDLES nearly blank
+// (`mode="idle"` — the zero-state for accreting surfaces, a faint pulse at the fill's origin
+// that is cell-wise emptier than any accretion state; ux-run3 myth-c96rf). All motion is
+// cells-as-units: hard binary
 // dither, position advancing in discrete quantized frames, texture alive only at the front
 // band — see develop.ts (pure math) + use-beat-canvas.ts (the rAF/measure/paint controller).
 //
@@ -41,7 +44,8 @@ const TONE_INK_VAR: Record<BeatTone, string> = {
 }
 
 export interface BeatFigureProps {
-  /** `fill` = a quantized progress meter; `breathe` = an indeterminate density field. */
+  /** `fill` = a quantized progress meter; `breathe` = an indeterminate density field;
+   *  `idle` = the nearly blank poised zero-state (emptier than any fill). */
   mode: BeatMode
   /** Fill mode: 0..1 target progress (clamped). Ignored in breathe mode. */
   level?: number

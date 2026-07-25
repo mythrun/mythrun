@@ -3,7 +3,7 @@ import { Suspense } from 'react'
 import type { ReactNode } from 'react'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { I18nextProvider } from 'react-i18next'
 import {
@@ -77,11 +77,14 @@ function pack(overrides: Partial<SkuListing> & Pick<SkuListing, 'lookup_key' | '
   }
 }
 
-const WAYFARER = tier({ lookup_key: 'tier_wayfarer', displayName: 'Wayfarer', price: { unit_amount_cents: 1200, currency: 'usd' } })
-const SOJOURNER = tier({ lookup_key: 'tier_sojourner', displayName: 'Sojourner', price: { unit_amount_cents: 2400, currency: 'usd' } })
-const MYTHWRIGHT = tier({ lookup_key: 'tier_mythwright', displayName: 'Mythwright', price: { unit_amount_cents: 4800, currency: 'usd' } })
-const SESSION_PACK = pack({ lookup_key: 'sku_session', displayName: 'Session', price: { unit_amount_cents: 500, currency: 'usd' } })
-const WORLD_PACK = pack({ lookup_key: 'sku_world', displayName: 'World', price: { unit_amount_cents: 800, currency: 'usd' } })
+// The real per-tier grants (backend/src/billing/lookup-keys.ts is the source of
+// truth; the frontend never hardcodes them — it renders whatever /skus serves).
+const WAYFARER = tier({ lookup_key: 'tier_wayfarer', displayName: 'Wayfarer', sessionsGranted: 4, worldsGranted: 1, price: { unit_amount_cents: 1500, currency: 'usd' } })
+const SOJOURNER = tier({ lookup_key: 'tier_sojourner', displayName: 'Sojourner', sessionsGranted: 8, worldsGranted: 2, price: { unit_amount_cents: 2500, currency: 'usd' } })
+const MYTHWRIGHT = tier({ lookup_key: 'tier_mythwright', displayName: 'Mythwright', sessionsGranted: 16, worldsGranted: 4, price: { unit_amount_cents: 4500, currency: 'usd' } })
+const SESSION_PACK = pack({ lookup_key: 'sku_session', displayName: 'Session', sessionsGranted: 1, worldsGranted: 0, price: { unit_amount_cents: 500, currency: 'usd' } })
+// The world SKU grants a world AND a session — a bought world arrives playable.
+const WORLD_PACK = pack({ lookup_key: 'sku_world', displayName: 'World', sessionsGranted: 1, worldsGranted: 1, price: { unit_amount_cents: 800, currency: 'usd' } })
 
 const ALL_SKUS: readonly SkuListing[] = [WAYFARER, SOJOURNER, MYTHWRIGHT, SESSION_PACK, WORLD_PACK]
 
@@ -183,6 +186,84 @@ describe('Sessions & Billing surface (wired)', () => {
     expect(surface).toBeDefined()
     expect(screen.getByTestId('credit-balance-session-value').textContent).toBe('120')
     expect(screen.getByTestId('credit-balance-world-gen-value').textContent).toBe('4')
+  })
+
+  // myth-9jrh9: the two counters were bare label-number pairs. Each bucket now carries
+  // its own explainer INSIDE its own tile — what one credit buys, and what zero costs.
+  it('explains each currency inside its own tile — what one credit buys and what zero means', async () => {
+    server.use(balanceOk(NO_SUB), skusOk(), historyOk())
+    renderSurface()
+    await screen.findByTestId('sessions-billing')
+
+    const sessionTile = within(screen.getByTestId('credit-balance-session'))
+    expect(sessionTile.getByText(i18n.t('billing.sessionHelp'))).toBeDefined()
+    expect(sessionTile.getByText(i18n.t('billing.sessionZeroHelp'))).toBeDefined()
+
+    const worldTile = within(screen.getByTestId('credit-balance-world-gen'))
+    expect(worldTile.getByText(i18n.t('billing.worldGenHelp'))).toBeDefined()
+    expect(worldTile.getByText(i18n.t('billing.worldGenZeroHelp'))).toBeDefined()
+  })
+
+  // The decidability fix (myth-9jrh9): the tier cards' grant ledgers are derived from
+  // the SKU payload's own sessionsGranted/worldsGranted, so the pricing UI cannot
+  // drift from Stripe. Wired end-to-end here — MSW serves the numbers, the screen
+  // renders them.
+  it('renders each tier’s per-month grants straight off the /skus payload', async () => {
+    server.use(balanceOk(NO_SUB), skusOk(), historyOk())
+    renderSurface()
+    await screen.findByTestId('sessions-billing')
+
+    const perMonth = (n: number): string => i18n.t('billing.grantPerMonth', { amount: String(n) })
+
+    const wayfarer = within(screen.getByTestId('pack-list-tier-tier_wayfarer'))
+    expect(wayfarer.getByText(perMonth(4))).toBeDefined()
+    expect(wayfarer.getByText(perMonth(1))).toBeDefined()
+
+    const mythwright = within(screen.getByTestId('pack-list-tier-tier_mythwright'))
+    expect(mythwright.getByText(perMonth(16))).toBeDefined()
+    expect(mythwright.getByText(perMonth(4))).toBeDefined()
+
+    // The same two field labels in the same order in every tier — the comparison.
+    for (const key of ['tier_wayfarer', 'tier_sojourner', 'tier_mythwright']) {
+      const labels = within(screen.getByTestId(`pack-list-tier-${key}`))
+        .getAllByTestId(/grant-label$/)
+        .map((el) => el.textContent)
+      expect(labels).toEqual([i18n.t('billing.grantSessions'), i18n.t('billing.grantWorlds')])
+    }
+  })
+
+  // The à-la-carte section is the top-up path on this screen. A pack's ledger states
+  // what ONE unit grants — the session pack shows no worlds row (a "Worlds 0" line is
+  // noise), and the world pack shows both, which is how the reader learns a bought
+  // world arrives playable.
+  it('renders the à-la-carte top-up section with each pack’s per-unit grants', async () => {
+    server.use(balanceOk(NO_SUB), skusOk(), historyOk())
+    renderSurface()
+    await screen.findByTestId('sessions-billing')
+
+    expect(screen.getByText(i18n.t('billing.alaCarteTitle'))).toBeDefined()
+    expect(screen.getByText(i18n.t('billing.alaCarteHelp'))).toBeDefined()
+
+    const sessionPack = within(screen.getByTestId('pack-list-pack-sku_session'))
+    expect(sessionPack.getAllByTestId(/grant-label$/).map((el) => el.textContent)).toEqual([
+      i18n.t('billing.grantSessions'),
+    ])
+
+    const worldPack = within(screen.getByTestId('pack-list-pack-sku_world'))
+    expect(worldPack.getAllByTestId(/grant-label$/).map((el) => el.textContent)).toEqual([
+      i18n.t('billing.grantSessions'),
+      i18n.t('billing.grantWorlds'),
+    ])
+  })
+
+  // Consumer pricing, not a formatted database decimal: $15 / month, never $15.00.
+  it('formats a whole subscription price without the developer cents', async () => {
+    server.use(balanceOk(NO_SUB), skusOk(), historyOk())
+    renderSurface()
+    await screen.findByTestId('sessions-billing')
+
+    expect(screen.getByText(i18n.t('billing.pricePerMonth', { price: money(1500, 'usd') }))).toBeDefined()
+    expect(screen.queryByText(/\$15\.00/)).toBeNull()
   })
 
   it('renders the three named tiers and applies CTA gating — a subscriber never sees subscribe', async () => {

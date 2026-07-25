@@ -192,6 +192,21 @@ export const WithIcon: Story = {
   ),
 }
 
+// flush="start" (ux-run3 myth-4jbmr): a ghost Back seated on a text column
+// bleeds its own start padding so the glyph sits flush on the content grid the
+// headings share — hit area unchanged. The hairline marks the grid edge.
+export const FlushStart: Story = {
+  name: 'Flush start (grid-seated ghost)',
+  render: () => (
+    <div className="flex flex-col gap-[var(--space-2)] border-l border-border-strong pl-0">
+      <Button variant="ghost" size="sm" flush="start" icon={<Icon name="arrow-left" decorative />}>
+        Back
+      </Button>
+      <Text role="ui-label">A heading seated on the same grid edge</Text>
+    </div>
+  ),
+}
+
 export const HoldsSizeBesideShrinkingText: Story = {
   name: 'Holds size beside shrinking text',
   render: () => (

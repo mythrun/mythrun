@@ -89,8 +89,11 @@ describe('CampaignHubBody', () => {
     expect(gridChildren[0]?.getAttribute('data-testid')).toBe('campaign-card-a')
   })
 
-  it('gives the premier (most-recent-activity) card the continue-session cue when it has a play record', () => {
+  it('gives the premier card the loud continue cue and every dormant played card a quiet resume (myth-7jc1h)', () => {
     // b was played more recently than a → hub-sort puts b in the premier slot.
+    // Run 3 (P1): the dormant played card is no longer inert — it carries the
+    // quieter "Resume →" so a returning player's invested campaigns all read as
+    // continuable, ranked by weight rather than by cta presence/absence.
     renderHub([
       makeCampaign({ id: 'a', cardPhase: 'played', sessionCount: 2, lastPlayedAt: '2026-06-01T10:00:00.000Z' }),
       makeCampaign({ id: 'b', cardPhase: 'played', sessionCount: 7, lastPlayedAt: '2026-06-20T10:00:00.000Z' }),
@@ -100,9 +103,8 @@ describe('CampaignHubBody', () => {
     expect(within(premier).getByTestId('cover-card-cta').textContent).toBe(
       i18n.t('home.card.continueSession'),
     )
-    // Only the premier slot carries the cue — never every played card.
     const other = within(grid).getByTestId('campaign-card-a')
-    expect(within(other).queryByTestId('cover-card-cta')).toBeNull()
+    expect(within(other).getByTestId('cover-card-cta').textContent).toBe(i18n.t('home.card.resume'))
   })
 
   it('shows no continue-session cue when the premier campaign has not been played', () => {

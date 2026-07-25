@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import {
   CELL_PX,
   FRONT_BAND,
+  IDLE_PULSE_MS,
   SHIMMER_MS,
   STEP_MS,
   BREATHE_MS,
@@ -9,6 +10,7 @@ import {
   frontColFor,
   litAt,
   litBreatheAt,
+  litIdleAt,
 } from './develop.ts'
 
 // The imperative Canvas controller for BeatFigure — the loading-beat family's full-width
@@ -29,10 +31,13 @@ const DPR_CAP = 3
 const STEP_JITTER_MS = 12
 
 /** Breathing repaint cadence (ms) — the density sweeps slowly, so ~30fps is smooth and calm
- *  (and cheap). */
+ *  (and cheap). The idle shimmer shares it. */
 const BREATHE_FRAME_MS = 33
 
-export type BeatMode = 'fill' | 'breathe'
+/** `idle` (ux-run3 myth-c96rf) is the nearly blank zero-state for ACCRETING surfaces — a
+ *  faint pulse at the fill's origin, cell-wise emptier than any accretion state, so the
+ *  idle→fill handoff reads as a beginning. `breathe` remains the no-progress ambient hold. */
+export type BeatMode = 'fill' | 'breathe' | 'idle'
 
 export interface BeatCanvasParams {
   /** The measured wrapper (the canvas's box); its client width drives the column count. */
@@ -112,6 +117,19 @@ function paintBreathe(ctx: CanvasRenderingContext2D, size: Sizing, rows: number,
   }
 }
 
+/** Paint the idle zero-state at normalized time `T`: the faint pulsing shimmer at the fill's
+ *  origin — the seat columns only; everything else stays paper. */
+function paintIdle(ctx: CanvasRenderingContext2D, size: Sizing, rows: number, T: number, ink: string): void {
+  const { cols, deviceCell } = size
+  ctx.clearRect(0, 0, cols * deviceCell, rows * deviceCell)
+  ctx.fillStyle = ink
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      if (litIdleAt(x, y, T)) ctx.fillRect(x * deviceCell, y * deviceCell, deviceCell, deviceCell)
+    }
+  }
+}
+
 /** The mutable driver state the rAF loop threads across frames (no React setState per frame). */
 interface FillDriver {
   front: number
@@ -182,6 +200,9 @@ export function useBeatCanvas(params: BeatCanvasParams): void {
     if (ink === '') return
     if (mode === 'breathe') {
       paintBreathe(ctx, size, rows, 0.4, ink)
+    } else if (mode === 'idle') {
+      // Frozen at the pulse crest — the legible (still nearly blank) idle frame.
+      paintIdle(ctx, size, rows, 0.5, ink)
     } else {
       const front = frontColFor(levelRef.current, size.cols)
       driverRef.current.front = front
@@ -232,7 +253,11 @@ export function useBeatCanvas(params: BeatCanvasParams): void {
     // Ensure a sizing exists before the first frame (the resize effect may not have run yet).
     sizeRef.current ??= sizeCanvas(wrap, canvas, rows)
     const d = driverRef.current
-    d.front = frontColFor(levelRef.current, sizeRef.current?.cols ?? 0)
+    // Never jump AHEAD on a (re)bind: keep the driver at (or below) the target so the fill
+    // ANIMATES in from where it stood — the idle→fill handoff advances from the empty track
+    // (a beginning), and a remount replays a quick catch-up accrete instead of snapping
+    // (ux-run3 myth-c96rf).
+    d.front = Math.min(d.front, frontColFor(levelRef.current, sizeRef.current?.cols ?? 0))
     d.queue = []
 
     let raf = 0
@@ -247,6 +272,11 @@ export function useBeatCanvas(params: BeatCanvasParams): void {
           if (now - lastBreatheAt >= BREATHE_FRAME_MS) {
             lastBreatheAt = now
             paintBreathe(ctx, size, rows, (now - start) / BREATHE_MS, ink)
+          }
+        } else if (mode === 'idle') {
+          if (now - lastBreatheAt >= BREATHE_FRAME_MS) {
+            lastBreatheAt = now
+            paintIdle(ctx, size, rows, (now - start) / IDLE_PULSE_MS, ink)
           }
         } else {
           const target = frontColFor(levelRef.current, size.cols)

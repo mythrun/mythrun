@@ -1,6 +1,6 @@
 import { forwardRef, useRef } from 'react'
-import { growthFrom, REVEAL_FORCE_PARAMS, seatFrom } from '@mythrun/client-core/worldgen'
-import type { ForceParams } from '@mythrun/client-core/worldgen'
+import { growthFrom, REVEAL_FORCE_PARAMS, seatFrom, worldgenLayout } from '@mythrun/client-core/worldgen'
+import type { ForceParams, WorldgenLayout } from '@mythrun/client-core/worldgen'
 import type { WorldGenGraphProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 import { useViewportNarrow } from '../../lib/use-viewport-narrow.ts'
@@ -83,6 +83,16 @@ function paneClass(fill: boolean): string {
   )
 }
 
+/** The SESSION LAYOUT for a worldgen run (ux-run3 myth-aftau): the pinned
+ *  constellation + the run's terrain seed, held in client-core OUTSIDE React so it
+ *  survives this component's unmount (the live map is taken down by every "Wait
+ *  quietly" toggle). `worldgenLayout` is get-or-create, so the same key always yields
+ *  the same object — safe to resolve on every render. No key (the reveal, the
+ *  stories) → render-scoped layout and an unseeded field, the pre-run3 behaviour. */
+function layoutFor(key: string | undefined): WorldgenLayout | undefined {
+  return key !== undefined ? worldgenLayout(key) : undefined
+}
+
 export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(function WorldGenGraph(
   {
     nodes,
@@ -103,11 +113,13 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
     generationA11y,
     nodeListLabel,
     legend,
+    layoutCacheKey,
     'data-testid': dataTestId,
   },
   ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const layout = layoutFor(layoutCacheKey)
   // The status card's element — its footprint becomes a sim KEEP-OUT (density
   // redesign): nodes are shoved out from under the card, so no entity name spends the
   // generation occluded (on a phone the card spans ~70% of the pane width).
@@ -134,10 +146,9 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
     forceParams: effectiveForceParams,
     densityParams,
     keepOutRef: cardRef,
+    layout,
   })
 
-  const shown = shownEntities ?? nodes.length
-  const total = totalEntities ?? 0
   // NARROW-VIEWPORT layout (MYT-89 audit v2 — the mobile full-bleed fix). On a
   // phone-class viewport (< 640px, the DS's one narrow regime) the band is
   // dropped — the pane goes EDGE-TO-EDGE (this reaches every consumer, the
@@ -193,12 +204,15 @@ export const WorldGenGraph = forwardRef<HTMLDivElement, WorldGenGraphProps>(func
         <div className={paneClass(fill)}>
           <WorldGenFogField
             entitiesSource={getFogEntities}
-            shownEntities={shown}
-            totalEntities={total}
+            shownEntities={shownEntities ?? nodes.length}
+            totalEntities={totalEntities ?? 0}
             reducedMotion={reducedMotion}
             growth={growth}
             seat={seat}
             camera={camera}
+            // The world's terrain (ux-run3): a layout key seeds the ground once per
+            // world — one coastline, a landmass instead of drifting weather.
+            {...(layout !== undefined ? { terrainSeed: layout.terrainSeed } : {})}
           />
           <canvas
             ref={canvasRef}

@@ -1,6 +1,6 @@
 import { forwardRef } from 'react'
 import type { CSSProperties } from 'react'
-import type { CoverCardProps } from '@mythrun/client-core/contract'
+import type { CoverCardCtaTone, CoverCardProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 import { Divider } from '../Divider/Divider.tsx'
 
@@ -26,11 +26,23 @@ const CARD =
 
 // The cta line's accent action register — mono caption, accent ink (the DS
 // action-label treatment, cf. PartyRoster/InvitePanel panel labels). State as
-// prose: a line of text, never a chip.
-const CTA_CLASS = 'font-ui text-xs font-medium uppercase tracking-wide text-accent-fg'
+// prose: a line of text, never a chip. The weight comes from the TONE tier
+// (myth-7jc1h): loud (premier continue) / quiet (ordinary action, the default) /
+// whisper (a cold start's cue that must never out-shout an invested card).
+// Weight is the whole axis — never a sub-AA opacity dim (the contrast rule).
+const CTA_CLASS = 'font-ui text-xs uppercase tracking-wide text-accent-fg'
+const CTA_TONE_CLASS: Record<CoverCardCtaTone, string> = {
+  loud: 'font-semibold',
+  quiet: 'font-medium',
+  whisper: 'font-normal',
+}
+
+// The promoted object's thin accent rule — sits directly above the cta line so
+// the promotion reads as one imprint (rule + loud action), not scattered chrome.
+const PROMOTED_RULE_CLASS = 'h-px w-full bg-accent'
 
 export const CoverCard = forwardRef<HTMLDivElement, CoverCardProps>(function CoverCard(
-  { cover, foot, cta, width, children, 'data-testid': dataTestId },
+  { cover, foot, cta, ctaTone = 'quiet', promoted = false, width, children, 'data-testid': dataTestId },
   ref,
 ) {
   const style: CSSProperties | undefined = width !== undefined ? { width } : undefined
@@ -39,7 +51,7 @@ export const CoverCard = forwardRef<HTMLDivElement, CoverCardProps>(function Cov
       ref={ref}
       {...(dataTestId !== undefined ? { 'data-testid': dataTestId } : {})}
       {...(style !== undefined ? { style } : {})}
-      className={cn(CARD, width === undefined && 'w-full')}
+      className={cn(CARD, width === undefined && 'w-full', promoted && 'border-2')}
     >
       {/* Cover header — full-bleed, holds its intrinsic height (a band CoverDither
           ≈ 40% of the 3:2 card). */}
@@ -60,12 +72,20 @@ export const CoverCard = forwardRef<HTMLDivElement, CoverCardProps>(function Cov
       <div className="flex grow flex-col justify-start gap-[var(--space-4)] p-[var(--space-3)]">
         <div className="grow">{children}</div>
         {foot !== undefined ? <div>{foot}</div> : null}
-        {/* The cta cue — the body's last line, in the accent action register. */}
+        {/* The promoted imprint's accent rule — directly above the cta line. */}
+        {promoted ? <div className={PROMOTED_RULE_CLASS} data-testid="cover-card-promoted-rule" /> : null}
+        {/* The cta ZONE — the body's last line, ALWAYS rendered (myth-7jc1h): a
+            card with no action reserves the line (aria-hidden nbsp) so the foot
+            zones hold one fixed offset across a whole grid of cards. */}
         {cta !== undefined ? (
-          <div className={CTA_CLASS} data-testid="cover-card-cta">
+          <div className={cn(CTA_CLASS, CTA_TONE_CLASS[ctaTone])} data-testid="cover-card-cta">
             {cta}
           </div>
-        ) : null}
+        ) : (
+          <div className={CTA_CLASS} aria-hidden="true">
+            {'\u00A0'}
+          </div>
+        )}
       </div>
     </div>
   )

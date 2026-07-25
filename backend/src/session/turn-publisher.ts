@@ -145,6 +145,17 @@ export function createTurnPublisher(redis: Redis, keyPrefix: string): TurnPublis
       ...(p.featureName !== undefined ? { featureName: p.featureName } : {}),
       ...(p.usesRemaining !== undefined ? { usesRemaining: p.usesRemaining } : {}),
       ...(p.condition !== undefined ? { condition: p.condition } : {}),
+      // myth-hlydp: copied element-by-element (a fresh object per entry) so the
+      // published frame never aliases the resolver's snapshot rows — same rule
+      // the combat frames below follow for their array fields.
+      ...(p.activeConditions !== undefined
+        ? {
+            activeConditions: p.activeConditions.map((a) => ({
+              condition: a.condition,
+              level: a.level,
+            })),
+          }
+        : {}),
       ...(p.diceRolled !== undefined ? { diceRolled: [...p.diceRolled] } : {}),
     })
   }

@@ -243,6 +243,53 @@ describe('createTurnPublisher', () => {
     expect(received[0]?.frame).toMatchObject({ type: 'ledger_update', kind: 'rest', restType: 'long' })
   })
 
+  it('ledgerUpdate carries activeConditions, copied per-entry so the frame never aliases the snapshot (myth-hlydp)', async () => {
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    const source = [
+      { condition: 'exhaustion', level: 2 },
+      { condition: 'poisoned', level: null },
+    ]
+    await pub.ledgerUpdate(CAMPAIGN, TURN, {
+      characterName: 'Mara',
+      kind: 'hp',
+      summary: 'Mara takes 4 damage.',
+      hp: 6,
+      maxHp: 18,
+      activeConditions: source,
+    })
+    await tick()
+
+    expect(received).toHaveLength(1)
+    expect(received[0]?.frame).toMatchObject({
+      type: 'ledger_update',
+      activeConditions: [
+        { condition: 'exhaustion', level: 2 },
+        { condition: 'poisoned', level: null },
+      ],
+    })
+    // Fresh objects, not the resolver's rows — mutating the source afterwards
+    // must not reach anything already published.
+    const frame = received[0]?.frame
+    if (frame?.type !== 'ledger_update') throw new Error('expected a ledger_update frame')
+    expect(frame.activeConditions?.[0]).not.toBe(source[0])
+  })
+
+  it('ledgerUpdate omits activeConditions entirely when the tool cannot touch conditions', async () => {
+    // Absent means "no statement"; a client holds its last known set. An empty
+    // array would wrongly assert the character has none.
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    await pub.ledgerUpdate(CAMPAIGN, TURN, {
+      characterName: 'Mara',
+      kind: 'gold',
+      summary: 'Mara spends 3 gold.',
+      gold: 12,
+    })
+    await tick()
+
+    expect(received).toHaveLength(1)
+    expect(received[0]?.frame).not.toHaveProperty('activeConditions')
+  })
+
   it('ledgerUpdate carries diceRolled when present (an hp adjust rolled dice)', async () => {
     const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
     await pub.ledgerUpdate(CAMPAIGN, TURN, {

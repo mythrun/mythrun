@@ -99,7 +99,7 @@ const rawCharacter: CharacterFull = {
 const curatedFixture: CuratedSheet = {
   name: VIEWER_CHAR,
   identityLine: 'Level 3 · Human Sorcerer · Acolyte',
-  stats: [{ label: 'HP', value: '8 / 8' }],
+  stats: [{ key: 'hp', label: 'HP', value: '8 / 8' }],
   abilities: [],
   prose: [],
   features: [],
@@ -153,7 +153,7 @@ describe('useSessionSheet — the fetch/adapt path', () => {
     const adapt = vi.fn<AdaptSheet>().mockReturnValue(curatedFixture)
 
     const { result, unmount } = renderHook(
-      () => useSessionSheet(CID, VIEWER, VIEWER_CHAR, [], fakeDeps({ fetchCharacter, adaptSheet: adapt })),
+      () => useSessionSheet(CID, VIEWER, [], fakeDeps({ fetchCharacter, adaptSheet: adapt })),
       { wrapper: makeWrapper() },
     )
 
@@ -175,7 +175,6 @@ describe('useSessionSheet — the fetch/adapt path', () => {
         useSessionSheet(
           CID,
           VIEWER,
-          VIEWER_CHAR,
           [],
           fakeDeps({ fetchRoster: () => Promise.resolve(rosterNoCharacter), fetchCharacter }),
         ),
@@ -198,7 +197,6 @@ describe('useSessionSheet — the fetch/adapt path', () => {
         useSessionSheet(
           CID,
           VIEWER,
-          VIEWER_CHAR,
           [],
           fakeDeps({ fetchRoster: () => Promise.reject(new Error('roster down')) }),
         ),
@@ -216,7 +214,7 @@ describe('useSessionSheet — the fetch/adapt path', () => {
   it('drops a late RESOLVE after unmount (no state update)', async () => {
     const d = deferred<PartyRoster>()
     const { result, unmount } = renderHook(
-      () => useSessionSheet(CID, VIEWER, VIEWER_CHAR, [], fakeDeps({ fetchRoster: () => d.promise })),
+      () => useSessionSheet(CID, VIEWER, [], fakeDeps({ fetchRoster: () => d.promise })),
       { wrapper: makeWrapper() },
     )
 
@@ -231,7 +229,7 @@ describe('useSessionSheet — the fetch/adapt path', () => {
   it('drops a late REJECT after unmount (no state update)', async () => {
     const d = deferred<PartyRoster>()
     const { result, unmount } = renderHook(
-      () => useSessionSheet(CID, VIEWER, VIEWER_CHAR, [], fakeDeps({ fetchRoster: () => d.promise })),
+      () => useSessionSheet(CID, VIEWER, [], fakeDeps({ fetchRoster: () => d.promise })),
       { wrapper: makeWrapper() },
     )
 
@@ -252,7 +250,7 @@ describe('useSessionSheet — the fetch/adapt path', () => {
     )
 
     const { result, unmount } = renderHook(
-      () => useSessionSheet(CID, VIEWER, VIEWER_CHAR, [], { adaptSheet }),
+      () => useSessionSheet(CID, VIEWER, [], { adaptSheet }),
       { wrapper: makeWrapper() },
     )
 
@@ -275,7 +273,7 @@ describe('useSessionSheet — the fetch/adapt path', () => {
       ),
     )
 
-    const { result, unmount } = renderHook(() => useSessionSheet(CID, VIEWER, VIEWER_CHAR, []), {
+    const { result, unmount } = renderHook(() => useSessionSheet(CID, VIEWER, []), {
       wrapper: makeWrapper(),
     })
 
@@ -288,35 +286,69 @@ describe('useSessionSheet — the fetch/adapt path', () => {
   })
 })
 
+// myth-3xttt: WHICH frames are the viewer's own is the hook's own call — it reads
+// the name off the fetched `CharacterFull` (the only place it exists; the roster
+// carries display names only). No caller passes a name any more, so the play route
+// no longer has to feed the resolved sheet's name back in to make the fold happen.
 describe('useSessionSheet — the live overlay', () => {
-  it("folds the viewer's own hp ledger frame into the overlay", () => {
+  it("folds the viewer's own hp ledger frame into the overlay, matching the name it fetched", async () => {
     const { result, unmount } = renderHook(
-      () => useSessionSheet(CID, VIEWER, VIEWER_CHAR, [hpFrame(VIEWER_CHAR, 5, 8)], fakeDeps()),
+      () => useSessionSheet(CID, VIEWER, [hpFrame(VIEWER_CHAR, 5, 8)], fakeDeps()),
       { wrapper: makeWrapper() },
     )
 
-    expect(result.current.overlay.hp).toBe(5)
+    await waitFor(() => {
+      expect(result.current.overlay.hp).toBe(5)
+    })
     expect(result.current.overlay.maxHp).toBe(8)
     unmount()
   })
 
-  it('ignores a ledger frame for ANOTHER character', () => {
+  it('ignores a ledger frame for ANOTHER character', async () => {
     const { result, unmount } = renderHook(
-      () => useSessionSheet(CID, VIEWER, VIEWER_CHAR, [hpFrame('Someone Else', 2, 20)], fakeDeps()),
+      () => useSessionSheet(CID, VIEWER, [hpFrame('Someone Else', 2, 20)], fakeDeps()),
       { wrapper: makeWrapper() },
     )
 
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
     expect(result.current.overlay.hp).toBeNull()
     expect(result.current.overlay.maxHp).toBeNull()
     unmount()
   })
 
-  it('starts from the empty overlay when there are no frames', () => {
+  // The name is unknown until the read lands, so the overlay is empty in that
+  // window — and so is the sheet it would overlay onto.
+  it('holds the empty overlay until the character read resolves', async () => {
+    const d = deferred<CharacterFull>()
     const { result, unmount } = renderHook(
-      () => useSessionSheet(CID, VIEWER, VIEWER_CHAR, [], fakeDeps()),
+      () =>
+        useSessionSheet(
+          CID,
+          VIEWER,
+          [hpFrame(VIEWER_CHAR, 5, 8)],
+          fakeDeps({ fetchCharacter: () => d.promise }),
+        ),
       { wrapper: makeWrapper() },
     )
 
+    expect(result.current.overlay.hp).toBeNull()
+    d.resolve(rawCharacter)
+    await waitFor(() => {
+      expect(result.current.overlay.hp).toBe(5)
+    })
+    unmount()
+  })
+
+  it('starts from the empty overlay when there are no frames', async () => {
+    const { result, unmount } = renderHook(() => useSessionSheet(CID, VIEWER, [], fakeDeps()), {
+      wrapper: makeWrapper(),
+    })
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
     expect(result.current.overlay.hp).toBeNull()
     expect(result.current.overlay.gold).toBeNull()
     expect(result.current.overlay.conditionLog).toEqual([])

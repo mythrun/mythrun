@@ -5,20 +5,20 @@ import { axe } from 'jest-axe'
 import type { CuratedSheet, CharacterOverlay } from '@mythrun/client-core/contract'
 import { SessionSheet } from './SessionSheet.tsx'
 
-// The in-session curated sheet fixture. The HP stat's label is 'HP' and its value
-// is the `${hp} / ${maxHp}` string the shipped sheet view-model (`buildStats` in
-// client-core `sheet-view-model.ts`) emits — SessionSheet consumes that exact
-// projection, so the fixture mirrors it (the reveal's own stories use looser sample
-// labels; the in-session sheet keys the live-HP override on the adapter's real 'HP').
+// The in-session curated sheet fixture, mirroring exactly what the shipped sheet
+// view-model (`buildStats` in client-core `sheet-view-model.ts`) emits: a
+// structural `key` per cell plus the `${hp} / ${maxHp}` HP value. SessionSheet
+// consumes that projection and keys its live-HP override on `key: 'hp'`
+// (myth-qeyqq) — the labels are display copy and nothing branches on them.
 const MARTIAL: CuratedSheet = {
   name: 'Kessa Vurm',
   identityLine: 'Level 3 · Human Fighter · Champion · Toll-clerk of Greenward',
   stats: [
-    { label: 'AC', value: '16' },
-    { label: 'HP', value: '28 / 28' },
-    { label: 'Proficiency', value: '+2' },
-    { label: 'Hit Die', value: 'd10' },
-    { label: 'Speed', value: '30 ft' },
+    { key: 'ac', label: 'AC', value: '16' },
+    { key: 'hp', label: 'HP', value: '28 / 28' },
+    { key: 'proficiency', label: 'Proficiency', value: '+2' },
+    { key: 'hitDie', label: 'Hit Die', value: 'd10' },
+    { key: 'speed', label: 'Speed', value: '30 ft' },
   ],
   abilities: [
     { abbrev: 'STR', score: 16, modifier: 3 },
@@ -157,6 +157,23 @@ describe('SessionSheet', () => {
     expect(within(hp).getByText('12 / 28')).toBeInTheDocument()
     // The base static HP value is gone — the live value stands in its place.
     expect(queryByText('28 / 28')).toBeNull()
+  })
+
+  // myth-qeyqq — the override follows the cell's STRUCTURAL key, not its
+  // display label. Renaming the HP label used to silently switch the live
+  // overlay off, so a player mid-combat would read stale hit points off the
+  // sheet with nothing to indicate it.
+  it('overlays live HP by the cell key, not the label copy', () => {
+    const renamed: CuratedSheet = {
+      ...MARTIAL,
+      stats: MARTIAL.stats.map((stat) => (stat.key === 'hp' ? { ...stat, label: 'Hit points' } : stat)),
+    }
+    const { getByTestId } = render(
+      <SessionSheet {...baseProps({ sheet: renamed, overlay: LIVE_OVERLAY })} />,
+    )
+    const hp = getByTestId('session-sheet-hp')
+    expect(hp).toHaveAttribute('data-live', 'true')
+    expect(within(hp).getByText('12 / 28')).toBeInTheDocument()
   })
 
   it('renders the live current HP alone when the overlay carries no maxHp', () => {

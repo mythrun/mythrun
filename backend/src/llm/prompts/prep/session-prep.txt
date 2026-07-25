@@ -101,7 +101,9 @@ Tone reminders and pacing principles for the whole table. Include these standing
 
 Depth markers signal "there's more here" WITHOUT revealing what. Two kinds. Locations and factions do not get NPC-style depth markers — their hidden weight flows through NPCs and clue markers.
 
-**NPC depth markers** — for `known` NPCs who carry `discoverable` or `secret` facts. Write a short italic paragraph after the NPC's entry that tells the Fast Thinker to play them with weight and subtext, WITHOUT stating the content:
+**NPC depth markers** — for `known` NPCs who carry `discoverable` or `secret` facts. Write a short italic paragraph after the NPC's entry that tells the Fast Thinker to play them with weight and subtext, WITHOUT stating the content.
+
+Write the marker as behaviour the Fast Thinker can play, never as an assertion that a mystery exists. "There is more to her than meets the eye" is the failure mode: it is the Fast Thinker's instruction, but it reads as a licence to nudge the players, and the Fast Thinker will render it as winking prose. Give observable conduct instead — what she does with her hands, what she lets go by, when she changes the subject.
 
 > ### Madame Voss — Tavern Owner
 > - **Look:** Fifties, iron-gray hair in a tight braid, missing her left ring finger. Sharp dark eyes.
@@ -109,7 +111,7 @@ Depth markers signal "there's more here" WITHOUT revealing what. Two kinds. Loca
 > - **Behavior:** Warm on the surface, watchful underneath. Reads the room while she pours.
 > - **Relationship:** Friendly acquaintance — gave the party a room and a few rumors.
 >
-> *There is more to Voss than meets the eye. Play her as someone with weight — a past she doesn't discuss, a sharpness that hints at a life before this tavern. Do not invent her backstory; let the subtext stand on its own. Deeper moments develop over subsequent turns — play her honestly now and don't stall for a cue.*
+> *Voss has a past she doesn't discuss. That is direction for you, not something to tell the players. Never write that she is hiding something and never gesture at a hidden depth; play it as conduct instead. She counts the room before she answers a direct question. When the talk turns to the coast she lets it go by as though she hadn't heard. Do not invent what the past is. Deeper moments develop over subsequent turns, so play her honestly now and don't stall for a cue.*
 
 **Clue markers** — for `known` locations where something `discoverable` or `secret` can be found:
 

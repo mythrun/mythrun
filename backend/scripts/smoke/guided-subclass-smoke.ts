@@ -8,9 +8,9 @@
 // Usage (from backend/): tsx --env-file=.env.development scripts/smoke/guided-subclass-smoke.ts [worldId]
 
 import type { Pool } from 'pg'
-import { createPgPool } from '../src/db/postgres.js'
-import { uuidv7 } from '../src/repo/uuidv7.js'
-import { runCharacterCreationJob } from '../src/llm/prep/character-creation-processor.js'
+import { createPgPool } from '../../src/db/postgres.js'
+import { uuidv7 } from '../../src/repo/uuidv7.js'
+import { runCharacterCreationJob } from '../../src/llm/prep/character-creation-processor.js'
 
 const WORLD_ID = process.argv[2] ?? '019f4242-fa95-71ba-9f86-cc1cd23cc570'
 const TAG = `guidedsmoke-${Date.now().toString(36)}`

@@ -94,11 +94,21 @@ function firstSentence(prose: string): string {
   return (stop === -1 ? firstLine : firstLine.slice(0, stop + 1)).trim()
 }
 
+/** The narrow snapshot slice a lead line needs — kernels + facts. Declared
+ *  STRUCTURALLY (not as `WorldGenSnapshot`) so the wiki view model's
+ *  `WikiSnapshot` fits the same function: both wires carry these two
+ *  collections, and one derivation keeps the popover card and the wiki index
+ *  handle saying the SAME sentence about a person (ux-run3 myth-ry14g). */
+export interface LeadLineSource {
+  readonly proseKernels?: readonly { readonly entityId: string; readonly content: string }[] | undefined
+  readonly facts: readonly { readonly id: string; readonly entityId: string; readonly content: string }[]
+}
+
 /** entityId → its lead line: the first sentence of its prose kernel (MYT-102 —
  *  the entity's actual description), falling back to the content of its
  *  lowest-id fact (matching the id-ordered fact grouping the wiki view model
- *  uses), '' when it has neither. */
-function buildLeadLines(snapshot: WorldGenSnapshot): Map<string, string> {
+ *  uses), absent when it has neither. */
+export function buildLeadLines(snapshot: LeadLineSource): Map<string, string> {
   const leadLines = new Map<string, string>()
   for (const kernel of snapshot.proseKernels ?? []) {
     const lead = firstSentence(kernel.content)

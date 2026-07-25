@@ -25,7 +25,12 @@
       <aside class="wiki-sidebar"><ul><li><a href="../infra/index.html">Overview</a></li><li><a href="../infra/network.html">Network</a></li><li><a href="../infra/data.html">Data plane</a></li><li><a href="../infra/dns.html">DNS</a></li><li><a href="../infra/serving.html" class="active">Serving</a></li><li><a href="../infra/frontend-hosting.html">Frontend hosting</a></li><li><a href="../infra/ci-cd.html">CI/CD</a></li><li><a href="../infra/smoke-testing.html">Smoke testing</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Infra › Serving</div>
-        <article>
+        <article><div class="wiki-drift-banner" role="alert">
+  <strong>⚠️ Source has drifted.</strong>
+  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
+  <div class="wiki-drift-paths">source: <code>infra/modules/serving/</code>, <code>infra/environments/shared/main.tf</code>, <code>infra/environments/shared/outputs.tf</code>, <code>infra/environments/staging/main.tf</code>, <code>infra/environments/staging/outputs.tf</code>, <code>infra/environments/staging/variables.tf</code></div>
+</div>
+
 <h1>Serving</h1>
 
 <p class="lead">
@@ -931,6 +936,68 @@
   </tbody>
 </table>
 
+<h3 id="billing-alarms">Billing alarms</h3>
+
+<p>
+  <code>billing-alarms.tf</code> holds four CloudWatch log-metric-filters over the API log group and
+  an alarm on each, publishing to the SNS topic passed in as <code>alerts_topic_arn</code> (staging
+  wires <code>aws_sns_topic.alerts</code>). Everything matches structured pino fields —
+  <code>$.event</code> for the boot probe's events, <code>$.msg</code> for the dispatcher's, since
+  that one logs through Fastify's request logger where the event name is the message key. Metrics
+  land in the <code>Mythrun/&lt;env&gt;/Billing</code> namespace.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Alarm</th>
+      <th>Fires on</th>
+      <th>Response</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>billing-probe-config-failure</code></td>
+      <td>
+        <code>billing.probe_failed</code>, <code>billing.probe_portal_failed</code>,
+        <code>billing.probe_webhook_version_failed</code>
+      </td>
+      <td>Stripe config drifted; the task is crashlooping and ECS is rolling back. Fix the Dashboard.</td>
+    </tr>
+    <tr>
+      <td><code>billing-probe-auth-failure</code></td>
+      <td><code>billing.probe_auth_failed</code></td>
+      <td>Rotate or re-scope <code>STRIPE_SECRET_KEY</code>.</td>
+    </tr>
+    <tr>
+      <td><code>billing-probe-transient-failure</code></td>
+      <td>
+        <code>billing.probe_transient_failed</code>,
+        <code>billing.probe_portal_transient_failed</code>
+      </td>
+      <td>Stripe unreachable. Check status.stripe.com and the task's egress path.</td>
+    </tr>
+    <tr>
+      <td><code>stripe-webhook-api-version-mismatch</code></td>
+      <td><code>stripe_webhook_api_version_mismatch</code></td>
+      <td>
+        <strong>Revenue incident</strong> — paid customers are not being credited. Realign the
+        endpoint's version, then replay the dropped events.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<aside class="wiki-rationale">
+  <strong>Alarms live in the module, not the environment root</strong> — they sit beside the log
+  group they filter, so a future production composition inherits them by construction. An alarm that
+  has to be remembered per-environment is an alarm that will be missing in the environment that
+  matters. Each metric transformation sets <code>default_value = 0</code> so the alarms hold a real
+  OK state and self-recover rather than parking in <code>INSUFFICIENT_DATA</code>, and alarm
+  creation is skipped entirely when <code>alerts_topic_arn</code> is empty so a fresh environment can
+  apply before its topic exists.
+</aside>
+
 <h2 id="source">Source</h2>
 
 <p>
@@ -942,7 +1009,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#shared-compute-platform">Shared compute platform</a></li><li style="padding-left:0"><a href="#per-env-task-definitions-and-services">Per-env task definitions and services</a></li><li style="padding-left:0"><a href="#alb-routing-and-dns">ALB routing and DNS</a></li><li style="padding-left:0"><a href="#the-github-actions-deploy-role">The GitHub Actions deploy role</a></li><li style="padding-left:0"><a href="#sns-alerts-topic">SNS alerts topic</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#confirm-the-alerts-email-subscription">Confirm the alerts email subscription</a></li><li style="padding-left:12px"><a href="#rotate-the-manual-secret-values">Rotate a manual secret value</a></li><li style="padding-left:12px"><a href="#deregister-an-old-task-definition-revision">Deregister an old task-definition revision</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#module-inputs">Module inputs</a></li><li style="padding-left:12px"><a href="#module-outputs">Module outputs</a></li><li style="padding-left:12px"><a href="#shared-workspace-additions">Shared workspace additions</a></li><li style="padding-left:12px"><a href="#staging-workspace-additions">Staging-workspace additions</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#shared-compute-platform">Shared compute platform</a></li><li style="padding-left:0"><a href="#per-env-task-definitions-and-services">Per-env task definitions and services</a></li><li style="padding-left:0"><a href="#alb-routing-and-dns">ALB routing and DNS</a></li><li style="padding-left:0"><a href="#the-github-actions-deploy-role">The GitHub Actions deploy role</a></li><li style="padding-left:0"><a href="#sns-alerts-topic">SNS alerts topic</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#confirm-the-alerts-email-subscription">Confirm the alerts email subscription</a></li><li style="padding-left:12px"><a href="#rotate-the-manual-secret-values">Rotate a manual secret value</a></li><li style="padding-left:12px"><a href="#deregister-an-old-task-definition-revision">Deregister an old task-definition revision</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#module-inputs">Module inputs</a></li><li style="padding-left:12px"><a href="#module-outputs">Module outputs</a></li><li style="padding-left:12px"><a href="#shared-workspace-additions">Shared workspace additions</a></li><li style="padding-left:12px"><a href="#staging-workspace-additions">Staging-workspace additions</a></li><li style="padding-left:12px"><a href="#billing-alarms">Billing alarms</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

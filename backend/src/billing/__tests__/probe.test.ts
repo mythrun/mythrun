@@ -6,7 +6,9 @@ import {
   BillingProbeAuthError,
   BillingProbeStripeAPIChangeError,
   BillingProbePortalConfigError,
+  BillingProbeWebhookVersionError,
 } from '../probe.js'
+import { STRIPE_API_VERSION } from '../stripe-client.js'
 import { getSkuCache, _resetSkuCacheForTests } from '../sku-cache.js'
 
 interface PriceFixture {
@@ -99,6 +101,9 @@ interface LogEntry {
   count?: number
   mismatchCount?: number
   nextDelayMs?: number
+  classification?: string
+  remedy?: string
+  expected_api_version?: string
 }
 
 function makeLogger(): { logger: Logger; entries: LogEntry[] } {
@@ -153,16 +158,46 @@ function portalListOk(configs: PortalConfigFixture[]): {
   return { data: configs, has_more: false }
 }
 
+interface WebhookEndpointFixture {
+  id: string
+  url: string
+  status: 'enabled' | 'disabled'
+  api_version: string | null
+}
+
+function endpointFixture(overrides: Partial<WebhookEndpointFixture> = {}): WebhookEndpointFixture {
+  return {
+    id: 'we_default',
+    url: 'https://api.mythrun.dev/webhooks/stripe',
+    status: 'enabled',
+    api_version: STRIPE_API_VERSION,
+    ...overrides,
+  }
+}
+
+function endpointListOk(endpoints: WebhookEndpointFixture[]): {
+  data: WebhookEndpointFixture[]
+  has_more: boolean
+} {
+  return { data: endpoints, has_more: false }
+}
+
 interface MakeStripeOptions {
   portalList?: ReturnType<typeof vi.fn>
+  endpointList?: ReturnType<typeof vi.fn>
 }
 
 function makeStripe(list: ReturnType<typeof vi.fn>, options: MakeStripeOptions = {}): Stripe {
   const portalList =
     options.portalList ?? vi.fn().mockResolvedValue(portalListOk([portalConfigFixture()]))
+  // Default: no v1 webhook endpoints registered. That is the normal dev
+  // shape (the Stripe CLI forwards without creating one), so every
+  // pre-existing probe test keeps passing unchanged.
+  const endpointList = options.endpointList ?? vi.fn().mockResolvedValue(endpointListOk([]))
   return {
     prices: { list },
     billingPortal: { configurations: { list: portalList } },
+    webhookEndpoints: { list: endpointList },
   } as unknown as Stripe
 }
 
@@ -546,9 +581,7 @@ describe('probeStripeContract', () => {
     )
     // Portal probe is single-shot (no retry loop), so portalList runs once.
     expect(portalList).toHaveBeenCalledTimes(1)
-    expect(
-      entries.some((e) => e.event === 'billing.probe_portal_transient_failed'),
-    ).toBe(true)
+    expect(entries.some((e) => e.event === 'billing.probe_portal_transient_failed')).toBe(true)
     expect(getSkuCache()).toBeNull()
   })
 
@@ -591,5 +624,168 @@ describe('probeStripeContract', () => {
       /failed transiently after 1 attempts/,
     )
     expect(getSkuCache()).toBeNull()
+  })
+})
+
+// ─── webhook-endpoint api_version gate (myth-e3ary) ─────────────────────────
+//
+// A Stripe Event is immutable: it is rendered once, at the endpoint's pinned
+// api_version, and no re-fetch can re-render it. So the ONLY place a drift
+// between the endpoint version and STRIPE_API_VERSION can be caught before it
+// silently drops paid customers' events is at boot, against the endpoint
+// itself. A positively-observed drift crashloops the boot so ECS rolls the
+// deploy back; absence and insufficient key scope do NOT hard-fail (see the
+// individual cases for why).
+
+describe('probeStripeContract — webhook endpoint api_version', () => {
+  beforeEach(() => {
+    vi.useRealTimers()
+    _resetSkuCacheForTests()
+  })
+
+  it('enabled endpoint pinned to STRIPE_API_VERSION → passes, logs the verified endpoint', async () => {
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const endpointList = vi.fn().mockResolvedValue(endpointListOk([endpointFixture()]))
+    const { logger, entries } = makeLogger()
+    await expect(
+      probeStripeContract(makeStripe(list, { endpointList }), logger),
+    ).resolves.toBeUndefined()
+    expect(entries.map((e) => e.event)).toContain('billing.probe_webhook_version_passed')
+  })
+
+  it('enabled endpoint on a DIFFERENT api_version → BillingProbeWebhookVersionError (boot fails)', async () => {
+    // The exact production hole: the endpoint delivers 2026-03-25.dahlia,
+    // the SDK is pinned to 2026-04-22.dahlia, every paid checkout is
+    // dropped with a 200. Refusing to boot is what keeps it out of prod.
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const endpointList = vi
+      .fn()
+      .mockResolvedValue(endpointListOk([endpointFixture({ api_version: '2026-03-25.dahlia' })]))
+    const { logger, entries } = makeLogger()
+    await expect(probeStripeContract(makeStripe(list, { endpointList }), logger)).rejects.toThrow(
+      BillingProbeWebhookVersionError,
+    )
+    const failed = entries.find((e) => e.event === 'billing.probe_webhook_version_failed')
+    expect(failed?.level).toBe('error')
+    expect(failed?.mismatches?.[0]).toMatch(/2026-03-25\.dahlia/)
+    expect(failed?.mismatches?.[0]).toMatch(new RegExp(STRIPE_API_VERSION.replace(/\./g, '\\.')))
+    // Classified CONFIG, not transient: the crashloop this causes is
+    // intentional and retrying will never clear it. An operator reading the
+    // restart loop must not mistake it for a flaky dependency to wait out.
+    expect(failed?.classification).toBe('config')
+    expect(failed?.expected_api_version).toBe(STRIPE_API_VERSION)
+    expect(failed?.remedy).toBeDefined()
+    // Boot-blocking failure ⇒ the SKU cache must not be published.
+    expect(getSkuCache()).toBeNull()
+  })
+
+  it('endpoint with a null api_version (follows account default) → boot fails', async () => {
+    // `api_version: null` means "whatever the account default happens to
+    // be" — unpinned, so it can drift under us without any deploy. That is
+    // not a safe configuration even when the current default matches.
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const endpointList = vi
+      .fn()
+      .mockResolvedValue(endpointListOk([endpointFixture({ api_version: null })]))
+    const { logger } = makeLogger()
+    await expect(probeStripeContract(makeStripe(list, { endpointList }), logger)).rejects.toThrow(
+      /account default/,
+    )
+  })
+
+  it('DISABLED endpoint on a wrong version → ignored (delivers nothing, cannot drop revenue)', async () => {
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const endpointList = vi
+      .fn()
+      .mockResolvedValue(
+        endpointListOk([
+          endpointFixture({ id: 'we_old', status: 'disabled', api_version: '2020-08-27' }),
+          endpointFixture(),
+        ]),
+      )
+    const { logger } = makeLogger()
+    await expect(
+      probeStripeContract(makeStripe(list, { endpointList }), logger),
+    ).resolves.toBeUndefined()
+  })
+
+  it('every enabled endpoint is checked, not just the first', async () => {
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const endpointList = vi.fn().mockResolvedValue(
+      endpointListOk([
+        endpointFixture(),
+        endpointFixture({
+          id: 'we_second',
+          url: 'https://old.example/hook',
+          api_version: '2020-08-27',
+        }),
+      ]),
+    )
+    const { logger } = makeLogger()
+    await expect(probeStripeContract(makeStripe(list, { endpointList }), logger)).rejects.toThrow(
+      /we_second/,
+    )
+  })
+
+  it('no v1 endpoints registered → does NOT fail the boot (dev CLI forwarding / v2 event destinations)', async () => {
+    // `stripe listen` forwards without creating an endpoint, and Stripe's
+    // newer v2 event destinations do not appear in this list at all. An
+    // empty list is therefore not evidence of misconfiguration, and
+    // crashlooping on it would break every local boot.
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const endpointList = vi.fn().mockResolvedValue(endpointListOk([]))
+    const { logger, entries } = makeLogger()
+    await expect(
+      probeStripeContract(makeStripe(list, { endpointList }), logger),
+    ).resolves.toBeUndefined()
+    expect(entries.map((e) => e.event)).toContain('billing.probe_webhook_version_skipped')
+  })
+
+  it('restricted key lacking webhook_endpoints:read → warns, does NOT fail the boot', async () => {
+    // Production runs a restricted key. If it has no webhook_endpoints
+    // scope this probe must degrade, not take the service down — the
+    // runtime mismatch log + its alarm still cover the drift. Note this
+    // deliberately diverges from the prices/portal probes, where a
+    // permission error IS fatal (they gate core checkout correctness).
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const permErr = stripeError(
+      Stripe.errors.StripePermissionError,
+      'The provided key does not have access to webhook endpoints',
+      403,
+    )
+    const endpointList = vi.fn().mockRejectedValue(permErr)
+    const { logger, entries } = makeLogger()
+    await expect(
+      probeStripeContract(makeStripe(list, { endpointList }), logger),
+    ).resolves.toBeUndefined()
+    const warned = entries.find((e) => e.event === 'billing.probe_webhook_version_unavailable')
+    expect(warned?.level).toBe('warn')
+    // Classified so the operator is told the actual fix (grant the scope)
+    // rather than being left to guess from a raw Stripe error string.
+    expect(warned?.classification).toBe('permission')
+    expect(warned?.remedy).toMatch(/webhook_endpoints: read/)
+  })
+
+  it('transient Stripe error listing endpoints → warns as transient, does NOT fail the boot', async () => {
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const apiErr = stripeError(Stripe.errors.StripeAPIError, '503 service unavailable', 503)
+    const endpointList = vi.fn().mockRejectedValue(apiErr)
+    const { logger, entries } = makeLogger()
+    await expect(
+      probeStripeContract(makeStripe(list, { endpointList }), logger),
+    ).resolves.toBeUndefined()
+    const warned = entries.find((e) => e.event === 'billing.probe_webhook_version_unavailable')
+    expect(warned?.classification).toBe('transient')
+  })
+
+  it('non-Error rejection listing endpoints → warns via String(err), does NOT fail the boot', async () => {
+    const list = vi.fn().mockResolvedValue(listOk(allFiveFixtures()))
+    const endpointList = vi.fn().mockRejectedValue('opaque non-Error rejection')
+    const { logger, entries } = makeLogger()
+    await expect(
+      probeStripeContract(makeStripe(list, { endpointList }), logger),
+    ).resolves.toBeUndefined()
+    const warned = entries.find((e) => e.event === 'billing.probe_webhook_version_unavailable')
+    expect(warned?.err).toBe('opaque non-Error rejection')
   })
 })

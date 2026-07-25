@@ -160,9 +160,9 @@ describe('GuidedBuilder', () => {
     expect(onSkipToFreeform).toHaveBeenCalledOnce()
   })
 
-  // ux-run2 myth-80an1: one Back, one meaning, one position — bottom-left in the
-  // action row on EVERY step. On the first step the parent wires it to leave the
-  // builder (back to the chooser); the control itself never teleports or hides.
+  // ux-run2 myth-80an1: one Back, one meaning — on EVERY step. On the first step
+  // the parent wires it to leave the builder (back to the chooser); the control
+  // itself never teleports or hides.
   it('renders Back on every step (including the first) and fires onBack', async () => {
     const onBack = vi.fn()
     const user = userEvent.setup()
@@ -174,6 +174,40 @@ describe('GuidedBuilder', () => {
     rerender(<GuidedBuilder {...baseProps({ rail: MID_RAIL, options: CLASS_OPTIONS, onBack })} />)
     await user.click(getByRole('button', { name: /^Back$/i }))
     expect(onBack).toHaveBeenCalledTimes(2)
+  })
+
+  // ux-run3 myth-t6pxy: with a 12-card option grid the bottom action row sits
+  // below a 720px fold, so a Back seated there is functionally invisible on
+  // exactly the steps the builder renders. Back moves to the TOP — where the
+  // path chooser's Back sits — SHARING the rail's row, so the exit costs the
+  // grid ~4px of first-viewport height instead of a whole ~64px band.
+  it('seats Back on the wayfinding row, before the rail and above the question', () => {
+    const { getByTestId, getByRole } = render(<GuidedBuilder {...baseProps()} />)
+    const back = getByTestId('guided-builder-back')
+    const rail = getByTestId('guided-builder-rail')
+    const row = getByTestId('guided-builder-wayfinding')
+    // One row: both the control and the rail live inside it.
+    expect(row.contains(back)).toBe(true)
+    expect(row.contains(rail)).toBe(true)
+    expect(row.className).toContain('flex-row')
+    // compareDocumentPosition is a bitmask: FOLLOWING set ⇒ the rail comes after Back.
+    expect(back.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // …and the whole row precedes the step's question.
+    const question = getByRole('heading', { level: 2 })
+    expect(row.compareDocumentPosition(question) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  // ux-run3 myth-t6pxy (c): after a pick, the commit affordance must not stay a
+  // clipped sliver below the fold — selecting nudges the action row into view.
+  it('scrolls the action row into view when an option is selected', async () => {
+    const scrollSpy = vi.fn()
+    // jsdom has no scrollIntoView; install a tracked polyfill.
+    Element.prototype.scrollIntoView = scrollSpy
+    const user = userEvent.setup()
+    const { getByRole, getByTestId } = render(<GuidedBuilder {...baseProps()} />)
+    await user.click(getByRole('button', { name: /Rogue/ }))
+    expect(scrollSpy).toHaveBeenCalledOnce()
+    expect(scrollSpy.mock.contexts[0]).toBe(getByTestId('guided-builder-actions'))
   })
 
   it('forwards the step counter to the rail', () => {

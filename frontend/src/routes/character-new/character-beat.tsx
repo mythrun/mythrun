@@ -55,6 +55,10 @@ interface CharacterBeatProps {
   /** The owner's invite endpoints/ports — forwarded to the staging beat, whose inline
    *  party-slot disclosure is the single invite entry point there (MYT-99g03). */
   readonly inviteDeps?: InvitePanelDeps
+  /** Whether this campaign has a play record (myth-dbu98) — a played campaign's
+   *  play entry says "Continue session" (the verb the hub premier card promised);
+   *  a first entry keeps the ceremonial "Step into the world". */
+  readonly played?: boolean
   readonly onReload: () => void
   readonly onConceptRetry: () => void
   readonly onIntegrationRetry: () => void
@@ -84,6 +88,7 @@ export function CharacterBeat({
   signals: s,
   deps,
   inviteDeps,
+  played = false,
   onReload,
   onConceptRetry,
   onIntegrationRetry,
@@ -173,7 +178,9 @@ export function CharacterBeat({
         <PlayEntry
           title={t('campaign.character.play.title')}
           body={t('campaign.character.play.body')}
-          enterLabel={t('campaign.character.play.enter')}
+          // Resume-verb continuity (myth-dbu98): a played campaign continues in
+          // the hub's words; only the first entry steps into the world.
+          enterLabel={played ? t('campaign.character.play.enterContinue') : t('campaign.character.play.enter')}
           onEnter={() => {
             void navigate(playPath)
           }}

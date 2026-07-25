@@ -12,6 +12,15 @@ export interface GhostChoiceItem {
   title: string
   /** Optional quiet sub-line under the title (resolved display string). */
   subtitle?: string
+  /**
+   * Optional cost-of-path line (resolved display string) — the quiet mono third
+   * line seated at the card's FOOT ("About a minute." / "Five short steps."):
+   * the real decision criterion between two doors, and the content that earns a
+   * tall fork card its height instead of leaving the lower half as dead air
+   * (ux-run3 myth-t6pxy). In the stacked strip shape it simply follows the
+   * subtitle.
+   */
+  meta?: string
   /** Neutral activation callback — fired on click AND keyboard (Enter/Space). */
   onSelect: () => void
   /** Optional test hook rendered as `data-testid` on the choice's `<button>` —

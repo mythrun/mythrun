@@ -15,6 +15,17 @@ import { cn } from '../../lib/cn.ts'
 // and the DS invents no copy (the labels are the same i18n map the wiki's
 // group headings speak). A world with no labelled kinds renders nothing.
 //
+// THE HOLLOW ENTRY (ux-run3): the map also draws OUTLINE-only glyphs — nodes whose
+// name tier-retired at the current density (canvas-draw's `hollow`: present, name
+// in the wiki index) — and the key must name that state too or ten-odd hollow marks
+// read as a rendering glitch. The reserved `hollow` label (see GraphLegendLabels)
+// appends one kind-less outline-swatch entry LAST: vocabulary first, the state
+// modifier after. It rides the kind entries — a hollow label alone renders nothing
+// (the key documents kinds; hollow is its addendum) — and hollowness itself is
+// decided at draw time by the label-tiering budget, not derivable from `nodes`
+// here, so the CONSUMER opts in by supplying the label (the reveal does; the
+// generation graph passes no legend at all).
+//
 // Flat 1-bit paper / SQUARE register: the swatches are the SAME hard-edged shapes
 // the Canvas draws (drawGlyph), in `currentColor` at the full ink so the key reads
 // as the graph's own ink; the labels sit a step quieter (--ink-secondary). No
@@ -64,6 +75,11 @@ function KindSwatch({ kind }: { kind: string }): React.JSX.Element {
           <rect x="4.75" y="4.75" width="4.5" height="4.5" fill="none" strokeWidth="1.2" />
         </>
       )}
+      {/* The HOLLOW state's swatch (ux-run3): the outline-only square — drawGlyph's
+          stroked default. Anchors (world/faction/pc) never tier-retire, so the
+          map's hollow marks are npc/location/item outlines; the plain square
+          stands for them all, clearly "the same ink, unfilled". */}
+      {kind === 'hollow' && <rect x="2" y="2" width="10" height="10" fill="none" strokeWidth="1.2" />}
     </svg>
   )
 }
@@ -77,11 +93,13 @@ export interface GraphLegendProps {
 }
 
 /** The graph's glyph key — a quiet spaced row of shape·word pairs for every entity
- *  kind present in `nodes` that carries a label. */
+ *  kind present in `nodes` that carries a label, plus the hollow-state entry when
+ *  the consumer labels it (LAST — the state modifier after the vocabulary). */
 export function GraphLegend({ nodes, labels, 'data-testid': dataTestId }: GraphLegendProps): React.JSX.Element | null {
   const present = new Set(nodes.map((n) => n.kind))
   const entries = KIND_ORDER.filter((kind) => present.has(kind) && (labels[kind] ?? '').length > 0)
   if (entries.length === 0) return null
+  const hollowLabel = labels.hollow ?? ''
   return (
     <ul
       {...(dataTestId !== undefined ? { 'data-testid': dataTestId } : {})}
@@ -97,6 +115,12 @@ export function GraphLegend({ nodes, labels, 'data-testid': dataTestId }: GraphL
           <span>{labels[kind]}</span>
         </li>
       ))}
+      {hollowLabel.length > 0 && (
+        <li className="flex items-center gap-[var(--space-1)]">
+          <KindSwatch kind="hollow" />
+          <span>{hollowLabel}</span>
+        </li>
+      )}
     </ul>
   )
 }

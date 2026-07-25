@@ -11,10 +11,11 @@ import { RollCard } from './RollCard.tsx'
 // client-core `cardPhase`), and the only in-component step is the local DieSpin
 // transition. Load-bearing invariants pinned here: the `constraint` prose seed is
 // NEVER rendered; Roll spins then commits via `onRoll` (never `onContinue`); the
-// settled readout carries the outcome tier as typographic WEIGHT (a `data-tier`
-// attr + a weight class), never a colour chip; a `released` card shows no buttons;
-// dice_roll is the flavor variant (no DC/tier/Continue); reduced motion lands
-// instantly; and all numerics ride `--font-ui`.
+// revealed readout carries the outcome tier as typographic WEIGHT (a `data-tier`
+// attr + a weight class), never a colour chip; a `released` card settles to the
+// one-line RECEIPT (myth-twraw — skill · equation · verdict vs DC, no buttons, no
+// theater); dice_roll is the flavor variant (no DC/tier/Continue); reduced motion
+// lands instantly; and all numerics ride `--font-ui`.
 
 // Test-double labels (stories/tests are i18n-exempt — the real i18n bundle is
 // resolved route-side; MYT-100 is the copy pass). Distinct tier words so the
@@ -186,12 +187,12 @@ describe('RollCard', () => {
 
   it('great_success renders the heaviest tier weight; fail the plainest', () => {
     const great = renderCard({
-      phase: 'released',
+      phase: 'revealed',
       item: { ...SKILL_ITEM, key: 'g', frame: { ...SKILL_ITEM.frame, outcomeTier: 'great_success' } },
     })
     expect(great.container.querySelector('[data-tier="great_success"]')).toHaveClass('font-bold')
     const fail = renderCard({
-      phase: 'released',
+      phase: 'revealed',
       item: { ...SKILL_ITEM, key: 'f', frame: { ...SKILL_ITEM.frame, outcomeTier: 'fail' } },
     })
     // A failed check reads the miss comparison, not the pass one (scoped to this
@@ -202,29 +203,60 @@ describe('RollCard', () => {
     expect(fail.container.querySelector('[data-tier="fail"]')).toHaveClass('font-medium')
   })
 
-  it('released renders the settled readout with NO buttons', () => {
+  // ── myth-twraw: released = the one-line receipt (the settled record) ────────
+  it('released settles to the one-line receipt — skill · equation · verdict, NO buttons, no die', () => {
     const { container } = renderCard({ phase: 'released' })
-    expect(container).toHaveTextContent('DC 12')
-    expect(container).toHaveTextContent('Success')
+    const receipt = screen.getByTestId('roll-receipt')
+    expect(receipt).toHaveTextContent('perception · 14 + 2 = 16 beats DC 12')
+    // The theater is over: no buttons, no die, no promoted tier word.
     expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.queryByTestId('die-spin')).toBeNull()
+    expect(container.querySelector('[data-tier]')).toBeNull()
+    // A quiet mono record on a hairline — the receipt recedes beneath the fiction.
+    expect(receipt).toHaveClass('font-ui', 'border-border', 'rounded-none')
   })
 
-  it('a replayed card (phase=released) shows the result immediately — no Roll theater', () => {
+  it('a failed check’s receipt reads the miss verdict', () => {
+    renderCard({
+      phase: 'released',
+      item: { ...SKILL_ITEM, key: 'f2', frame: { ...SKILL_ITEM.frame, outcomeTier: 'fail' } },
+    })
+    expect(screen.getByTestId('roll-receipt')).toHaveTextContent('perception · 14 + 2 = 16 misses DC 12')
+  })
+
+  it('a replayed card (phase=released) files as the receipt immediately — no Roll theater', () => {
     renderCard({ phase: 'released' })
     expect(screen.queryByRole('button', { name: 'Roll' })).toBeNull()
-    // Die stamps the used natural roll (14); the equation repeats it → 14 + 2 = 16.
-    expect(screen.getByTestId('roll-equation')).toHaveTextContent('14 + 2 = 16')
+    // The whole equation survives on the receipt (die-anchored 14 + 2 = 16).
+    expect(screen.getByTestId('roll-receipt')).toHaveTextContent('14 + 2 = 16')
+  })
+
+  it('a negative modifier’s receipt carries the signed equation', () => {
+    renderCard({
+      phase: 'released',
+      item: {
+        ...SKILL_ITEM,
+        key: 'sc-dis-r',
+        frame: { ...SKILL_ITEM.frame, roll: 8, roll2: 5, rollType: 'disadvantage', modifier: -1, total: 7, outcomeTier: 'fail' },
+      },
+    })
+    expect(screen.getByTestId('roll-receipt')).toHaveTextContent('perception · 8 - 1 = 7 misses DC 12')
+  })
+
+  it('a released dice_roll receipts as NdM · total', () => {
+    renderCard({ phase: 'released', item: DICE_ITEM })
+    expect(screen.getByTestId('roll-receipt')).toHaveTextContent('2d20 · 17')
   })
 
   it('advantage carries both raw dice beside the readout', () => {
-    renderCard({ phase: 'released', item: ADV_ITEM })
+    renderCard({ phase: 'revealed', item: ADV_ITEM })
     expect(screen.getByText('advantage')).toBeInTheDocument()
     expect(screen.getByText('14 / 9')).toBeInTheDocument()
   })
 
   it('disadvantage shows its posture tag; a negative modifier reads signed', () => {
     renderCard({
-      phase: 'released',
+      phase: 'revealed',
       item: {
         ...SKILL_ITEM,
         key: 'sc-dis',
@@ -237,7 +269,7 @@ describe('RollCard', () => {
   })
 
   it('dice_roll variant renders NdM + total, with NO DC/tier/Continue', () => {
-    const { container } = renderCard({ phase: 'released', item: DICE_ITEM })
+    const { container } = renderCard({ phase: 'revealed', item: DICE_ITEM })
     expect(container).toHaveTextContent('2d20')
     // The summed total stamps in the die centre.
     expect(container).toHaveTextContent('17')
@@ -279,7 +311,7 @@ describe('RollCard', () => {
   // ── myth-4sxhd: a natural 20 earns the inverted plate at display size ───────
   it('a natural 20 renders the outcome on the inverted plate (ink field, paper letters)', () => {
     const nat20 = renderCard({
-      phase: 'released',
+      phase: 'revealed',
       item: {
         ...SKILL_ITEM,
         key: 'sc-20',
@@ -291,7 +323,7 @@ describe('RollCard', () => {
 
   it('an ordinary great_success (no natural 20) stays weight-only — no plate', () => {
     const great = renderCard({
-      phase: 'released',
+      phase: 'revealed',
       item: { ...SKILL_ITEM, key: 'g2', frame: { ...SKILL_ITEM.frame, outcomeTier: 'great_success' } },
     })
     const tier = great.container.querySelector('[data-tier="great_success"]')
@@ -299,10 +331,12 @@ describe('RollCard', () => {
     expect(tier).not.toHaveClass('bg-ink')
   })
 
-  it('is square register — no circles anywhere', () => {
-    const { container } = renderCard({ phase: 'released' })
-    expect(container.querySelector('.rounded-full')).toBeNull()
-    expect(container.querySelector('[data-roll-card]')).toHaveClass('rounded-none')
+  it('is square register — no circles anywhere (the receipt included)', () => {
+    const revealed = renderCard({ phase: 'revealed' })
+    expect(revealed.container.querySelector('.rounded-full')).toBeNull()
+    expect(revealed.container.querySelector('[data-roll-card]')).toHaveClass('rounded-none')
+    const receipt = renderCard({ phase: 'released', item: { ...SKILL_ITEM, key: 'sq' } })
+    expect(receipt.container.querySelector('[data-roll-card]')).toHaveClass('rounded-none')
   })
 
   it('has no axe violations across idle / revealed / released', async () => {

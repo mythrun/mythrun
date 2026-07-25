@@ -48,6 +48,30 @@ describe('Heading', () => {
     expect(el).toHaveClass(...TYPE_ROLE_CLASS.display.split(' '))
   })
 
+  it('fixes the box to N lines when `lines` is given — clamp + lh-unit reserve (myth-7jc1h)', () => {
+    // Fixed-geometry compositions (the cover card's title zone) need a 1-line
+    // and a 2-line title to occupy the same vertical band: `min-h-[2lh]`
+    // reserves two lines at the role's own line-height, `line-clamp-2` caps
+    // overflow with an ellipsis.
+    const { getByTestId } = render(
+      <Heading data-testid="h" level={2} role="title" lines={2}>
+        x
+      </Heading>,
+    )
+    const el = getByTestId('h')
+    expect(el.classList.contains('line-clamp-2')).toBe(true)
+    expect(el.classList.contains('min-h-[2lh]')).toBe(true)
+  })
+
+  it('stays auto-height when `lines` is omitted', () => {
+    const { getByTestId } = render(
+      <Heading data-testid="h" level={2}>
+        x
+      </Heading>,
+    )
+    expect(getByTestId('h').className).not.toContain('line-clamp')
+  })
+
   it('forwards its ref to the underlying heading element', () => {
     const ref = createRef<HTMLHeadingElement>()
     render(

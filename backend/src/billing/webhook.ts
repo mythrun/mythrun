@@ -4,10 +4,29 @@
 //
 // Contract:
 //   - Defense-in-depth: assert event.api_version === STRIPE_API_VERSION.
-//     Mismatch is FAIL-CLOSED — we record the stripe_events row in its
-//     own short tx (so Stripe stops retrying) and skip handler invocation
-//     entirely. Typed field access against the wrong API version is silent
-//     corruption (per Ephesus I3 / Carthage M4 round 5).
+//     Mismatch is FAIL-CLOSED — no handler runs. Typed field access
+//     against the wrong API version is silent corruption (per Ephesus I3 /
+//     Carthage M4 round 5).
+//
+//     A mismatch CANNOT be repaired here. A Stripe Event is immutable: it
+//     is rendered once, at the delivering endpoint's pinned api_version,
+//     and `GET /v1/events/:id` returns those exact bytes regardless of the
+//     request's Stripe-Version (verified against the live account — the
+//     payload is byte-identical across a 2024-06-20 → 2026-04-22.dahlia
+//     request-version span, while the same header demonstrably re-renders
+//     a Subscription). So re-fetching the event buys nothing; the only
+//     real fix is that the endpoint's version must equal the pin, which
+//     probeStripeContract now asserts at boot (myth-e3ary).
+//
+//     What this path must NOT do is write the stripe_events row. Marking
+//     a dropped event as processed made it permanently unreplayable — a
+//     later redelivery hits the idempotency check and ROLLBACKs as a
+//     duplicate — so revenue events dropped by a version drift could never
+//     be recovered even after the drift was fixed. The row was never what
+//     stops Stripe retrying (the route's 200 is), so skipping it costs
+//     nothing and buys recoverability. This deliberately reverses the
+//     round-5 record-and-ack decision, whose stated rationale ("so Stripe
+//     stops retrying") did not hold.
 //
 //   - Phase 1 (outside any DB tx): per-event-type prefetch. Stripe API
 //     calls live HERE, not inside the tx, so a Stripe outage delays
@@ -121,7 +140,7 @@ function lookupPrefetcher(eventType: string): PrefetchFn | undefined {
 }
 
 /**
- * Per-call SET LOCAL knobs for the dispatch tx + the record-only tx. The
+ * Per-call SET LOCAL knobs for the dispatch tx. The
  * three SET LOCALs are load-bearing per Petra C1 round 5 (matches MYT-40's
  * atomicDebit recipe): isolation 'read committed', lock_timeout 1s,
  * statement_timeout 5s. Passed to `repo.transaction` as TxOpts (it emits the
@@ -134,23 +153,6 @@ export const DISPATCH_TX_OPTS = {
   statementTimeoutMs: 5000,
 } as const
 
-type DispatchRepo = ReturnType<typeof createRepo>
-
-/**
- * Record the stripe_events row in its own short tx, COMMIT. Used by the
- * api-version-mismatch path to ack the event so Stripe stops retrying.
- * Identical timeout discipline to the main dispatch tx — a slow holder
- * on the row index can't pin the PoolClient. `repo.transaction` owns the
- * connect/BEGIN/SET LOCAL/COMMIT/release recipe; this just supplies the
- * single write + the opts.
- */
-async function recordEventOnlyTx(repo: DispatchRepo, event: Stripe.Event): Promise<void> {
-  await repo.transaction(
-    (tx) => tx.stripeEvents.recordOrSkip(event.id, event.type),
-    DISPATCH_TX_OPTS,
-  )
-}
-
 export async function dispatchEvent(
   event: Stripe.Event,
   stripe: Stripe,
@@ -161,19 +163,31 @@ export async function dispatchEvent(
   // 1. API-version gate (fail-closed). Typed field access against the
   //    wrong version is silent corruption per spec §3.1 notes 6/7/8 and
   //    §5.3 round-5 fixes.
+  //
+  //    DON'T "fix" this by re-fetching the event through the pinned client.
+  //    Stripe Events are immutable — retrieve returns the same bytes and the
+  //    same api_version no matter what Stripe-Version you ask with (proven
+  //    against the live account; see the module header and stripe-client.ts).
+  //    The re-fetch is a dead end that looks like a fix. And nothing is
+  //    written to stripe_events here, deliberately, so the dropped event
+  //    stays replayable — also explained in the module header.
   if (event.api_version !== STRIPE_API_VERSION) {
     log.error(
       {
         event_api_version: event.api_version,
         sdk_pin: STRIPE_API_VERSION,
         event_id: event.id,
+        // event_type tells the operator triaging the alarm whether a
+        // grant-bearing event (checkout.session.completed / invoice.paid)
+        // was dropped, i.e. whether money moved without credit.
+        event_type: event.type,
+        // Explicit: the event was NOT marked processed, so `stripe events
+        // resend` (or a reconciliation sweep over the last 30 days) will
+        // reprocess it once the endpoint version matches the pin.
+        recorded: false,
       },
       'stripe_webhook_api_version_mismatch',
     )
-    // Best-effort ack so Stripe stops retrying. If even this fails (DB
-    // outage), the throw bubbles up to the route handler, which returns
-    // 5xx and Stripe redelivers — the safe behavior in that case.
-    await recordEventOnlyTx(repo, event)
     return
   }
 
@@ -197,7 +211,10 @@ export async function dispatchEvent(
   //        the post-commit `validation_failed` log fires off the return value;
   //      - handler throws       → propagates out of the callback →
   //        repo.transaction ROLLBACKs + rethrows (drives Stripe redelivery).
-  const result = await repo.transaction((tx) => dispatchInTx(event, prefetch, tx, log), DISPATCH_TX_OPTS)
+  const result = await repo.transaction(
+    (tx) => dispatchInTx(event, prefetch, tx, log),
+    DISPATCH_TX_OPTS,
+  )
 
   if (result !== ROLLBACK && result === 'validation_failed') {
     // Handler is contractually required to have written nothing else when
@@ -395,14 +412,7 @@ async function handleCheckoutCompleted(
 
   // 3. Branch on session.mode.
   if (session.mode === 'subscription') {
-    return await handleCheckoutCompletedSubscription(
-      event,
-      session,
-      subscription,
-      user.id,
-      tx,
-      log,
-    )
+    return await handleCheckoutCompletedSubscription(event, session, subscription, user.id, tx, log)
   }
   if (session.mode === 'payment') {
     return await handleCheckoutCompletedPayment(event, session, user.id, tx, log)

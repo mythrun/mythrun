@@ -42,7 +42,8 @@ Choose the 3 most interesting and richest locations from the list above as poten
 
 - Highlight what makes this location a natural entry point for a new character
 - Reference nearby NPCs, tensions, or activity without spoiling secrets
-- Keep it to 1-2 sentences — this is a teaser, not a scenario
+- Keep it to 1-2 sentences, around 35 words and never past 50 — this is a teaser, not a scenario. The player reads all three side by side to compare them; a fourth line of any one of them pushes the third card off the screen.
+- The three entries are read side by side. Vary the KIND of concrete detail each one leans on: if one uses a number ("two hundred names in the ledger"), the others reach for something else — a smell, a sound, a time of day, a thing out of place. Two adjacent number-shaped details read as a tic.
 
 The `title`, `why_interesting`, and `invitation` you write follow the register below.
 
@@ -52,7 +53,7 @@ For each of your 3 chosen locations:
 
 1. **title** — A short evocative title for the scene, 5 to 60 characters. This is the headline a player sees in the picker before reading the prose — it should capture the hook, the mood, or the moment. Examples: "The Smoke-Stained Tavern", "Dawn at the Ferryman's Gate", "Below the Singing Stone". Not the location's name. Not a generic phrase ("A New Beginning"). One concrete image.
 2. **location_name** — Must match a location name from the list above exactly.
-3. **why_interesting** — 1-2 sentences on why a player might start their adventure here. What's the draw? What's in the air?
+3. **why_interesting** — 1-2 sentences (around 35 words, never past 50) on why a player might start their adventure here. What's the draw? What's in the air?
 4. **invitation** — A short, 2nd-person whisper spoken directly to the player, prompting them to describe why THEIR character is arriving at this specific opening scene. This is the question the player answers to write themselves into the story — and their character is a newcomer who knows NOTHING about this world yet. The invitation must be answerable by someone with no history here: pose the hook as a draw, a rumor, a visible circumstance, or a reason-to-arrive the player invents. NEVER presume a relationship or knowledge the character already has with a named individual. Naming places and public facts is fine; reference an NPC only as a stranger one could observe ("the harbormaster who keeps late hours"), never as an acquaintance. Contrast:
 
    > NOT (gesturing): "What secrets will you uncover in this city of whispers?"

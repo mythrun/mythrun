@@ -115,12 +115,19 @@ export async function resolveAdjustHp(
         `${characterName} ${verb} ${String(delta.magnitude)} ` +
         `${input.kind === 'damage' ? 'damage' : 'hit points'} (now ${String(hp)}/${String(maxHp)} HP)` +
         (collapsed ? ' and collapses, falling unconscious.' : '.')
+      // myth-hlydp: an HP write is a CONDITION write. `applyHpAndSyncUnconscious`
+      // (the §5a single owner) applies `unconscious` at 0 and clears it above 0,
+      // and this `kind:'hp'` frame is the ONLY frame the turn emits for it — no
+      // `kind:'condition'` frame is ever produced. So the post-write set rides
+      // here, read AFTER the write inside the same tx.
+      const activeConditions = await tx.readConditions(characterId)
       const payload: LedgerUpdatePayload = {
         characterName,
         kind: 'hp',
         summary,
         hp,
         maxHp,
+        activeConditions,
         ...(diceRolled.length > 0 ? { diceRolled } : {}),
       }
       return {
@@ -240,7 +247,7 @@ async function applyConditionTx(
         // Replay: report the current state as an idempotent no-op (no frame).
         return {
           ok: true as const,
-          payload: noopConditionPayload(characterName, input),
+          payload: await noopConditionPayload(tx, characterId, characterName, input),
         }
       }
       const write =
@@ -248,7 +255,10 @@ async function applyConditionTx(
           ? await tx.applyCondition(characterId, input.condition, input.level ?? null)
           : await tx.clearCondition(characterId, input.condition)
       if (write.outcome === 'noop') {
-        return { ok: true as const, payload: noopConditionPayload(characterName, input) }
+        return {
+          ok: true as const,
+          payload: await noopConditionPayload(tx, characterId, characterName, input),
+        }
       }
       await tx.writeLedgerEvent({
         characterId,
@@ -266,6 +276,8 @@ async function applyConditionTx(
           condition: input.condition,
           changed: true,
           summary: changedConditionSummary(characterName, input),
+          // myth-hlydp: the FULL post-write set, not just the one that moved.
+          activeConditions: await tx.readConditions(characterId),
         },
       }
     })
@@ -275,13 +287,22 @@ async function applyConditionTx(
   }
 }
 
-function noopConditionPayload(characterName: string, input: UpdateConditionInput): ConditionPayload {
+/** The idempotent-no-op payload. It emits NO frame (§8), but it still carries
+ *  the current set: the replay arm reports state, and a future consumer of the
+ *  resolution object must not see a payload that silently omits it. */
+async function noopConditionPayload(
+  tx: LedgerOps,
+  characterId: string,
+  characterName: string,
+  input: UpdateConditionInput,
+): Promise<ConditionPayload> {
   return {
     characterName,
     kind: 'condition',
     condition: input.condition,
     changed: false,
     summary: `${characterName}'s ${input.condition} state is unchanged (no-op).`,
+    activeConditions: await tx.readConditions(characterId),
   }
 }
 
@@ -419,5 +440,11 @@ async function buildRestPayloads(
       `${String(c.hitDiceRemaining)} hit dice remaining).`,
     hp: c.hitPoints,
     maxHp: c.maxHitPoints,
+    // myth-hlydp: a rest is a CONDITION write too, and it moves TWO of them —
+    // the HP→max write clears the §5a `unconscious`, and a long rest decrements
+    // exhaustion (DELETE at level 1). Neither emits a `kind:'condition'` frame,
+    // so this per-character `kind:'rest'` frame is the only report. Reused from
+    // the POST-rest snapshot already read above — no extra query.
+    activeConditions: c.conditions,
   }))
 }

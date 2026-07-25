@@ -1,3 +1,4 @@
+import { DM_TOKEN } from '@mythrun/client-core'
 import type { ConnectionStatus } from '@mythrun/client-core'
 import type { RollRevealView, TranscriptItem } from '@mythrun/client-core/contract'
 
@@ -12,8 +13,10 @@ import type { RollRevealView, TranscriptItem } from '@mythrun/client-core/contra
  *  VISIBLE message text so the summon persists + broadcasts as an ordinary
  *  `player_message` (the backend's explicit-trigger path — the table SEES the
  *  summon; the invisible `dm_invoke` frame is NOT used). A protocol token, not
- *  user copy, so it is not an i18n key. */
-export const DM_TOKEN = '@dm'
+ *  user copy, so it is not an i18n key. The definition moved to client-core
+ *  (myth-1msig — the table-talk grouping keys on the same token); re-exported
+ *  here so the route wire keeps one import surface. */
+export { DM_TOKEN }
 
 /** Client mirror of the server's MAX_MESSAGE_TEXT_LEN (backend
  *  routes/ws-session.ts). The composer hard-caps at this so an over-long

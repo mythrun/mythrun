@@ -112,6 +112,7 @@ describe('chooseLabelSides — the first collision-free slot, east preferred (my
       pinned: new Set(['a', 'b']),
       widthOf,
       sides,
+      suppressed: new Set<string>(),
     })
     expect(sides.get('a')).toBe('e')
     expect(sides.get('b')).toBe('e')
@@ -126,6 +127,7 @@ describe('chooseLabelSides — the first collision-free slot, east preferred (my
       pinned: new Set(['a', 'b']),
       widthOf,
       sides,
+      suppressed: new Set<string>(),
     })
     // 'a' chooses first: its east box hits 'b' → west is free → 'w'.
     expect(sides.get('a')).toBe('w')
@@ -142,6 +144,7 @@ describe('chooseLabelSides — the first collision-free slot, east preferred (my
       pinned: new Set(['b']),
       widthOf,
       sides,
+      suppressed: new Set<string>(),
     })
     expect(sides.has('a')).toBe(false) // unpinned → no committed side
     expect(sides.get('b')).toBe('w') // sticky — never re-chosen while worn
@@ -156,7 +159,128 @@ describe('chooseLabelSides — the first collision-free slot, east preferred (my
       pinned: new Set(['b']),
       widthOf,
       sides,
+      suppressed: new Set<string>(),
     })
     expect(sides.has('a')).toBe(false)
+  })
+})
+
+// The declutter guarantees run 3 found missing (myth-k0sja). Run 3's live map printed
+// "The Well of Names" straight through "The Ward Refectory" in one east slot, fused a
+// second pair, grazed a third — and produced not one west-slotted label — because when
+// neither slot was free the resolver fell back to east and overprinted.
+describe('chooseLabelSides — the ux-run3 declutter guarantees (myth-k0sja)', () => {
+  const widthOf = (): number => 60
+  /** `n` npc nodes stacked in one place — every label wants the same slot. */
+  const cluster = (n: number): GraphNode[] =>
+    Array.from({ length: n }, (_, i) => node(`n${String(i)}`, { lastEventIndex: i }))
+  const stacked = (n: number, dy: number): Map<string, { x: number; y: number }> =>
+    new Map(Array.from({ length: n }, (_, i) => [`n${String(i)}`, { x: 0, y: i * dy }]))
+
+  /** Resolve a whole cluster and report which ids ended up wearing a name. */
+  function resolve(nodes: GraphNode[], positions: Map<string, { x: number; y: number }>) {
+    const sides = new Map<string, LabelSide>()
+    const suppressed = new Set<string>()
+    const ids = nodes.map((n) => n.displayId)
+    chooseLabelSides({
+      nodes,
+      positions,
+      labeled: new Set(ids),
+      pinned: new Set(ids),
+      widthOf,
+      sides,
+      suppressed,
+    })
+    return { sides, suppressed }
+  }
+
+  it('SUPPRESSES rather than overprints when neither slot is free', () => {
+    // Three pinned markers in a column 30px apart — their glyphs clear each other, but
+    // a 25px label clear box plus the clearance pad does not. The run-3 shape exactly:
+    // the middle name has nowhere to go and used to print through its neighbour.
+    const { sides, suppressed } = resolve(cluster(3), stacked(3, 30))
+    expect(suppressed).toEqual(new Set(['n1']))
+    expect(sides.get('n0')).toBe('e')
+    expect(sides.get('n2')).toBe('e')
+    // Seniority decides who keeps a name: the oldest arrival is never the one demoted.
+    expect(suppressed.has('n0')).toBe(false)
+  })
+
+  it('grants AT MOST ONE label per slot — a double-print is impossible by construction', () => {
+    const nodes = cluster(6)
+    const positions = stacked(6, 4) // 4px apart: far tighter than a 25px clear box
+    const { sides, suppressed } = resolve(nodes, positions)
+    for (const id of sides.keys()) expect(suppressed.has(id)).toBe(false)
+    // Every committed label's box is disjoint from every other committed label's box.
+    const boxes = [...sides].map(([id, side]) => {
+      const p = positions.get(id)
+      if (p === undefined) throw new Error('missing position')
+      return { id, side, y: p.y }
+    })
+    for (const a of boxes) {
+      for (const b of boxes) {
+        if (a.id === b.id) continue
+        // Same slot ⇒ the clear boxes (25px tall) must not overlap.
+        if (a.side === b.side) expect(Math.abs(a.y - b.y)).toBeGreaterThanOrEqual(25)
+      }
+    }
+  })
+
+  it('flips losers WEST before giving up — both slots are used before anything retires', () => {
+    // Two nodes one clear-box apart vertically is fine; put them on one row so the
+    // east slot can hold only one and the second must mirror.
+    const nodes = cluster(2)
+    const { sides, suppressed } = resolve(nodes, new Map([
+      ['n0', { x: 0, y: 0 }],
+      ['n1', { x: 40, y: 0 }],
+    ]))
+    expect(suppressed.size).toBe(0)
+    expect(new Set(sides.values())).toEqual(new Set(['e', 'w']))
+  })
+
+  it('enforces MINIMUM CLEARANCE — a merely-grazing pair is separated too', () => {
+    // 26px apart: the two 25px clear boxes do NOT strictly intersect, but the names
+    // read as one smear. The clearance pad must still push the second off east.
+    const { sides } = resolve(cluster(2), stacked(2, 26))
+    expect(sides.get('n0')).toBe('e')
+    expect(sides.get('n1')).not.toBe('e')
+  })
+
+  it('is DETERMINISTIC — array order never changes the outcome', () => {
+    const positions = stacked(5, 6)
+    const forward = resolve(cluster(5), positions)
+    const reversed = resolve(cluster(5).reverse(), positions)
+    expect([...reversed.sides].sort()).toEqual([...forward.sides].sort())
+    expect([...reversed.suppressed].sort()).toEqual([...forward.suppressed].sort())
+  })
+
+  it('forgets a suppression when the label RETIRES, so a later promotion tries again', () => {
+    const sides = new Map<string, LabelSide>()
+    const suppressed = new Set(['n1'])
+    chooseLabelSides({
+      nodes: cluster(2),
+      positions: stacked(2, 400),
+      labeled: new Set(['n0']),
+      pinned: new Set(['n0', 'n1']),
+      widthOf,
+      sides,
+      suppressed,
+    })
+    expect(suppressed.has('n1')).toBe(false)
+  })
+
+  it('never suppresses an UNPINNED label — the collision force still owns a hot field', () => {
+    const sides = new Map<string, LabelSide>()
+    const suppressed = new Set<string>()
+    chooseLabelSides({
+      nodes: cluster(3),
+      positions: stacked(3, 0),
+      labeled: new Set(['n0', 'n1', 'n2']),
+      pinned: new Set(['n0']),
+      widthOf,
+      sides,
+      suppressed,
+    })
+    expect(suppressed.size).toBe(0)
   })
 })

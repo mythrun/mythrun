@@ -33,6 +33,18 @@ import type { BaseProps } from './index.ts'
  *    gets its DOM default prevented (the impl swallows the spurious dismiss;
  *    no `onOpenChange` fires).
  *
+ * THE SHEET BODY SCROLLS BY DEFAULT, but hands that job over to a child that
+ * asks for it: `children` are laid out in a column that fills the sheet, so a
+ * child sized to FILL (`<Box grow>`) takes the sheet's height and scrolls
+ * internally instead. Children with per-page scroll memory MUST opt in — a
+ * child whose own scroll container never scrolls captures `scrollTop` 0 every
+ * time, so its restore is silently inert (myth-1k9qt, the mobile wiki).
+ *
+ * A DRAWER SUMMONED BY A TAP on the surface behind it stays open: the sheet
+ * ignores the outside-dismiss armed by the very gesture that opened it. The
+ * consumer summons straight from its own handler — no deferral, no timers
+ * (myth-cwhdk).
+ *
  * Controlled when `open` is supplied (pair with `onOpenChange`); uncontrolled
  * with `defaultOpen` otherwise. Open/close is the neutral `onOpenChange(open)`
  * boolean (§9), never a DOM event.

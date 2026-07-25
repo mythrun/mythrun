@@ -780,6 +780,105 @@ describe('runCharacterCreationJob', () => {
     expect(concept.rows[0]?.status).toBe('completed')
   })
 
+  // myth-evpfr — stage-3 re-entry is now RECOVERABLE when stage 2's output was
+  // persisted, and still TERMINAL when it genuinely can't be recovered. The
+  // three tests below pin all three arms.
+  it('stage-3 re-entry RELOADS concept_output and finishes the sheet (no resubmit)', async () => {
+    // Setup: stage 2 marked 'completed' in pipeline_runs AND its narrative
+    // persisted to character_concepts.concept_output — exactly the state a
+    // worker that died after stage 2 committed leaves behind. The loop writes
+    // concept_output BEFORE markStageCompleted, so this pairing is the real
+    // crash-window state, not a contrived one.
+    const { userId, campaignId } = await seed()
+    await pool.query(
+      `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, completed_at, user_id, cost_usd, input_tokens, output_tokens)
+       VALUES ($1, $2, 'character_concept', 'completed', now(), now(), $3, 0.02, 100, 50)`,
+      [uuidv7(), campaignId, userId],
+    )
+    await pool.query(
+      `UPDATE character_concepts SET concept_output = $1::jsonb
+        WHERE campaign_id = $2 AND user_id = $3`,
+      [JSON.stringify(VALID_CONCEPT), campaignId, userId],
+    )
+    // ONLY the sheet call is mocked: stage 1 is deterministic and stage 2 is
+    // skipped, so a second LLM call would mean the reload didn't work.
+    mockGenerateText.mockResolvedValueOnce({
+      output: VALID_SHEET,
+      finishReason: 'stop',
+      usage: { inputTokens: 2000, outputTokens: 2000, totalTokens: 4000 },
+    } as never)
+
+    await runCharacterCreationJob(makeDeps(pool), makeJob(campaignId, userId))
+
+    const sheetRow = await pool.query<{ status: string }>(
+      `SELECT status FROM pipeline_runs
+       WHERE campaign_id = $1 AND user_id = $2 AND stage = 'character_sheet'`,
+      [campaignId, userId],
+    )
+    expect(sheetRow.rows[0]?.status).toBe('completed')
+    const characters = await pool.query<{ name: string }>(
+      `SELECT c.name FROM characters c
+       JOIN campaign_characters cc ON cc.character_id = c.id
+       WHERE cc.campaign_id = $1 AND cc.user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(characters.rows[0]?.name).toBe('Bran of the Hollow')
+    const concept = await pool.query<{ status: string }>(
+      `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(concept.rows[0]?.status).toBe('completed')
+    expect(mockGenerateText).toHaveBeenCalledTimes(1)
+  })
+
+  it('stage-3 re-entry with a SCHEMA-INVALID persisted concept_output is TERMINAL', async () => {
+    // A populated-but-unusable concept_output is as unrecoverable as a missing
+    // one — a retry re-reads the same bad row. It must take the terminal path
+    // (concept → 'failed'), never a retry loop that leaves it 'processing'.
+    const { userId, campaignId } = await seed()
+    await pool.query(
+      `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, completed_at, user_id, cost_usd, input_tokens, output_tokens)
+       VALUES ($1, $2, 'character_concept', 'completed', now(), now(), $3, 0.02, 100, 50)`,
+      [uuidv7(), campaignId, userId],
+    )
+    await pool.query(
+      `UPDATE character_concepts SET concept_output = $1::jsonb
+        WHERE campaign_id = $2 AND user_id = $3`,
+      [JSON.stringify({ not: 'a character concept' }), campaignId, userId],
+    )
+    const events: Record<string, unknown>[] = []
+
+    // Terminal → returns cleanly (no rethrow, so BullMQ does not retry).
+    await runCharacterCreationJob(
+      makeDeps(pool, {
+        publishEvent: (cid, e) => {
+          events.push({ campaignId: cid, ...e })
+          return Promise.resolve()
+        },
+      }),
+      makeJob(campaignId, userId),
+    )
+
+    const sheetRow = await pool.query<{ status: string; error: string | null }>(
+      `SELECT status, error FROM pipeline_runs
+       WHERE campaign_id = $1 AND user_id = $2 AND stage = 'character_sheet'`,
+      [campaignId, userId],
+    )
+    expect(sheetRow.rows[0]?.status).toBe('failed')
+    expect(sheetRow.rows[0]?.error).toMatch(/failed schema validation/)
+    const concept = await pool.query<{ status: string }>(
+      `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(concept.rows[0]?.status).toBe('failed')
+    const stageFailed = events.find(
+      (e) => e.type === 'stage-failed' && e.stage === 'character_sheet',
+    )
+    expect(stageFailed?.willRetry).toBe(false)
+    // No LLM call: the guard fires before the sheet generation.
+    expect(mockGenerateText).not.toHaveBeenCalled()
+  })
+
   it('stage-3 re-entry without ctx.conceptOutput is TERMINAL: flips the concept to failed, no futile retry (playtest 2026-07-18)', async () => {
     // Setup: pre-insert pipeline_runs for stage 2 as 'completed'. On
     // re-entry, atomicClaimStage skips stage 2; ctx.conceptOutput stays
@@ -815,7 +914,7 @@ describe('runCharacterCreationJob', () => {
       [campaignId, userId],
     )
     expect(sheetRow.rows[0]?.status).toBe('failed')
-    expect(sheetRow.rows[0]?.error).toMatch(/re-entry without ctx.conceptOutput/)
+    expect(sheetRow.rows[0]?.error).toMatch(/no persisted concept_output/)
     // THE FIX: the CONCEPT flips to 'failed' so the player can resubmit
     // (previously it stayed 'processing' forever).
     const concept = await pool.query<{ status: string }>(

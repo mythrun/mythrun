@@ -21,6 +21,40 @@ variable "bootstrap_image_tag" {
   type        = string
 }
 
+variable "github_build_role_cutover" {
+  description = <<-EOT
+    myth-jnb. false (the default) keeps ECR WRITE on mythrun-github-actions-staging,
+    which is what CI uses today. true strips push / pull-through-cache-create from
+    it, leaving a role that can deploy but not build.
+
+    Flip this LAST. The full sequence lives in
+    infra/environments/shared/github-actions-build-role.tf; the short version is:
+    apply shared (creates mythrun-github-actions-build) -> create the `build`
+    GitHub Environment with an AWS_ACCOUNT_ID variable -> point the build jobs at
+    the new role and confirm a green run -> then flip this and apply staging.
+    Flipping it before the build jobs have moved breaks every image push.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "pin_job_workflow_ref" {
+  description = <<-EOT
+    myth-651. Adds a `job_workflow_ref` StringEquals condition to the staging
+    role's OIDC trust policy, so only the workflow FILES listed in
+    local.staging_job_workflow_refs can assume it — not merely anything running
+    on main in the staging environment.
+
+    DEFAULT IS false ON PURPOSE: a wrong ref string does not degrade, it locks
+    every deploy job out of AWS until someone reverts, and the claim's exact
+    value cannot be confirmed from outside a real workflow run. See the matching
+    variable in the shared workspace for how to read the claim off a live run
+    before flipping this.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "cognito_idps_enabled" {
   description = "MYT-36 two-pass apply gate. Apply 1: false (creates Cognito User Pool, App Client, Hosted UI domain, OAuth secret shells, no IdPs). Human-action: register Google + Discord OAuth apps and paste {client_id, client_secret} JSON via aws secretsmanager put-secret-value. Apply 2: flip to true to create the IdPs reading the secrets and update the App Client's supported_identity_providers list."
   type        = bool

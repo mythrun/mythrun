@@ -94,6 +94,11 @@ output "alb_zone_id" {
   description = "ALB's hosted zone ID (for Route 53 A-alias; NOT a Route 53 zone_id)."
 }
 
+output "alb_arn_suffix" {
+  value       = aws_lb.main.arn_suffix
+  description = "ALB's arn_suffix ('app/mythrun-alb/<id>') — the form CloudWatch wants for the LoadBalancer dimension on AWS/ApplicationELB metrics. Consumed by per-env serving modules for their target-group alarms (myth-6ik)."
+}
+
 output "alb_listener_https_arn" {
   value       = aws_lb_listener.https.arn
   description = "ARN of the HTTPS listener (per-env serving modules attach listener_rules here)."
@@ -102,6 +107,21 @@ output "alb_listener_https_arn" {
 output "github_oidc_provider_arn" {
   value       = aws_iam_openid_connect_provider.github.arn
   description = "ARN of the GitHub OIDC provider (per-env GH Actions IAM roles trust this)."
+}
+
+output "github_actions_build_role_arn" {
+  value       = aws_iam_role.github_actions_build.arn
+  description = "ARN of the ECR-push-only build role (myth-jnb). Paste into the `build` jobs' role-to-assume once the `build` GitHub Environment exists — see the cutover sequence in github-actions-build-role.tf."
+}
+
+output "alerts_kms_key_arn" {
+  value       = aws_kms_key.alerts.arn
+  description = "ARN of the customer-managed KMS key that encrypts the alerts topics. Per-environment workspaces MUST use this rather than alias/aws/sns — the AWS-managed key cannot authorize CloudWatch's service principal, so alarms on a topic encrypted with it deliver nothing while still turning red. See infra/environments/shared/alerts-kms.tf."
+}
+
+output "shared_alerts_topic_arn" {
+  value       = aws_sns_topic.shared_alerts.arn
+  description = "ARN of the shared-resource alerts topic (RDS / Redis / ALB / ACM / NAT alarms). Per-environment alarms publish to their own environment's topic instead."
 }
 
 output "bootstrap_db_ecr_repository_url" {

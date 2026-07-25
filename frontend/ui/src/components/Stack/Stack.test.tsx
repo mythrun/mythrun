@@ -114,6 +114,15 @@ describe('Stack', () => {
     expect(screen.getByTestId('s').className).toContain('min-h-[calc(100dvh-8.5rem)]')
   })
 
+  it('floors one flow-affordance row shy of the region when minHeight="pageBelowBar"', () => {
+    // ux-run3 myth-4jbmr: a seated screen rendered UNDER the spine's Back bar
+    // must subtract that row from its floor, or the column overflows the region
+    // and the block seats below optical center.
+    render(<Stack minHeight="pageBelowBar" data-testid="s" />)
+    // 8.5rem (the page floor) + 2rem (--control-sm) + 2rem (the spine's gap-6).
+    expect(screen.getByTestId('s').className).toContain('min-h-[calc(100dvh-12.5rem)]')
+  })
+
   it('caps + centres the column when maxWidth is set (reading measure)', () => {
     render(<Stack maxWidth="form" data-testid="s" />)
     const el = screen.getByTestId('s')

@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter, createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { ThemeProvider } from '@mythrun/ui'
@@ -59,6 +59,7 @@ vi.mock('@mythrun/ui', async (importOriginal) => {
         'data-pannable': String(props.pannable ?? true),
         'data-fill-host': String(props.fillHost ?? false),
         'data-forceful-settle': String(props.forcefulSettle ?? false),
+        'data-legend-hollow': props.legend?.hollow ?? '',
       },
       props.nodes.map((n) =>
         h(
@@ -424,13 +425,28 @@ describe('WorldReveal — mobile layout (full-bleed graph + wiki drawer)', () =>
     fireEvent.click(
       within(screen.getByTestId('reveal-graph')).getByRole('button', { name: /Maeris Vale/i }),
     )
-    // The page pushes synchronously; the summon is deferred ONE macrotask past
-    // the tapping gesture (see handleGraphSelect — the Radix armed-dismiss
-    // interplay), so the open state needs a beat.
+    // Page push AND summon are both synchronous now (myth-cwhdk moved the
+    // armed-dismiss guard into the Drawer, retiring D5's macrotask defer here).
     expect(within(sheet).getByRole('heading', { name: 'Maeris Vale' })).toBeDefined()
-    await waitFor(() => {
-      expect(sheet.getAttribute('data-state')).toBe('open')
-    })
+    expect(sheet.getAttribute('data-state')).toBe('open')
+  })
+
+  // myth-1k9qt — the wiki is the SCROLLER inside the sheet, not the sheet body:
+  // it takes the sheet's height (`Box grow` → flex-1 min-h-0) so its own scroll
+  // container actually moves. While the body was the only scroller the wiki's
+  // per-page scroll capture read 0 every time and restore was inert on mobile.
+  it('hands the wiki the sheet height so it owns the scrolling (scroll memory is live)', async () => {
+    mockViewport({ narrow: true })
+    renderRevealMobile()
+    const sheet = screen.getByTestId('reveal-drawer')
+    const wiki = await within(sheet).findByTestId('reveal-wiki')
+    const sheetBody = sheet.querySelector('[data-mythrun-drawer-body]')
+    expect(sheetBody).not.toBeNull()
+    expect(sheetBody?.contains(wiki)).toBe(true)
+    // Every box between the body and the wiki is a fill, so the height reaches it.
+    for (let el = wiki.parentElement; el !== null && el !== sheetBody; el = el.parentElement) {
+      expect(el.className).toMatch(/\bgrow\b|\bflex-1\b/)
+    }
   })
 
   it('mobile graph: the pannable camera stays, host-fill + forceful settle ON (regime props)', () => {
@@ -654,27 +670,62 @@ describe('WorldReveal — silent updates while the tail runs (MYT-89 reveal timi
   })
 })
 
-describe('WorldReveal — the page header carries the WORLD NAME (ux-run2 myth-8ozsw)', () => {
-  it('the page H1 becomes the world name once the snapshot delivers it (no generic label)', async () => {
-    const withIntro: WorldGenSnapshot = {
-      ...SNAPSHOT,
-      introduction: {
-        title: 'The Ashfen Reaches',
-        prose: 'A tidewater world of salt and tallow.',
-        references: [],
-      },
-    }
+describe('WorldReveal — the panel is the document; the left slot is a quiet eyebrow (ux-run3)', () => {
+  // Run-3 found the world's name TWICE at the same register — the left page
+  // title and the wiki panel's header, identical size/weight on one baseline.
+  // The PANEL is the document and keeps the name; the left slot demotes to a
+  // static "Your world" eyebrow (the codebase's uppercase ui-label register).
+  // The H1 stays in the outline — visually hidden, still the world's name
+  // (myth-8ozsw's a11y intent survives the visual demotion).
+  const withIntro: WorldGenSnapshot = {
+    ...SNAPSHOT,
+    introduction: {
+      title: 'The Ashfen Reaches',
+      prose: 'A tidewater world of salt and tallow.',
+      references: [],
+    },
+  }
+
+  it('shows the world name ONCE visibly — the panel header; the page H1 is visually hidden', async () => {
     renderReveal({ fetchSnapshot: vi.fn().mockResolvedValue(withIntro) })
-    await screen.findByTestId('reveal-wiki')
-    // The prime top-left slot is the world's NAME, not chrome saying "Your world".
-    expect(screen.getByRole('heading', { level: 1, name: 'The Ashfen Reaches' })).toBeDefined()
-    expect(screen.queryByRole('heading', { level: 1, name: i18n.t('worldReveal.title') })).toBeNull()
+    const wiki = await screen.findByTestId('reveal-wiki')
+    const named = screen.getAllByRole('heading', { name: 'The Ashfen Reaches' })
+    // Exactly two carriers: the panel's visible header + the sr-only outline H1.
+    expect(named).toHaveLength(2)
+    const panelHeader = named.find((el) => wiki.contains(el))
+    const outlineH1 = named.find((el) => !wiki.contains(el))
+    expect(panelHeader).toBeDefined()
+    expect(outlineH1?.tagName).toBe('H1')
+    // The H1 rides the VisuallyHidden clip wrapper — in the outline, off the glass.
+    expect(outlineH1?.parentElement?.style.position).toBe('absolute')
   })
 
-  it('falls back to the generic title while the name is unknown (pre-intro snapshot)', async () => {
+  it('demotes the left slot to the static eyebrow — never a second full-size title', async () => {
+    renderReveal({ fetchSnapshot: vi.fn().mockResolvedValue(withIntro) })
+    await screen.findByTestId('reveal-wiki')
+    // The eyebrow: the generic "Your world" register, NOT a heading, in the
+    // small uppercase ui-label class the codebase's other eyebrows wear.
+    const eyebrow = screen.getByText(i18n.t('worldReveal.title'))
+    expect(eyebrow.tagName).not.toMatch(/^H[1-6]$/)
+    expect(eyebrow.className).toContain('uppercase')
+    expect(screen.queryByRole('heading', { name: i18n.t('worldReveal.title') })).toBeNull()
+  })
+
+  it('keeps the outline H1 on the generic title while the name is unknown (pre-intro snapshot)', async () => {
     renderReveal()
     await screen.findByTestId('reveal-wiki')
     // The SNAPSHOT fixture has no introduction — the outline keeps a real H1.
     expect(screen.getByRole('heading', { level: 1, name: i18n.t('worldReveal.title') })).toBeDefined()
+  })
+})
+
+describe('WorldReveal — the legend documents the hollow marks (ux-run3)', () => {
+  it('feeds the graph legend the resolved hollow label (the DS owns no copy)', () => {
+    renderReveal()
+    // The route resolves the copy; the DS receives it through the legend map's
+    // reserved `hollow` seat (the GraphDouble mirrors the prop).
+    expect(screen.getByTestId('reveal-graph').getAttribute('data-legend-hollow')).toBe(
+      i18n.t('worldReveal.legendHollow'),
+    )
   })
 })

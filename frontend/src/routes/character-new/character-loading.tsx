@@ -122,6 +122,11 @@ export function CharacterLoadingSurface({
   // The stream emits stable beat IDs; resolve each to its display copy here (the
   // client-core layer owns no copy). The DS beat renders these labels + the eyebrow.
   const labeledBeats = useMemo(() => beats.map((b) => ({ ...b, label: beatLabel(b.id, t) })), [beats, t])
+  // The kicker's factual stage position (ux-run3 myth-1yxfr): the stage underway
+  // — done + 1, resting at the total once everything resolved. The serif H1
+  // alone carries the "coming together" thought; the eyebrow states the facts.
+  const beatTotal = labeledBeats.length
+  const beatCurrent = Math.min(labeledBeats.filter((b) => b.state === 'done').length + 1, Math.max(beatTotal, 1))
   // myth-qkjdq: the RELIABLE, SSE-independent advance. The SSE-driven stream above
   // animates the beats, but its `done` depends on a live event / snapshot recheck
   // that a CloudFront-buffered SSE may never deliver. This durable poll flips on
@@ -211,28 +216,37 @@ export function CharacterLoadingSurface({
   const stalledLabel = display.kind === 'stalled' ? t('characterCreate.loading.stalled') : undefined
 
   return (
-    <Stack gap={5} data-testid="character-loading">
-      <Heading level={1} role="title">
-        {t('characterCreate.loading.title')}
-      </Heading>
-      <CharacterLoadingBeat
-        beats={labeledBeats}
-        heading={t('characterCreate.loading.heading')}
-        reducedMotion={reducedMotion}
-        // At most one of the two wait lines (exactOptionalPropertyTypes; the
-        // honesty contract — no usable estimate means neither line, never an
-        // empty or a dead one). The beat renders the stalled line in place of
-        // the countdown.
-        {...(countdownLabel !== undefined ? { countdownLabel } : {})}
-        {...(stalledLabel !== undefined ? { stalledLabel } : {})}
-      />
-      {/* One line of setup for the invite affordance the surface shell renders
-          directly below (ux-run2 myth-3bl24) — bare, that link reads as
-          utility-nav that wandered in from a footer; this makes it an
-          invitation. Quiet body prose, not chrome. */}
-      <Text role="subtitle" as="p" data-testid="character-loading-table-room">
-        {t('characterCreate.loading.tableRoom')}
-      </Text>
+    // The optical seat (ux-run3 myth-5ekb5): run 3 found the wait hugging the
+    // top with the lower two-thirds blank. The page-floored column with 2/3
+    // grow-weighted spacers seats the block optically above center (the
+    // myth-ma8yv idiom); on short screens the floor collapses and content
+    // simply flows.
+    <Stack minHeight="page" data-testid="character-loading-center">
+      <Stack grow={2} />
+      <Stack gap={5} data-testid="character-loading">
+        <Heading level={1} role="title">
+          {t('characterCreate.loading.title')}
+        </Heading>
+        <CharacterLoadingBeat
+          beats={labeledBeats}
+          heading={t('characterCreate.loading.stage', { current: beatCurrent, total: beatTotal })}
+          reducedMotion={reducedMotion}
+          // At most one of the two wait lines (exactOptionalPropertyTypes; the
+          // honesty contract — no usable estimate means neither line, never an
+          // empty or a dead one). The beat renders the stalled line in place of
+          // the countdown.
+          {...(countdownLabel !== undefined ? { countdownLabel } : {})}
+          {...(stalledLabel !== undefined ? { stalledLabel } : {})}
+        />
+        {/* One line of setup for the invite affordance the surface shell renders
+            directly below (ux-run2 myth-3bl24) — bare, that link reads as
+            utility-nav that wandered in from a footer; this makes it an
+            invitation. Quiet body prose, not chrome. */}
+        <Text role="subtitle" as="p" data-testid="character-loading-table-room">
+          {t('characterCreate.loading.tableRoom')}
+        </Text>
+      </Stack>
+      <Stack grow={3} />
     </Stack>
   )
 }

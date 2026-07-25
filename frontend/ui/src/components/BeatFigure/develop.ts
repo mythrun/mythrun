@@ -69,9 +69,36 @@ export const SHIMMER_MS = 140
 /** Breathing density envelope floor/ceiling — a DELICATE range so the between-sessions hold
  *  reads calm and unhurried: a sparse drifting dither at the trough swelling to a moderate
  *  crest, never a busy full checkerboard. The field never fully clears (stays legibly textured)
- *  nor solidifies. */
+ *  nor solidifies. NOTE (ux-run3 myth-c96rf): breathe is the NO-PROGRESS hold (session prep —
+ *  a wait with no accretion to promise). A surface whose zero-state hands off to a real fill
+ *  uses the IDLE state below instead — a breathing field before a fill read as ~half progress
+ *  that then ERASED when work began. */
 export const BREATHE_LOW = 0.16
 export const BREATHE_HIGH = 0.5
+
+// ---------------------------------------------------------------------------
+// The IDLE zero-state (ux-run3 myth-c96rf) — the "poised to begin" frame for
+// accreting surfaces (the world-gen calm mark, the chargen band). Nearly blank:
+// a faint low-amplitude shimmer seated at the fill's ORIGIN (the leftmost sliver
+// of the track, where ink will start), pulsing slowly. THE INVARIANT (pinned in
+// develop.test.ts): idle is everywhere, at every instant, no denser than the
+// fill at the smallest accretion step any consumer can show — so the
+// idle→accreting handoff only ever ADDS ink (a beginning, never a reset), and
+// the dense texture is saved for the accreted/end state.
+
+/** The idle shimmer's seat, in fractional columns — the fill's own density
+ *  profile evaluated at this front. MUST sit before the smallest consumer
+ *  accretion front (world-gen: one watched event on the 20-col mark ≈ 0.51). */
+export const IDLE_FRONT = 0.35
+
+/** One idle pulse loop, in ms (`T` advances 1.0 per loop). Slower than the
+ *  breathe cycle — a resting pulse, not a working one. */
+export const IDLE_PULSE_MS = 2600
+
+/** The pulse floor — the shimmer dims to this fraction of its (already faint)
+ *  seat density and never fully clears: alive from frame one, never a dead
+ *  frame (the myth-zyk6o rule, kept at a whisper). */
+export const IDLE_PULSE_LOW = 0.35
 
 /** How much breathing phase lags across the diagonal (in whole cycles), so the breath TRAVELS
  *  as a diagonal wave rather than pulsing in unison. >1 keeps a dense band and a sparse band
@@ -120,6 +147,16 @@ export function fillLevelAt(x: number, frontX: number, band = FRONT_BAND): numbe
 }
 
 /**
+ * The fill's dither DENSITY at column `x` for a front at `frontX`: the position fraction
+ * mapped into the BASE_LEVEL…FILLED_LEVEL range. Monotone in `frontX` (accretion only ever
+ * adds ink) — the idle state reuses this exact profile at its fixed seat so idle can never
+ * out-ink a real fill (the myth-c96rf invariant).
+ */
+export function densityAt(x: number, frontX: number, band = FRONT_BAND): number {
+  return BASE_LEVEL + (FILLED_LEVEL - BASE_LEVEL) * fillLevelAt(x, frontX, band)
+}
+
+/**
  * HARD binary cell decision for the fill. The position fraction maps to a dither density
  * (BASE_LEVEL ahead → FILLED_LEVEL behind), and the cell is lit iff its threshold is below
  * that density. The completed region (fraction 1 → FILLED_LEVEL, dense) and the track ahead
@@ -129,7 +166,7 @@ export function fillLevelAt(x: number, frontX: number, band = FRONT_BAND): numbe
  */
 export function litAt(x: number, y: number, frontX: number, seed = 0, band = FRONT_BAND): boolean {
   const fraction = fillLevelAt(x, frontX, band)
-  const density = BASE_LEVEL + (FILLED_LEVEL - BASE_LEVEL) * fraction
+  const density = densityAt(x, frontX, band)
   if (density <= 0) return false
   const active = fraction > 0 && fraction < 1
   return thresholdAt(x, y, active ? seed : 0) < density
@@ -207,4 +244,35 @@ export function litBreatheAt(x: number, y: number, cols: number, rows: number, T
   const phase = T - axisAt(x, y, cols, rows) * BREATHE_PHASE_SPAN
   const level = BREATHE_LOW + (BREATHE_HIGH - BREATHE_LOW) * breatheEnvelope(phase)
   return thresholdAt(x, y, Math.floor(phase)) < level
+}
+
+/**
+ * The idle pulse in [IDLE_PULSE_LOW, 1] at normalized time `T` (advances 1.0 per
+ * IDLE_PULSE_MS): a raised cosine — a slow swell and fade with no kink. Only the fractional
+ * part of `T` matters (period 1).
+ */
+export function idlePulse(T: number): number {
+  const p = T - Math.floor(T)
+  return IDLE_PULSE_LOW + (1 - IDLE_PULSE_LOW) * (0.5 - 0.5 * Math.cos(2 * Math.PI * p))
+}
+
+/**
+ * The idle zero-state's density at column `x` and time `T`: the fill's OWN density profile
+ * frozen at the IDLE_FRONT seat, dimmed by the pulse. Because it is the fill profile at a
+ * front strictly before any consumer's smallest accretion front, idle is cell-wise ≤ every
+ * accretion state (pinned in develop.test.ts) — the handoff can only add ink.
+ */
+export function idleDensityAt(x: number, T: number): number {
+  return densityAt(x, IDLE_FRONT) * idlePulse(T)
+}
+
+/**
+ * HARD binary cell decision for the idle shimmer. The seed is the pulse's CYCLE INDEX (the
+ * breathe-field rule): grain stable within a pulse, reshuffled between pulses — the seat's
+ * few cells twinkle from swell to swell instead of wiggling per frame.
+ */
+export function litIdleAt(x: number, y: number, T: number): boolean {
+  const density = idleDensityAt(x, T)
+  if (density <= 0) return false
+  return thresholdAt(x, y, Math.floor(T)) < density
 }

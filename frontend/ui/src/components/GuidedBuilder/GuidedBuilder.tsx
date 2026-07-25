@@ -1,4 +1,4 @@
-import { forwardRef } from 'react'
+import { forwardRef, useRef } from 'react'
 import type { GuidedBuilderProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
 import { Stack } from '../Stack/Stack.tsx'
@@ -57,9 +57,9 @@ const OPTION_DESC = 'font-body text-sm leading-[1.4] text-ink-secondary'
 // step reads as one full-width confirm card. Non-color arbitrary value → R3-allowed.
 const GRID_CLASS = 'grid gap-[var(--space-3)] grid-cols-[repeat(auto-fit,minmax(16rem,1fr))]'
 
-// Back + skip are subtle text-link affordances (the mockup's quiet nav, not solid
-// buttons) — real <button>s so they are keyboard-operable, styled as underlined mono
-// links with the shared focus ring.
+// The skip escape hatch is a subtle text-link affordance (the mockup's quiet nav,
+// not a solid button) — a real <button> so it is keyboard-operable, styled as an
+// underlined mono link with the shared focus ring.
 const LINK_CLASS = cn(
   'inline-flex items-center gap-[var(--space-1)] rounded-none bg-transparent cursor-pointer',
   'font-ui text-xs tracking-wide text-ink-tertiary underline underline-offset-2',
@@ -71,12 +71,51 @@ export const GuidedBuilder = forwardRef<HTMLDivElement, GuidedBuilderProps>(func
   { labels, rail, counter, question, options, selectedId, onSelect, onNext, onBack, onSkipToFreeform },
   ref,
 ) {
+  // The commit affordances' row — nudged into view when a pick lands so Next is
+  // never left as a clipped sliver below a 720px fold (ux-run3 myth-t6pxy c).
+  const actionsRef = useRef<HTMLDivElement | null>(null)
+  const revealActions = (): void => {
+    const el = actionsRef.current
+    // jsdom has no scrollIntoView; browsers do. `nearest` makes an already-
+    // visible row a no-op, so the nudge only moves the page when Next is
+    // actually off-screen.
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }
+  }
   return (
     <Stack ref={ref} data-testid="guided-builder" gap={6}>
-      {/* Progress rail — the extracted GuidedRail (a semantic ordered list of
-          rungs), under the builder's historical testid so the composition renders
-          identically to the pre-extraction markup. */}
-      <GuidedRail rail={rail} data-testid="guided-builder-rail" {...(counter !== undefined && { counter })} />
+      {/* ONE wayfinding row — exit · journey · position (ux-run3 myth-t6pxy b).
+          The quiet Back rides the rail's leading edge, where the path chooser's
+          Back sits: seated in the bottom action row it fell below a 720px fold
+          on every step the builder renders (a twelve-card class grid ends at
+          ~665px), so the exit was functionally invisible at exactly the moment
+          the path choice is cheapest to reverse. Sharing the rail's row rather
+          than taking one of its own costs the grid ~4px instead of ~64 — the
+          twelve cards must still clear the fold too. `flush` seats the label on
+          the content grid (myth-4jbmr); the rail grows so its trailing counter
+          keeps the row's right edge. Wraps to two lines at ~375px.
+          NOTE the flow's rule this does NOT break: on the WRITING screens
+          (notes/grounding) Back stays in the prompt's action row beside
+          Continue, where the writer's hands are (ux-run2 myth-80an1). Picking
+          screens exit from the top; writing screens exit from the action row. */}
+      <Stack direction="row" align="center" wrap gap={4} data-testid="guided-builder-wayfinding">
+        <Button
+          variant="ghost"
+          size="sm"
+          flush="start"
+          onPress={onBack}
+          data-testid="guided-builder-back"
+        >
+          {labels.back}
+        </Button>
+        {/* Progress rail — the extracted GuidedRail (a semantic ordered list of
+            rungs), under the builder's historical testid so the composition
+            renders identically to the pre-extraction markup. */}
+        <Stack grow>
+          <GuidedRail rail={rail} data-testid="guided-builder-rail" {...(counter !== undefined && { counter })} />
+        </Stack>
+      </Stack>
 
       {/* The step's question — the large serif hero. */}
       <Heading level={2} role="display">
@@ -93,6 +132,7 @@ export const GuidedBuilder = forwardRef<HTMLDivElement, GuidedBuilderProps>(func
               type="button"
               onClick={() => {
                 onSelect(option.id)
+                revealActions()
               }}
               aria-pressed={selected}
               data-option-id={option.id}
@@ -106,27 +146,29 @@ export const GuidedBuilder = forwardRef<HTMLDivElement, GuidedBuilderProps>(func
         })}
       </div>
 
-      {/* Nav row (ux-run2 myth-80an1 / myth-esd1y): the quiet Back holds the
-          bottom-left on EVERY step — one Back, one meaning, one position (on the
-          first step the parent wires it to leave the builder). The mode-switching
-          "describe them instead" escape hatch is separated from step navigation:
-          it sits right-aligned beside Next. Wraps at narrow widths. */}
-      <Stack direction="row" justify="between" align="center" wrap gap={4}>
-        <button type="button" onClick={onBack} className={LINK_CLASS}>
-          <span aria-hidden="true">‹</span>
-          {labels.back}
+      {/* Action row: the mode-switching "describe them instead" escape hatch is
+          separated from step navigation — it sits right-aligned beside Next.
+          Back lives at the TOP of the builder (myth-t6pxy), not here, so the
+          reverse affordance stays inside the first viewport on grid-tall steps.
+          Wraps at narrow widths. */}
+      <Stack
+        ref={actionsRef}
+        direction="row"
+        justify="end"
+        align="center"
+        wrap
+        gap={4}
+        data-testid="guided-builder-actions"
+      >
+        <button type="button" onClick={onSkipToFreeform} className={LINK_CLASS}>
+          {labels.switchToFreeform}
         </button>
-        <Stack direction="row" align="center" wrap gap={4}>
-          <button type="button" onClick={onSkipToFreeform} className={LINK_CLASS}>
-            {labels.switchToFreeform}
-          </button>
-          {/* Next is honestly gated: disabled (muted, identical geometry — the DS
-              Button owns the styling) until the step has an answer; the accent
-              fill is the reward for deciding (ux-run2 myth-x9ugl / myth-skbzw). */}
-          <Button variant="primary" size="lg" disabled={selectedId === null} onPress={onNext}>
-            {labels.next}
-          </Button>
-        </Stack>
+        {/* Next is honestly gated: disabled (muted, identical geometry — the DS
+            Button owns the styling) until the step has an answer; the accent
+            fill is the reward for deciding (ux-run2 myth-x9ugl / myth-skbzw). */}
+        <Button variant="primary" size="lg" disabled={selectedId === null} onPress={onNext}>
+          {labels.next}
+        </Button>
       </Stack>
     </Stack>
   )

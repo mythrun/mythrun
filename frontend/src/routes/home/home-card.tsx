@@ -42,9 +42,10 @@ export function CampaignCard({
    *  exists, by design). */
   lowOnSessionCredits?: boolean
   /** This card holds the grid's premier (top-left) slot — the most-recent-activity
-   *  campaign (myth-z9eiq). When it also has a play record, it carries the accent
-   *  "Continue session" cta: the resume affordance a returning player came for.
-   *  Exactly one card per grid is premier (the hub passes it to index 0). */
+   *  campaign (myth-z9eiq). When it also has a play record, it carries the LOUD
+   *  "Continue session →" cta plus the promoted card treatment (myth-7jc1h);
+   *  dormant played cards carry their own quiet "Resume →" regardless. Exactly
+   *  one card per grid is premier (the hub passes it to index 0). */
   premier?: boolean
 }): React.JSX.Element {
   const { t, i18n } = useTranslation()
@@ -60,23 +61,34 @@ export function CampaignCard({
   // The mono ledger line (shared with the mobile index row — see card-phase-line).
   const stateLine = cardPhaseLine(campaign, t, i18n.language)
 
-  // The card's ONE accent cta line (myth-rhvkt / myth-z9eiq): a stalled
-  // needs-character card lifts its "Author your character →" out of metadata
-  // gray so "the ones waiting on me" pop when scanning a full grid; otherwise
-  // the premier slot's played card carries the resume cue. Never both — a card
-  // that needs a character can't be continued yet.
+  // The card's ONE accent cta line, tiered by weight (myth-rhvkt / myth-z9eiq →
+  // myth-7jc1h): EVERY played campaign is continuable — the premier slot's
+  // played card carries the LOUD "Continue session →" (plus the promoted card
+  // treatment), a dormant played card the QUIET "Resume →" (live-vs-dormant in
+  // the words + weight, never in cta presence/absence), and a stalled
+  // needs-character card keeps its accent "Author your character →" at the
+  // WHISPER tier — visible when scanning, but a cold start never out-shouts an
+  // invested campaign. CLICK SEMANTICS (decided, run 3): the whole card is the
+  // ONE target — the cta line names the card's action, it is never a nested
+  // control (no two overlapping affordances).
   const cta =
     campaign.cardPhase === 'needs-character'
-      ? stateLine
-      : premier && campaign.cardPhase === 'played'
-        ? t('home.card.continueSession')
+      ? ({ label: stateLine, tone: 'whisper' } as const)
+      : campaign.cardPhase === 'played'
+        ? premier
+          ? ({ label: t('home.card.continueSession'), tone: 'loud' } as const)
+          : ({ label: t('home.card.resume'), tone: 'quiet' } as const)
         : undefined
+  // The premier slot earns the promoted treatment only WITH a play record — an
+  // unplayed premier card has no "jump back in" story to spotlight.
+  const promoted = premier && campaign.cardPhase === 'played'
 
   return (
     <Link href={`/campaigns/${id}`} unstyled data-testid={`campaign-card-${id}`}>
       <CoverCard
         width={CARD_WIDTH}
-        {...(cta !== undefined ? { cta } : {})}
+        promoted={promoted}
+        {...(cta !== undefined ? { cta: cta.label, ctaTone: cta.tone } : {})}
         cover={
           worldColors !== null ? (
             <CoverDither
@@ -119,12 +131,12 @@ export function CampaignCard({
             ) : null}
             {/* Mono ledger line — the record/state, carried as plain text (the
                 register forbids a dot/badge/chip). A needs-character card's line
-                IS the cta above, lifted to accent — no muted duplicate here. */}
-            {campaign.cardPhase !== 'needs-character' ? (
-              <Text role="meta" data-testid="card-state">
-                {stateLine}
-              </Text>
-            ) : null}
+                IS the cta zone's whisper line — its ledger slot stays RESERVED
+                as a blank line (myth-7jc1h: the 4-zone card holds every zone at
+                a fixed offset, so seals never sit at three heights per grid). */}
+            <Text role="meta" data-testid="card-state">
+              {campaign.cardPhase !== 'needs-character' ? stateLine : '\u00A0'}
+            </Text>
 
             {creator === null && lowOnSessionCredits ? (
               <Text role="meta" data-testid="card-low-credits">
@@ -135,16 +147,21 @@ export function CampaignCard({
         }
       >
         <Stack gap={1}>
-          <Heading level={2} role="title">
+          {/* The title zone holds a fixed 2-line band (`lines={2}`: clamp +
+              lh reserve — myth-7jc1h) so 1- and 2-line titles keep the sub-line
+              at one offset across the grid; the promoted premier reads one
+              size up (`heading` vs `title`) — the weight signal. */}
+          <Heading level={2} role={promoted ? 'heading' : 'title'} lines={2}>
             {name}
           </Heading>
-          {/* World · creator — italic, muted narrative sub-line. The creator credit
-              shows ONLY on a joined (not-own) world. Suppressed entirely when it
+          {/* World · creator — italic, muted narrative sub-line, truncated to a
+              single line (the zone's fixed height). The creator credit shows
+              ONLY on a joined (not-own) world. Suppressed entirely when it
               would only echo the title: campaign names default to the world name,
               so an identical sub-line is pure noise (MYT-102 audit) — it returns
               the moment a rename or a creator credit gives it something to say. */}
           {worldName !== name || creator !== null ? (
-            <Text role="subtitle" data-testid="card-world">
+            <Text role="subtitle" truncate data-testid="card-world">
               {worldName !== name ? worldName : null}
               {creator !== null ? t('home.card.byCreator', { creator }) : null}
             </Text>

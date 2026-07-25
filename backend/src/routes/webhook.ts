@@ -23,6 +23,7 @@ import type { Pool } from 'pg'
 import type { Stripe } from 'stripe'
 import type { Env } from '../config/env.js'
 import { getStripeClient } from '../billing/stripe-client.js'
+import { billingError } from '../billing/errors.js'
 import { dispatchEvent } from '../billing/webhook.js'
 
 export interface WebhookRoutesOpts {
@@ -59,7 +60,7 @@ export const webhookRoutes: FastifyPluginAsync<WebhookRoutesOpts> =
         // 1. Signature header gate.
         const sig = request.headers['stripe-signature']
         if (!sig || typeof sig !== 'string') {
-          return reply.code(400).send({ code: 'missing_signature' })
+          return reply.code(400).send(billingError('missing_signature'))
         }
 
         // 2. Defense-in-depth: assert the parser delivered a Buffer. If a
@@ -70,7 +71,7 @@ export const webhookRoutes: FastifyPluginAsync<WebhookRoutesOpts> =
         // instead of silently calling constructEvent on a non-Buffer.
         if (!Buffer.isBuffer(request.body)) {
           request.log.error({ bodyType: typeof request.body }, 'webhook_parser_misconfigured')
-          return reply.code(500).send({ code: 'internal' })
+          return reply.code(500).send(billingError('internal'))
         }
         const rawBody: Buffer = request.body
 
@@ -97,7 +98,7 @@ export const webhookRoutes: FastifyPluginAsync<WebhookRoutesOpts> =
               ? (err as { type?: unknown }).type
               : undefined
           request.log.warn({ err: { message, type: errType } }, 'stripe_webhook_signature_invalid')
-          return reply.code(400).send({ code: 'invalid_signature' })
+          return reply.code(400).send(billingError('invalid_signature'))
         }
 
         // 5. Dispatch (Task 16 fills in the stub body).

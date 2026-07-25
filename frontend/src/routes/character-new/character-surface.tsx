@@ -164,6 +164,9 @@ export function CharacterSurface({
   const beatInviteProp = inviteDeps !== undefined ? { inviteDeps } : {}
   const panelDepsProp = inviteDeps !== undefined ? { deps: inviteDeps } : {}
 
+  // The play entry's resume-verb continuity signal (myth-dbu98).
+  const played = campaign.lastPlayedAt !== null
+
   // Redirect kinds navigate away — render the beat bare (no surface chrome).
   if (kind === 'situation' || kind === 'level' || kind === 'create') {
     return <CharacterBeat kind={kind} campaignId={campaignId} signals={s} deps={deps} onReload={reload} onConceptRetry={onConceptRetry} onIntegrationRetry={onIntegrationRetry} />
@@ -174,12 +177,16 @@ export function CharacterSurface({
   // shows the demoted collapsed invite here, below the beat content, owner-only.
   const showCollapsedInvite = isOwner && kind !== 'staging'
   return (
-    <Stack gap={4} data-testid="character-surface">
+    // gap 5: the collapsed "Invite a friend →" line below the beat needs clear
+    // separation from the beat's own commit row (ux-run3 myth-vshy0) — at gap 4
+    // it sat close enough to read as part of the sheet's action row.
+    <Stack gap={5} data-testid="character-surface">
       <CharacterBeat
         kind={kind}
         campaignId={campaignId}
         signals={s}
         deps={deps}
+        played={played}
         onReload={reload}
         onConceptRetry={onConceptRetry}
         onIntegrationRetry={onIntegrationRetry}

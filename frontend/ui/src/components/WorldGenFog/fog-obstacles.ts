@@ -1,4 +1,5 @@
 import {
+  CELL_PX,
   ENTITY_SIZE,
   LABEL_CAP_Y_OFFSET,
   LABEL_CLEAR_PAD,
@@ -105,6 +106,38 @@ export function nodeBoxExtents(
   side: LabelSide = 'e',
 ): NodeBox {
   return labeled ? labelBoxExtents(kind, textWidth, side) : iconBoxExtents()
+}
+
+/**
+ * The label KNOCKOUT as a cell mask (ux-run3 myth-rlbku/llqj7). FogSim clears its own
+ * density under every obstacle box (`boxClear`), so the WEATHER gets the paper knockout
+ * behind a name for free — but the static LAND field the paint now draws underneath
+ * never passes through the sim, so it needs the same knockout computed here. The cell
+ * bounds mirror `boxClear` EXACTLY (the same `LABEL_CLEAR_PAD.x` horizontal inflation,
+ * the same `Math.trunc` cell mapping), so land and fog are cleared over identical cells
+ * and a label sits on one continuous piece of paper.
+ *
+ * Returns a `gw × gh` byte mask rather than a per-cell box scan: the paint asks about
+ * every cell in the grid, and at real density a linear scan over ~46 obstacles per cell
+ * would cost half a million intersection tests a frame. Writing only the obstacle
+ * footprints costs a few thousand.
+ */
+export function clearedCellMask(
+  obstacles: readonly FogObstacle[],
+  gw: number,
+  gh: number,
+): Uint8Array {
+  const mask = new Uint8Array(gw * gh)
+  for (const ob of obstacles) {
+    const gx0 = Math.max(0, Math.trunc((ob.x - LABEL_CLEAR_PAD.x) / CELL_PX))
+    const gx1 = Math.min(gw - 1, Math.trunc((ob.x + ob.w + LABEL_CLEAR_PAD.x) / CELL_PX))
+    const gy0 = Math.max(0, Math.trunc(ob.y / CELL_PX))
+    const gy1 = Math.min(gh - 1, Math.trunc((ob.y + ob.h) / CELL_PX))
+    for (let gy = gy0; gy <= gy1; gy++) {
+      for (let gx = gx0; gx <= gx1; gx++) mask[gy * gw + gx] = 1
+    }
+  }
+  return mask
 }
 
 /**

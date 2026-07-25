@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Drawer, Heading, IconButton, ResizeHandle, Stack, useViewportBelowLg } from '@mythrun/ui'
+import { Box, Drawer, Heading, IconButton, ResizeHandle, Stack, useViewportBelowLg } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
@@ -295,7 +295,10 @@ function CreationWiki({
         open={drawerOpen}
         onOpenChange={onDrawerOpenChange}
       >
-        {children}
+        {/* The wiki FILLS the sheet and scrolls internally (myth-1k9qt) — while
+            the sheet body was the scroller, the wiki's own container never
+            moved and its per-page scroll memory captured 0 every time. */}
+        <Box grow>{children}</Box>
       </Drawer>
     )
   }

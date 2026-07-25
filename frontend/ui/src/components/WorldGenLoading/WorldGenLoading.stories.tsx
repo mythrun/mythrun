@@ -5,9 +5,10 @@ import type { StageProgress } from '@mythrun/client-core/contract'
 import { WorldGenLoading } from './WorldGenLoading.tsx'
 
 // WorldGenLoading — act ONE of the two-act generating flow (reworked for
-// ux-run2 myth-i2pdo + myth-xe38q). The calm wait: an ACCRETING ~96px dither
-// mark (quantized fill driven by real-event `accretion`; ambient breathe at 0 —
-// never an empty frame) over a whisper line at headline scale (~20px) cycling
+// ux-run2 myth-i2pdo + myth-xe38q; ux-run3 myth-c96rf). The calm wait: an
+// ACCRETING 120px dither mark (quantized fill driven by real-event `accretion`;
+// the faint IDLE shimmer at 0 — nearly blank, emptier than any accretion
+// state) over a whisper line at headline scale (~20px) cycling
 // twenty short playful loading messages every ~10s in RANDOM order (a shuffled
 // permutation, every line once before any repeats, no back-to-back repeat
 // across the reshuffle), past whispers settling beneath as a faint LEDGER — the
@@ -64,6 +65,8 @@ const WATCH = 'Watch it take shape'
 const SPINNER = 'Making your world'
 // The permission-to-leave line (real copy, worldGen.safeToLeave).
 const LEAVE = 'Safe to leave. The world keeps forming.'
+// The concrete hold promise paired under it (ux-run3 myth-b965d).
+const HOLD = "We'll hold it right here for you."
 
 // --- The live countdown harness -------------------------------------------
 // Drives the REAL derivation the app uses: historical per-stage averages ∩ a
@@ -128,6 +131,7 @@ function LiveCountdownDemo({
         spinnerLabel={SPINNER}
         accretion={accretion}
         leaveLabel={LEAVE}
+        holdLabel={HOLD}
         {...(countdownLabel !== undefined ? { countdownLabel } : {})}
         watchReady={watchReady}
         watchLabel={WATCH}
@@ -139,9 +143,9 @@ function LiveCountdownDemo({
   )
 }
 
-// PREP — the fresh act-one state: the mark BREATHING (zero accretion — nothing
-// has landed yet), the whisper cycling, the live coarse countdown, the leave
-// line. Watch the whispers settle into the ledger every ~10s.
+// PREP — the fresh act-one state: the mark in its faint IDLE shimmer (zero
+// accretion — nothing has landed yet), the whisper cycling, the live coarse
+// countdown, the leave + hold lines. Watch the whispers settle every ~10s.
 export const Prep: Story = {
   render: () => <LiveCountdownDemo />,
 }
@@ -170,6 +174,7 @@ export const Stalled: Story = {
         spinnerLabel={SPINNER}
         accretion={0.6}
         leaveLabel={LEAVE}
+        holdLabel={HOLD}
         stalledLabel="Still working. This is taking longer than usual."
         watchLabel={WATCH}
       />
@@ -182,7 +187,7 @@ export const Stalled: Story = {
 export const ColdStart: Story = {
   render: () => (
     <div className="min-h-dvh bg-bg">
-      <WorldGenLoading flavorLabels={FLAVORS} spinnerLabel={SPINNER} leaveLabel={LEAVE} watchLabel={WATCH} />
+      <WorldGenLoading flavorLabels={FLAVORS} spinnerLabel={SPINNER} leaveLabel={LEAVE} holdLabel={HOLD} watchLabel={WATCH} />
     </div>
   ),
 }

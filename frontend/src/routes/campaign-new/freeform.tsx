@@ -30,12 +30,19 @@ export interface FreeformScreenProps {
   /** Chose the quiet switch line → the controller advances to `guided`. */
   onGuided: () => void
   /**
-   * Seed text for the concept field (default empty). The rejection screen's
-   * "edit as freeform" carries the judged guided concept in here so the player
-   * lands on freeform pre-filled; a normal fork → freeform entry omits it. Read
-   * once at mount (the screen unmounts between flow steps, so it re-seeds fresh).
+   * Seed text for the concept field (default empty). The controller seeds it from
+   * the persisted world-concept draft (myth-5fi4q) and keeps it current as the
+   * player types; the rejection screen's "edit as freeform" drops the judged
+   * guided concept in the same way. Read once at mount (the screen unmounts
+   * between flow steps, so it re-seeds from whatever the controller now holds).
    */
   initialConcept?: string
+  /**
+   * Fired with the concept on every keystroke — the controller persists it so a
+   * reload never costs the player the world they had already described
+   * (myth-5fi4q). Omitted, the field is simply not persisted.
+   */
+  onConceptChange?: (concept: string) => void
 }
 
 /** Pull a non-empty `rejectionMessage` off an HttpError body (nullable per contract). */
@@ -51,10 +58,15 @@ export function FreeformScreen({
   onCommitted,
   onGuided,
   initialConcept = '',
+  onConceptChange,
 }: FreeformScreenProps): React.JSX.Element {
   const { t } = useTranslation()
   const ctx = useApiContext()
   const [concept, setConcept] = useState(() => initialConcept)
+  const changeConcept = (next: string): void => {
+    setConcept(next)
+    onConceptChange?.(next)
+  }
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<Notice | null>(null)
   // Synchronous double-submit guard (the character-creation submit's pattern):
@@ -108,7 +120,10 @@ export function FreeformScreen({
           multiline
           label={t('campaignNew.freeform.question')}
           value={concept}
-          onChange={setConcept}
+          onChange={changeConcept}
+          // Typing is the screen's one next action (ux-run3 myth-en2jj) — the
+          // field takes focus on entry; the paper focus stroke marks it.
+          focusOnMount
           data-testid="freeform-input"
         />
         <Text role="ui-caption" data-testid="freeform-hint">
@@ -122,15 +137,24 @@ export function FreeformScreen({
       </Stack>
       {/* Actions — one primary act, the mode-switch quieted beneath it. */}
       <Stack align="start" gap={4}>
-        <Button
-          variant="primary"
-          loading={busy}
-          disabled={!ready || busy}
-          onPress={() => { void begin() }}
-          data-testid="freeform-begin"
-        >
-          {t('campaignNew.freeform.begin')}
-        </Button>
+        <Stack gap={2}>
+          <Button
+            variant="primary"
+            loading={busy}
+            disabled={!ready || busy}
+            onPress={() => { void begin() }}
+            data-testid="freeform-begin"
+          >
+            {t('campaignNew.freeform.begin')}
+          </Button>
+          {/* The commit disclosure at the generation trigger (ux-run3
+              myth-g3mt6): Begin commits a full credit-metered world build with
+              zero scent of consequence otherwise — the preview screen's exact
+              quiet line, at this path's trigger too. */}
+          <Text role="meta" data-testid="freeform-cost">
+            {t('campaignNew.freeform.cost')}
+          </Text>
+        </Stack>
         {/* The mode-switch hatch — same affordance class as the guided screen's
             (ux-run2 myth-vjl7d): quiet prompt, underlined actionable phrase. */}
         <HatchLine

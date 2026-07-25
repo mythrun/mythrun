@@ -33,7 +33,10 @@ import { runLocationSelectionStage } from './stages/location-selection.js'
 import { runCharacterConceptStage } from './stages/character-concept.js'
 import { runCharacterSheetStage } from './stages/character-sheet.js'
 import { createRepo, type Repo } from '../../repo/index.js'
-import type { CharacterConceptOutput } from '../schemas/character-concept.js'
+import {
+  CharacterConceptOutputSchema,
+  type CharacterConceptOutput,
+} from '../schemas/character-concept.js'
 import {
   VocabularyRegistrySchema,
   type VocabularyRegistry,
@@ -221,7 +224,7 @@ export async function runCharacterCreationJob(
       // would otherwise infer through conceptOutput/characterId, which are
       // assigned from `result` below — a circular-inference TS7022.)
       const result: RunStageResult = await withJobTimeout(
-        runStage(repo, deps, stage, {
+        runStage(repo, stage, {
           campaignId,
           userId,
           worldId,
@@ -348,9 +351,11 @@ interface RunStageResult {
   readonly characterId?: string
 }
 
+// No `deps` parameter: every stage handler takes what it needs from `repo` +
+// `ctx`. The watchdog that DOES read deps (stageTimeoutMs) wraps this call in
+// the orchestration loop, not inside it.
 async function runStage(
   repo: Repo,
-  deps: CharacterCreationDeps,
   stage: CharacterCreationStage,
   ctx: RunStageCtx,
 ): Promise<RunStageResult> {
@@ -370,33 +375,23 @@ async function runStage(
       concept: r.concept,
     }
   }
-  // character_sheet is the terminal per-player stage. stage 3 has no
-  // re-entry recovery: the stage 2 output (narrative) is in-memory only
-  // (not persisted between stage 2's run and stage 3's INSERT into
-  // characters). If a worker crashes after stage 2's pipeline_runs
-  // marker commits but before stage 3 enters, BullMQ retry hits a
-  // 'completed' stage 2 claim → skips → ctx.conceptOutput is undefined
-  // here. That's a terminal failure; player resubmits.
+  // character_sheet is the terminal per-player stage.
+  //
+  // RE-ENTRY (myth-evpfr). If a worker dies after stage 2's pipeline_runs
+  // marker commits but before stage 3 finishes, the retry's atomicClaimStage
+  // sees stage 2 'completed' → skips it → `ctx.conceptOutput` is null here.
+  // That used to be an immediate terminal fail ("player must resubmit"). It
+  // no longer has to be: the loop persists concept_output via
+  // `setConceptOutput` BEFORE marking stage 2 completed, so a skipped stage 2
+  // GUARANTEES the narrative is on the row. Reload + revalidate it and carry
+  // on. The persisted JSON already carries the MYT-90 A4 starting_level
+  // override (the loop applies it before persisting), so no re-override here.
   //
   // MYT-54 T3: 'character_integration' is now a campaign-scoped stage
   // owned by MYT-54's character-integration-processor; see
   // backend/src/llm/prep/character-integration-processor.ts (to be created
   // in T11). It does NOT appear in this per-player switch.
-  if (ctx.conceptOutput === null) {
-    // TERMINAL, not transient: stage-2 output is unrecoverable, so retrying
-    // the job only re-hits this same guard while the concept sits 'processing'
-    // forever (a character stuck on the loading beat — found live in a
-    // 3-player playtest 2026-07-18). Flag `.terminal` so isTerminalError routes
-    // it to the inline markFailed → the concept flips to 'failed' and the
-    // player can resubmit, instead of a futile BullMQ retry loop.
-    throw Object.assign(
-      new Error(
-        'character_sheet: re-entry without ctx.conceptOutput; stage 2 output cannot be recovered. Player must resubmit.',
-      ),
-      { terminal: true },
-    )
-  }
-  const narrative = ctx.conceptOutput
+  const narrative = ctx.conceptOutput ?? (await reloadConceptOutput(repo, ctx))
   const w = await loadWorldContext(repo, ctx.worldId)
   // myth-gp2c Cluster C: stage 3 persists through the unified repo surface
   // (`repo.transaction(tx => tx.characters.replaceSubTables(...))`). The LLM
@@ -415,6 +410,50 @@ async function runStage(
     outputTokens: r.outputTokens,
     characterId: r.characterId,
   }
+}
+
+/**
+ * myth-evpfr: recover stage 2's narrative from `character_concepts.concept_output`
+ * on a stage-3 re-entry.
+ *
+ * Both failure arms are TERMINAL, deliberately. An absent or schema-invalid
+ * concept_output cannot be repaired by re-running the job — the retry re-reads
+ * the same row and re-hits the same guard, while character_concepts sits at
+ * 'processing' FOREVER and the player watches a loading beat with no recovery
+ * (found live in a 3-player playtest 2026-07-18). `{ terminal: true }` routes
+ * this to the processor's inline markFailed: the concept flips to 'failed' and
+ * the player can resubmit. See the house rule — unrecoverable re-entry must be
+ * terminal.
+ */
+async function reloadConceptOutput(
+  repo: Repo,
+  ctx: RunStageCtx,
+): Promise<CharacterConceptOutput> {
+  const persisted = await repo.characterConcepts.getConceptOutput(ctx.campaignId, ctx.userId)
+  if (persisted === null) {
+    throw Object.assign(
+      new Error(
+        'character_sheet: re-entry without ctx.conceptOutput and no persisted concept_output; ' +
+          'stage 2 output cannot be recovered. Player must resubmit.',
+      ),
+      { terminal: true },
+    )
+  }
+  const parsed = CharacterConceptOutputSchema.safeParse(persisted)
+  if (!parsed.success) {
+    // Name the offending paths (not the values) — the message lands in
+    // pipeline_runs.error, which is operator-visible.
+    const fields = parsed.error.issues.map((issue) => issue.path.join('.')).join(', ')
+    throw Object.assign(
+      new Error(
+        'character_sheet: re-entry without ctx.conceptOutput and the persisted concept_output ' +
+          `failed schema validation (fields: ${fields}); ` +
+          'stage 2 output cannot be recovered. Player must resubmit.',
+      ),
+      { terminal: true },
+    )
+  }
+  return parsed.data
 }
 
 // -- arg builders -----------------------------------------------------------

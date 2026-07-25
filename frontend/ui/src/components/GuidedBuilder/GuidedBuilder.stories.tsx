@@ -30,7 +30,7 @@ const noop = (): void => undefined
 // The resolved nav labels the shell supplies (real MYT-100 copy).
 const NAV_LABELS = { next: 'Next', back: 'Back', switchToFreeform: 'Describe your character instead' }
 
-// Step 1 (Calling) — nothing chosen yet, so no rung is `done` and Back is hidden.
+// Step 1 (Calling) — nothing chosen yet, so no rung is `done`.
 const CALLING_RAIL: RailStep[] = [
   { step: 'class', label: 'Calling', state: 'now' },
   { step: 'species', label: 'Origin', state: 'todo' },
@@ -111,8 +111,10 @@ function Builder({
 }
 
 // Step 1 — the twelve callings in a grid, Fighter pre-selected (the ember card).
-// Back holds the action row's bottom-left on every step (ux-run2 myth-80an1) —
-// on the first step the parent wires it to leave the builder.
+// Back rides the wayfinding row at the top, beside the rail (ux-run3 myth-t6pxy:
+// twelve cards push a bottom-seated Back below a 720px fold, and step 1 is where
+// the path choice is cheapest to reverse) — on the first step the parent wires it
+// to leave the builder.
 export const Calling: Story = {
   name: 'Calling — 12 classes (first step)',
   render: () => (
@@ -125,7 +127,7 @@ export const Calling: Story = {
   ),
 }
 
-// A mid-sequence step — prior picks carried in the rail, Back visible.
+// A mid-sequence step — prior picks carried in the rail beside Back.
 export const Origin: Story = {
   name: 'Origin — mid sequence (prior picks in the rail)',
   render: () => (

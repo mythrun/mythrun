@@ -269,6 +269,7 @@ export function CampaignDetailRoute({
         stages={stages}
         stageTimings={stageTimings}
         resumedMidGen={resumedMidGen}
+        campaignId={id}
       />
     )
   }

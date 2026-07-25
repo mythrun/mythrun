@@ -53,10 +53,7 @@ const scope = makeTestScope('webhook')
  * run sequentially against a non-truncated `users` table.
  */
 let userCounter = 0
-async function createWebhookTestUser(
-  p: Pool,
-  s: TestScope,
-): Promise<{ id: string; cus: string }> {
+async function createWebhookTestUser(p: Pool, s: TestScope): Promise<{ id: string; cus: string }> {
   const id = uuidv7()
   const n = userCounter
   userCounter += 1
@@ -255,7 +252,26 @@ describe('billing.webhook.dispatchEvent', () => {
     )
   })
 
-  it('api_version mismatch → handler NOT invoked, stripe_events row IS committed (fail-closed), error logged', async () => {
+  // ─── api-version gate (myth-e3ary) ──────────────────────────────────────
+  //
+  // The gate itself stays fail-closed: typed field access against a
+  // wrong-version payload is silent corruption, and a Stripe Event is
+  // IMMUTABLE — `GET /v1/events/:id` returns the payload exactly as
+  // rendered at creation time regardless of the request's Stripe-Version
+  // (verified against the live test account: identical bytes across a
+  // 2024-06-20 → 2026-04-22.dahlia request-version span, while the same
+  // header demonstrably re-renders a Subscription). So there is no
+  // re-fetch that can rescue a mismatched delivery at dispatch time.
+  //
+  // What changed: the mismatch path no longer writes the `stripe_events`
+  // row. Marking a dropped event as processed made it PERMANENTLY
+  // unreplayable — a later redelivery hits the idempotency check and
+  // ROLLBACKs as a duplicate, so revenue events dropped by a version
+  // drift could never be recovered even after the drift was fixed. The
+  // row was never what stopped Stripe retrying (the route's 200 is), so
+  // skipping it costs nothing and buys recoverability.
+
+  it('api_version mismatch → handler NOT invoked, NO stripe_events row (replayable), error logged', async () => {
     const event = makeEvent({ api_version: '2020-08-27' })
     const counter = { n: 0 }
     const { log, entries } = makeLogger()
@@ -263,10 +279,43 @@ describe('billing.webhook.dispatchEvent', () => {
       await dispatchEvent(event, makeStripe(), pool, log)
     })
     expect(counter.n).toBe(0)
-    expect(await countStripeEventRow(pool, event.id)).toBe(1)
-    expect(
-      entries.some((e) => e.level === 'error' && e.msg === 'stripe_webhook_api_version_mismatch'),
-    ).toBe(true)
+    // The load-bearing assertion: NOT recorded, so it can still be replayed.
+    expect(await countStripeEventRow(pool, event.id)).toBe(0)
+    const logged = entries.find(
+      (e) => e.level === 'error' && e.msg === 'stripe_webhook_api_version_mismatch',
+    )
+    expect(logged).toBeDefined()
+    // Operators triaging the alarm need to know WHICH event type was
+    // dropped (grant-bearing or not) and both sides of the drift.
+    expect(logged?.obj).toMatchObject({
+      event_id: event.id,
+      event_type: 'checkout.session.completed',
+      event_api_version: '2020-08-27',
+      sdk_pin: STRIPE_API_VERSION,
+      recorded: false,
+    })
+  })
+
+  it('api_version mismatch → resolves (no throw), so the route still 200s and Stripe stops retrying', async () => {
+    const event = makeEvent({ api_version: '2020-08-27' })
+    const { log } = makeLogger()
+    await expect(dispatchEvent(event, makeStripe(), pool, log)).resolves.toBeUndefined()
+  })
+
+  it('event dropped on a version mismatch REPLAYS successfully once the drift is fixed', async () => {
+    const dropped = makeEvent({ api_version: '2020-08-27' })
+    const counter = { n: 0 }
+    const { log } = makeLogger()
+    await withHandlerOverride('checkout.session.completed', countingOk(counter), async () => {
+      await dispatchEvent(dropped, makeStripe(), pool, log)
+      expect(counter.n).toBe(0)
+      // Same event id, now delivered at the pinned version — this is what
+      // `stripe events resend` looks like after the endpoint is realigned.
+      const replay = makeEvent({ id: dropped.id, api_version: STRIPE_API_VERSION })
+      await dispatchEvent(replay, makeStripe(), pool, log)
+    })
+    expect(counter.n).toBe(1)
+    expect(await countStripeEventRow(pool, dropped.id)).toBe(1)
   })
 
   it("handler returns 'validation_failed' → COMMIT stripe_events, error log emitted", async () => {
@@ -798,9 +847,7 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
     await dispatchEvent(event, stripe, pool, log)
 
     expect(await countStripeEventRow(pool, event.id)).toBe(1)
-    const paged = entries.find(
-      (e) => e.level === 'error' && e.msg === 'billing.checkout_orphan',
-    )
+    const paged = entries.find((e) => e.level === 'error' && e.msg === 'billing.checkout_orphan')
     expect(paged).toBeDefined()
     if (!paged) throw new Error('expected billing.checkout_orphan log')
     expect(paged.obj.metadata_user_id).toBeNull()
@@ -1070,8 +1117,7 @@ describe('billing.webhook checkout.session.completed (subscription mode)', () =>
     expect(await countStripeEventRow(pool, event.id)).toBe(1)
     expect(
       entries.some(
-        (e) =>
-          e.level === 'error' && e.msg === 'billing.checkout_subscription_missing_lookup_key',
+        (e) => e.level === 'error' && e.msg === 'billing.checkout_subscription_missing_lookup_key',
       ),
     ).toBe(true)
     expect(await countUserSubs(pool, sub_id)).toBe(0)

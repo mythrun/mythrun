@@ -262,6 +262,29 @@ export function characterConceptsNs(c: ClientLike) {
     },
 
     /**
+     * myth-evpfr: read back the structured narrative `setConceptOutput` wrote.
+     *
+     * The character-creation loop persists concept_output BEFORE it marks the
+     * character_concept stage completed, so "stage 2 is completed" implies this
+     * row is populated. That ordering is what makes stage-3 re-entry
+     * RECOVERABLE: a job that resumes after stage 2's marker committed finds
+     * `ctx.conceptOutput === null` in memory but the same narrative still here.
+     * Returns null when the row (or the column) is absent — the caller treats
+     * that as genuinely unrecoverable and terminal-fails.
+     */
+    getConceptOutput: async (
+      campaignId: string,
+      userId: string,
+    ): Promise<Record<string, unknown> | null> => {
+      const result = await c.query<{ concept_output: Record<string, unknown> | null }>(
+        `SELECT concept_output FROM character_concepts
+           WHERE campaign_id = $1 AND user_id = $2`,
+        [campaignId, userId],
+      )
+      return result.rows[0]?.concept_output ?? null
+    },
+
+    /**
      * MYT-102 A3: the resume route's stuck-concept sweep. A concept is STUCK
      * when it sits at 'processing' but no worker is (or will be) driving it:
      * some character-stage pipeline_runs row for the (campaign, user) is

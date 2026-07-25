@@ -3,19 +3,20 @@ import type { ReactNode, RefObject } from 'react'
 import { cn } from '../../lib/cn.ts'
 import { useScrollEdges } from './scroll-edges.ts'
 
-// WikiScrollFrame (myth-lcvv2; fade rebuilt in ux-run2 myth-9dcfq) — the wiki's
-// reading scroll region, made to ANNOUNCE its overflow. The reveal wiki panel is a
-// fixed-height scroll region (the graph half owns the row height; the wiki half caps
-// to it and scrolls internally), but two things hid that: macOS overlay scrollbars
-// vanish at rest, and nothing marked the cut edge — so a definition that ran past the
-// fold read as a hard clip mid-sentence, not as "scroll for more".
+// WikiScrollFrame (myth-lcvv2; fade rebuilt in ux-run2 myth-9dcfq; band + floor
+// re-cut in ux-run3 myth-02zhi) — the wiki's reading scroll region, made to
+// ANNOUNCE its overflow. The reveal wiki panel is a fixed-height scroll region
+// (the graph half owns the row height; the wiki half caps to it and scrolls
+// internally), but two things hid that: macOS overlay scrollbars vanish at rest,
+// and nothing marked the cut edge — so a definition that ran past the fold read
+// as a hard clip mid-sentence, not as "scroll for more".
 //
 // The affordance, both halves:
 //   1. a quiet, styled scrollbar — `scrollbar-color`/`-width` render it thin in the ink
 //      register, and a stable gutter reserves its width so expanding a glossary row never
 //      reflows the prose sideways (on platforms with classic scrollbars; macOS overlay
 //      scrollbars still auto-hide, which is why the fade below is the still-frame cue).
-//   2. shallow top/bottom edge FADES, gated by scroll position (`useScrollEdges`) — the
+//   2. top/bottom edge FADES, gated by scroll position (`useScrollEdges`) — the
 //      bottom fade appears whenever content extends past the fold and clears at the end;
 //      the top fade mirrors it once the reader scrolls down.
 //
@@ -26,10 +27,31 @@ import { useScrollEdges } from './scroll-edges.ts'
 // intermediate alpha, "the near-universal styling for DISABLED, exactly the wrong
 // thing to imply about a tappable term." A CSS mask on the scroll element fades the
 // CONTENT ITSELF to transparent, revealing whatever ground is truly behind (any
-// panel tone, both themes, by construction), and the band is clamped to
-// `FADE_BAND_PX` — shallower than one text line, so it can only graze the sliced
-// edge of the line the fold cuts. A cleanly cropped line with a grazed edge is the
-// honest cue (the praised reveal-pane crop); a ghosted full row never happens.
+// panel tone, both themes, by construction).
+//
+// THE BAND SPANS ONE FULL READING LINE (ux-run3, OVERRIDING myth-9dcfq's
+// sub-line clamp). myth-9dcfq had pinned the band to 12px — "graze only the
+// sliced edge" — but the run-3 critics read that as no affordance at all: on
+// the four chargen rails the 12px graze fell into inter-line whitespace and the
+// pane looked like a hard clip flush at its border ("no fade, no scroll cue,
+// reads as a layout accident"), and on the reveal pane it left the fold-cut
+// line sliced through its descenders. Verified against the live DOM: the mask
+// WAS applied and simply too shallow to read. Run-3's verdict wins: a line must
+// read as either fully shown or fully hidden, never a razor slice — so the band
+// now spans one prose line (16px × 1.6 leading, rounded up) and the cut line
+// dissolves to alpha 0 before the razor edge. The myth-9dcfq ghost-row concern
+// is contained rather than abandoned: the band stays well under the old 32px
+// wash (at most ONE row ever sits inside it, carrying a full steep gradient —
+// "passing under the fold", not a uniform disabled tint), and the padding floor
+// below keeps the SETTLED state fade-free.
+//
+// THE ONE-LINE PADDING FLOOR (ux-run3). At end-of-scroll the bottom fade clears
+// by design, and the consumers' old --space-4 (16px) inset left the last line
+// nearly flush against the fold. The scroll element now carries an inline
+// `paddingBottom` of the SAME one-line constant — the settled last line always
+// sits a full line-height clear of the border. Inline style, not a class, so
+// it shares the band's single source of truth and a consumer `contentClassName`
+// can never defeat the floor.
 //
 // The scroll element carries the caller's `scrollRef` (the shell's scroll-memory reads
 // `scrollTop` off it) merged with the frame's own. Children are the scroll element's
@@ -47,11 +69,13 @@ const SCROLL_CLASS = cn(
   '[scrollbar-width:thin] [scrollbar-color:var(--border-strong)_transparent] [scrollbar-gutter:stable]',
 )
 
-/** The edge-fade band (px). MUST stay below one text line (~20px at the wiki's
- *  tightest row, text-sm) — the mask may graze only the SLICED edge of the line
- *  the fold cuts, never render a full line or a tappable row at intermediate
- *  alpha (myth-9dcfq; the geometry pin lives in the test). */
-export const FADE_BAND_PX = 12
+/** The edge-fade band AND the bottom padding floor (px): one full reading line
+ *  (the wiki's prose is 16px at 1.6 leading → 25.6px, rounded up). Deep enough
+ *  that the fold-cut line dissolves before the razor edge (ux-run3's
+ *  fully-shown-or-fully-hidden verdict, overriding myth-9dcfq's 12px clamp),
+ *  and strictly under the 32px wash that once ghosted whole tappable rows
+ *  (the geometry pin lives in the test). */
+export const FADE_BAND_PX = 26
 
 /** The mask-image for the current edge state — `black` is only the alpha carrier
  *  (a mask reads alpha, it paints nothing), `transparent` is the fade-out. No
@@ -105,9 +129,13 @@ export function WikiScrollFrame({
     ref: setScroll,
     onScroll,
     className: cn(SCROLL_CLASS, contentClassName),
-    ...(mask !== undefined
-      ? { style: { maskImage: mask, WebkitMaskImage: mask }, 'data-scroll-edges': edges }
-      : {}),
+    // The one-line padding floor is unconditional (see the header note); the
+    // mask joins it only while an edge is announcing.
+    style: {
+      paddingBottom: FADE_BAND_PX,
+      ...(mask !== undefined ? { maskImage: mask, WebkitMaskImage: mask } : {}),
+    },
+    ...(mask !== undefined ? { 'data-scroll-edges': edges } : {}),
     ...(dataTestId !== undefined ? { 'data-testid': dataTestId } : {}),
   }
 

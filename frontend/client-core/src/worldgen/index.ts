@@ -15,6 +15,10 @@ export {
 export type { ForceSim, ForceParams, NodeBox, StaticKeepOut } from './force-sim.ts'
 export { createFogSim } from './fog-sim.ts'
 export type { FogSim, FogObstacle } from './fog-sim.ts'
+// The session-scoped layout cache (ux-run3 myth-aftau) — pinned placements + the
+// one-per-world terrain seed, so the live map survives unmount/remount.
+export { mulberry32, resetWorldgenLayouts, terrainSeedFor, worldgenLayout } from './layout-cache.ts'
+export type { PinnedPlacement, PlacementSide, WorldgenLayout } from './layout-cache.ts'
 // The LOCKED fog params + every render-side constant (C1). Pure data (no DOM), so it
 // rides this UI-safe subpath: the fog RENDER surface (@mythrun/ui's fog-draw +
 // WorldGenFogField, C3) consumes the cloud/coverage/fade/label constants WITHOUT

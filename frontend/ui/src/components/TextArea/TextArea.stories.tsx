@@ -157,6 +157,36 @@ export const AutoGrow: Story = {
   ),
 }
 
+// scrollFade + measure="writing" (ux-run3 myth-en2jj / myth-7ceqw): the
+// freeform writing surface — the border rides a shell wrapper, the bottom
+// scroll edge fades over a full line of padding so the player's last line is
+// never guillotined under the rule, and the writable measure caps at ~70ch
+// while the field keeps its column width.
+export const FreeformWritingSurface: Story = {
+  name: 'Freeform writing surface (scrollFade + measure)',
+  render: () => (
+    <div className="flex flex-col gap-[var(--space-1)] w-[48rem] max-w-full">
+      <label htmlFor="freeform-writing" className="font-ui text-xs text-ink-secondary">
+        Who are you?
+      </label>
+      <TextArea
+        id="freeform-writing"
+        face="prose"
+        size="lg"
+        autoSize
+        scrollFade
+        measure="writing"
+        minRows={6}
+        maxRows={16}
+        defaultValue={
+          'A retired toll-clerk who never stopped counting. Forty years at the Greenward gate taught me every face that passes and every lie they tell about what their wagons carry. ' +
+          'I keep the old ledger under my coat — the one the new administration says burned. The names in it are owed something, and I mean to see the debt paid before winter closes the pass.'
+        }
+      />
+    </div>
+  ),
+}
+
 // Subdued — the gated-composer visual mute: quieter chrome (hairline edge on the
 // page ground, secondary ink) while the field stays fully interactive. The play
 // surface uses it when the composer is gated between turns but never disabled.

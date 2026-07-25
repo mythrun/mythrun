@@ -84,6 +84,17 @@ export {
   clearGuidedDraft,
 } from './create/guided-draft.ts'
 export type { SessionDraftStore, GuidedDraft, GuidedPickDraft } from './create/guided-draft.ts'
+// The FREEFORM sibling's draft (myth-5fi4q) — the typed world concept, persisted
+// so the two paths through the create screen treat the player's words alike. Store
+// INJECTED per-route (the character-draft shape), not configure-once.
+export {
+  WORLD_CONCEPT_DRAFT_KEY,
+  readWorldConceptDraft,
+  writeWorldConceptDraft,
+  clearWorldConceptDraft,
+  useWorldConceptDraft,
+} from './create/world-concept-draft.ts'
+export type { WorldConceptDraftHandle } from './create/world-concept-draft.ts'
 export { getBalance, useBalance } from './api/billing.ts'
 export { useInvalidateBalance } from './api/billing.ts'
 export { useLowSessionCredits } from './api/billing.ts'
@@ -122,6 +133,18 @@ export type { SessionView, SessionParams, SessionDeps } from './session/use-sess
 // web route threads into MessageStream; no UI-side runtime import — R1).
 export { useRollReveal, buildRevealView } from './session/roll-reveal.ts'
 export type { RollPhase, RollRevealState, RollRevealView, CardItem } from './session/roll-reveal.ts'
+// ux-run3 transcript-presentation: the pure DISPLAY derivations the play route
+// passes to MessageStream as plain data — the released-card causal slot
+// (myth-twraw), the @dm table-talk grouping (myth-1msig), and the shared
+// DM_TOKEN the composer + grouping key on.
+export { DM_TOKEN, isDmSummon, orderForDisplay, buildTableTalkView } from './session/transcript-presentation.ts'
+export type { TableTalkView } from './session/transcript-presentation.ts'
+// ux-run3 named-entities (myth-ry14g): who the live session has actually named,
+// accumulated from settled DM prose through the SAME mechanical matcher that
+// underlines names in the transcript — the transcript half of the wiki index's
+// presence split.
+export { useNamedEntities, accumulateNamedEntities, emptyNamedEntities } from './session/named-entities.ts'
+export type { NamedEntitiesState } from './session/named-entities.ts'
 // MYT-91 invite slices: the shipped MYT-75 invite routes as declarative
 // client-core endpoints (create/list/revoke/preview/accept) + the idempotent
 // `ensurePrimaryInvite` (list → the primary share link, else mint one).
@@ -299,6 +322,8 @@ export type { StageTiming, StageTimingsResponse } from '@mythrun/contract/rest'
 export { coarseWaitBucket, waitDisplay } from './loading/wait-estimate.ts'
 export type { WaitBucket, WaitDisplay, WaitDisplayInput } from './loading/wait-estimate.ts'
 export { clampEtaMonotonic } from './loading/monotonic-eta.ts'
+export { bucketMinutes, dampEta, dampedBucket } from './loading/eta-damping.ts'
+export type { DampedEta } from './loading/eta-damping.ts'
 export { worldGenAccretion } from './loading/wait-accretion.ts'
 
 // Wiki-reveal timing (MYT-89 reveal timing): the pure predicates the

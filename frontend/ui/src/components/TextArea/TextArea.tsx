@@ -89,6 +89,59 @@ const textArea = cva(
 // control's own top+bottom padding (border-box).
 const rowBound = (rows: number, padYVar: string) => `calc(${String(rows)} * 1lh + 2 * ${padYVar})`
 
+// The scrollFade bound: bottom padding is one full line-height (not the pad
+// token), so the row count contributes `pad-top + 1lh` beyond the lines.
+const rowBoundFade = (rows: number, padYVar: string) =>
+  `calc(${String(rows)} * 1lh + ${padYVar} + 1lh)`
+
+// ── scrollFade (ux-run3 myth-en2jj) ─────────────────────────────────────────
+// The freeform writing surfaces' overflow guard. Three coordinated pieces:
+//  1. `pb-[1lh]` — when scrolled to the end (the browser's caret-follow), the
+//     last line sits a full line-height above the bottom edge, fully visible.
+//  2. An alpha-carrier mask (`black` paints nothing — a mask reads only alpha;
+//     the WikiScrollFrame idiom) fading the bottom 1lh, so a mid-scroll line
+//     crossing the edge dissolves instead of being guillotined under the rule.
+//  3. The border moves to a SHELL wrapper — a mask clips everything the element
+//     paints, border included, and the field's bottom rule must hold.
+// The shell mirrors the field's border/state/focus chrome; the inner textarea
+// drops its own border/ground/ring (the shell shows them via `:has()`).
+const FADE_INNER_CLASS = cn(
+  'border-0 bg-transparent focus-visible:outline-none',
+  'pb-[1lh]',
+  '[mask-image:linear-gradient(to_bottom,black_calc(100%-1lh),transparent)]',
+)
+const fadeShell = cva(
+  cn(
+    'rounded-none border bg-surface',
+    // The shared theme-aware focus ring, driven by the inner field's focus.
+    'has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-2 has-[textarea:focus-visible]:outline-accent-fg',
+    // Disabled/read-only ground parity with the flat field (border unchanged).
+    'has-[textarea:disabled]:bg-surface',
+  ),
+  {
+    variants: {
+      subdued: {
+        true: 'border-border bg-bg',
+        false: 'border-border-strong',
+      },
+      invalid: {
+        true: 'border-2 border-border-danger has-[textarea:focus-visible]:outline-border-danger',
+        false: '',
+      },
+    },
+    defaultVariants: { subdued: false, invalid: false },
+  },
+)
+
+// `measure="writing"` (ux-run3 myth-7ceqw): pad the text inward so the writable
+// measure caps at ~70ch while the field keeps its column width — percentage
+// padding resolves against the containing block, `ch` against the field's own
+// font, so the cap tracks both the column and the type size. The floor keeps
+// the size's own padding on narrow columns where 70ch doesn't bind.
+const MEASURE_CLASS: Record<NonNullable<TextAreaProps['measure']>, string> = {
+  writing: 'px-[max(var(--space-4),calc((100%-70ch)/2))]',
+}
+
 // True when the browser supports CSS `field-sizing: content`. SSR/jsdom have no
 // `CSS` global → false (so those environments wire the JS fallback, never crash).
 const supportsFieldSizing = () =>
@@ -121,6 +174,9 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
     autoSize = false,
     minRows = 1,
     maxRows = 8,
+    scrollFade = false,
+    measure,
+    focusOnMount = false,
     invalid = false,
     disabled = false,
     readOnly = false,
@@ -159,11 +215,18 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
   }, [autoSize, resizeToContent])
 
   const padYVar = SIZE_PAD_Y_VAR[size]
+  // scrollFade swaps the bottom pad for 1lh and clamps the cap to ~55dvh
+  // (grows generously with long prose, never swallows the viewport).
   const boundStyle = autoSize
-    ? { minHeight: rowBound(minRows, padYVar), maxHeight: rowBound(maxRows, padYVar) }
+    ? scrollFade
+      ? {
+          minHeight: rowBoundFade(minRows, padYVar),
+          maxHeight: `min(${rowBoundFade(maxRows, padYVar)}, 55dvh)`,
+        }
+      : { minHeight: rowBound(minRows, padYVar), maxHeight: rowBound(maxRows, padYVar) }
     : undefined
 
-  return (
+  const field = (
     <textarea
       ref={setRefs(innerRef, ref)}
       value={value}
@@ -186,11 +249,29 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
       readOnly={readOnly}
       required={required}
       aria-invalid={invalid || undefined}
-      className={cn(textArea({ face, size, subdued, invalid, autoSize }))}
+      className={cn(
+        textArea({ face, size, subdued, invalid, autoSize }),
+        measure !== undefined && MEASURE_CLASS[measure],
+        scrollFade && FADE_INNER_CLASS,
+      )}
       style={boundStyle}
+      // The contract's platform-neutral focusOnMount maps to the native
+      // autoFocus via spread — the deliberate DS opt-in (the jsx-a11y
+      // autofocus lint keeps guarding accidental literal uses).
+      {...(focusOnMount && { autoFocus: true })}
       {...rest}
     />
   )
+  // The scrollFade shell carries the border/ground/focus chrome the mask would
+  // otherwise clip off the field (see FADE_INNER_CLASS rationale above).
+  if (scrollFade) {
+    return (
+      <div data-testid="textarea-fade-shell" className={cn(fadeShell({ subdued, invalid }))}>
+        {field}
+      </div>
+    )
+  }
+  return field
 })
 
 // The element's computed `max-height` in pixels, or +Infinity when it can't be

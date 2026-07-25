@@ -112,7 +112,9 @@ function WorldIdentity({
  *  session's open threads — the recap's referable numbered index, shared
  *  verbatim — plus a quiet link to the full recap, so the hub says "continue
  *  where you left off" instead of reading as a generic setup page. Absent
- *  unless a ready recap with threads exists (never a fake or empty block). */
+ *  unless a ready recap with threads exists (never a fake or empty block).
+ *  Labelled with the recap's own "Threads left open" (ux-run3 myth-y3jbw —
+ *  the content is forward-looking, so "Last session" over-claimed). */
 function LastSessionThreads({
   campaignId,
   recap,
@@ -125,7 +127,7 @@ function LastSessionThreads({
   if (recap.status !== 'ready' || threads.length === 0) return null
   return (
     <Stack gap={2} data-testid="campaign-last-session">
-      <Text role="ui-label">{t('campaign.lastSession')}</Text>
+      <Text role="ui-label">{t('recap.threadsHeading')}</Text>
       <ThreadIndexList threads={threads} />
       <Stack direction="row">
         <Link href={`/campaigns/${campaignId}/recap`} data-testid="campaign-read-recap">
@@ -201,7 +203,13 @@ export function CampaignPage({
   }, [played, campaignId, ctx, fetchRecap])
 
   return (
-    <Stack gap={5} data-testid="route-campaign-detail">
+    // ONE centred content column for the whole page (ux-run3 myth-kn9th /
+    // myth-y3jbw): the campaign header used to sit content-sized on the chrome
+    // margin while the working column centred (~720px) and the threads ran
+    // full-bleed (~130ch) — two grids, a dead left rail, unreadable measure.
+    // The `content` cap is the lobby column's deliberate run-2 width
+    // (myth-ma8yv), so header → question → content → CTA travel one left edge.
+    <Stack gap={5} maxWidth="content" data-testid="route-campaign-detail">
       <WorldIdentity campaign={campaign} loading={loading} />
       {/* The owner's invite now travels WITH the character beat (MYT-99g03): a quiet
           collapsed line below the reveal / setup beats, and the inline party-slot

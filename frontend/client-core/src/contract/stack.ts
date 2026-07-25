@@ -33,8 +33,13 @@ export interface StackProps extends BaseProps {
    * fixed dressing (header + hairline + content padding), so a short flow
    * screen can seat its block with grow-weighted spacers (optical centering)
    * instead of pooling at the top of the page (ux-run2 myth-ma8yv).
+   * `pageBelowBar` is `page` minus one flow-affordance row (a small control
+   * plus the spine's own gap, 4rem) — for a seated screen that renders UNDER
+   * such a bar: with the plain `page` floor the column overflows the region by
+   * the bar's height and the block seats visibly below optical center (ux-run3
+   * myth-4jbmr).
    */
-  minHeight?: 'screen' | 'page'
+  minHeight?: 'screen' | 'page' | 'pageBelowBar'
   /**
    * Cap the column at a reading measure and centre it (`mx-auto`). For single-
    * column reading/flow surfaces — the creation funnel, a prose beat — that must

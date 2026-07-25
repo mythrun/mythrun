@@ -24,10 +24,27 @@ describe('SeamlessInput', () => {
     const el = getByRole('textbox')
     expect(el.tagName).toBe('TEXTAREA')
     // Auto-grow: the field sizes to its content rather than a fixed rows count —
-    // capped at ~8 visible lines, past which the field scrolls internally
-    // (ux-run2 myth-x9ugl: unbounded growth pushed the CTA under the fold).
+    // capped at ~14 visible lines clamped to 55dvh (ux-run3 myth-en2jj), past
+    // which the field scrolls internally.
     expect(el).toHaveClass('field-sizing-content', 'resize-none', 'overflow-y-auto')
-    expect(el).toHaveClass('max-h-[calc(8*1lh+2*var(--space-3))]')
+    expect(el).toHaveClass('max-h-[min(calc(14*1lh+var(--space-3)+1lh),55dvh)]')
+  })
+
+  it('multiline guards the scroll edge: 1lh bottom pad + alpha fade, border on the shell', () => {
+    // ux-run3 myth-en2jj: the field must never guillotine the player's last
+    // line under its bottom rule — a full line of bottom padding plus a bottom
+    // fade; the border moves to a shell wrapper (a mask clips everything the
+    // element paints, border included).
+    const { getByRole, getByTestId } = render(<SeamlessInput multiline label="Q" />)
+    const el = getByRole('textbox')
+    expect(el).toHaveClass('pb-[1lh]', 'border-0', 'bg-transparent')
+    expect(el.className).toContain('mask-image:linear-gradient')
+    const shell = getByTestId('seamless-fade-shell')
+    expect(shell.className).toContain('border-border-strong')
+    expect(shell.className).toContain('bg-surface')
+    // The one-contiguous-accent-stroke focus rides the shell via :has().
+    expect(shell.className).toContain('has-[textarea:focus-visible]:outline-2')
+    expect(shell.className).toContain('has-[textarea:focus-visible]:border-accent-fg')
   })
 
   it('the label (the question) is the field accessible name (programmatic association)', () => {

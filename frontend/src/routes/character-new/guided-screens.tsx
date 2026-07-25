@@ -39,6 +39,10 @@ export function NotesScreen({
     <>
       <GuidedRail rail={rail} counter={counter} />
       <FreeformPrompt
+        // Typing is the step's next action (ux-run3 myth-en2jj). The submit
+        // control stays ENABLED while empty — an empty answer IS the sanctioned
+        // Skip (the label says so), never a gated dead end.
+        focusOnMount
         prompt={t('characterCreate.guided.notes.prompt')}
         whisper={t('characterCreate.guided.notes.whisper')}
         placeholder={t('characterCreate.guided.notes.placeholder')}
@@ -99,13 +103,24 @@ export function GroundingScreen({
         />
       )}
       <FreeformPrompt
+        // Typing is the step's next action (ux-run3 myth-en2jj); Continue is
+        // honestly gated while empty (myth-7ceqw b) and — as the character-
+        // generation trigger — carries the commit disclosure (myth-g3mt6).
+        focusOnMount
         prompt={t('characterCreate.freeform.groundingPrompt')}
         whisper={groundingWhisper}
         whisperVoice="dm"
+        // The detail floor, not the essay floor (ux-run3 myth-21lpi): this step
+        // stacks a rail, a recap card and a long DM invitation above its field,
+        // and the essay floor pushed the field bottom and the Continue past a
+        // 1280x720 frame. The answer here is a sentence or two either way.
+        compact
         value={value}
         onChange={onChange}
         onSubmit={onSubmit}
         submitLabel={t('characterCreate.freeform.continue')}
+        submitDisabled={value.trim() === ''}
+        submitHint={t('characterCreate.freeform.cost')}
         onBack={onBack}
         backLabel={t('characterCreate.guided.back')}
       />

@@ -68,7 +68,7 @@ export const CharacterCreateChooser: Story = {
         items={[
           {
             id: 'freeform',
-            title: 'Simply describe your character',
+            title: 'Describe your character',
             subtitle: "Write what's important to you and Mythrun will fill in the rest.",
             onSelect: noop,
             testId: 'chooser-freeform',
@@ -88,7 +88,9 @@ export const CharacterCreateChooser: Story = {
 
 // The side-by-side fork (ux-run2 myth-ma8yv, critique 024): a true binary choice
 // reads as two doors, not a stack of bars — two taller cards sharing a row at
-// comfortable widths, restacking to one column below `sm`.
+// comfortable widths, restacking to one column below `sm`. Each door's
+// cost-of-path meta line (ux-run3 myth-t6pxy) docks at the card foot — the real
+// decision criterion is what earns the door its height.
 export const SideBySideFork: Story = {
   name: 'Side-by-side fork (columns=2)',
   render: () => (
@@ -98,14 +100,16 @@ export const SideBySideFork: Story = {
         items={[
           {
             id: 'freeform',
-            title: 'Simply describe your character',
+            title: 'Describe your character',
             subtitle: "Write what's important to you and Mythrun will fill in the rest.",
+            meta: 'About a minute.',
             onSelect: noop,
           },
           {
             id: 'guided',
             title: 'Build step by step',
             subtitle: 'Pick from options, question by question.',
+            meta: 'Five short steps.',
             onSelect: noop,
           },
         ]}

@@ -357,6 +357,25 @@ describe('CharacterSurface — mounted routing', () => {
     expect(await screen.findByTestId('route-play')).toBeDefined()
   })
 
+  it('an unplayed campaign enters with "Step into the world"; a PLAYED one with the continue verb (myth-dbu98)', async () => {
+    // Verb continuity with the hub: the premier card promises "Continue
+    // session →", so the campaign page's CTA for the same action says
+    // "Continue session" once a play record exists. First entry keeps the
+    // ceremonial "Step into the world" — a first session is not a resume.
+    renderSurface({ ...CAMPAIGN, status: 'active' }, baseDeps())
+    expect((await screen.findByTestId('character-play-enter')).textContent).toBe(
+      i18n.t('campaign.character.play.enter'),
+    )
+    cleanup()
+    renderSurface(
+      { ...CAMPAIGN, status: 'active', sessionCount: 3, lastPlayedAt: '2026-01-05T00:00:00.000Z', cardPhase: 'played' },
+      baseDeps(),
+    )
+    expect((await screen.findByTestId('character-play-enter')).textContent).toBe(
+      i18n.t('campaign.character.play.enterContinue'),
+    )
+  })
+
   it('reveal "Begin again" resets the concept and hands off to create', async () => {
     const resetInReveal = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
     renderSurface(

@@ -15,6 +15,7 @@ export type {
   AbilityAbbrev,
   AbilityTile,
   SheetStat,
+  SheetStatKey,
   SheetEntry,
   SheetSkill,
   CuratedSheet,

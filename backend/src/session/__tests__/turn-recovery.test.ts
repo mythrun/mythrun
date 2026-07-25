@@ -145,6 +145,7 @@ const inertFinalize: TurnProcessorDeps['finalizeEndedSession'] = () => Promise.r
 const inertCombatLedger: LedgerOps = {
   findLedgerCharacterByName: () => unsupportedLedgerOp('findLedgerCharacterByName'),
   readPartyLedgerSnapshot: () => unsupportedLedgerOp('readPartyLedgerSnapshot'),
+  readConditions: () => unsupportedLedgerOp('readConditions'),
   writeHp: () => unsupportedLedgerOp('writeHp'),
   findLedgerEvent: () => unsupportedLedgerOp('findLedgerEvent'),
   writeLedgerEvent: () => unsupportedLedgerOp('writeLedgerEvent'),

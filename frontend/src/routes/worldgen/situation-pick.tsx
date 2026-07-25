@@ -158,7 +158,13 @@ function SituationBody({ load, submitFailed, onSelect }: SituationBodyProps): Re
   }))
   return (
     <Stack gap={3}>
-      <GhostHookList items={items} data-testid="situation-hooks" />
+      {/* The quiet verb on the enter cue ("Open here →" — ux-run3 myth-407fa):
+          the commitment the header states reaches the point of action. */}
+      <GhostHookList
+        items={items}
+        actionLabel={t('startingSituation.open')}
+        data-testid="situation-hooks"
+      />
       {submitFailed && (
         <Text role="ui-caption" as="p">
           {t('startingSituation.error')}
@@ -192,6 +198,7 @@ function SituationBack({ campaignId }: { campaignId: string }): React.JSX.Elemen
       <Button
         variant="ghost"
         size="sm"
+        flush="start"
         icon={<Icon name="arrow-left" decorative />}
         onPress={() => void navigate(`/campaigns/${campaignId}`)}
         data-testid="situation-back"

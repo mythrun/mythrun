@@ -64,6 +64,44 @@ describe('GraphLegend', () => {
     expect(queryByText('You')).toBeNull()
   })
 
+  // The HOLLOW entry (ux-run3): the map's outline-only marks — nodes whose name
+  // tier-retired at the current density — went undocumented; a reader met ten-odd
+  // hollow glyphs the key never named. The reserved `hollow` label appends a
+  // fourth, kind-less entry: an outline swatch + the consumer's copy, LAST (the
+  // kind vocabulary first, the state modifier after).
+  it('appends the hollow outline entry LAST when the consumer supplies its label', () => {
+    const nodes = [node('location', 'Ward'), node('npc', 'Corr')]
+    const { getAllByRole } = render(
+      <GraphLegend nodes={nodes} labels={{ ...LABELS, hollow: 'Name in the index' }} />,
+    )
+    const items = getAllByRole('listitem').map((li) => li.textContent)
+    expect(items).toEqual(['Places', 'People', 'Name in the index'])
+  })
+
+  it('draws the hollow swatch outline-only (fill none — never a filled square)', () => {
+    const nodes = [node('location', 'Ward')]
+    const { getAllByRole } = render(
+      <GraphLegend nodes={nodes} labels={{ ...LABELS, hollow: 'Name in the index' }} />,
+    )
+    const hollow = getAllByRole('listitem').find((li) => li.textContent === 'Name in the index')
+    const rect = hollow?.querySelector('rect')
+    expect(rect).toBeDefined()
+    expect(rect?.getAttribute('fill')).toBe('none')
+  })
+
+  it('omits the hollow entry when no hollow label is supplied (the shipped key, unchanged)', () => {
+    const nodes = [node('location', 'Ward')]
+    const { getAllByRole } = render(<GraphLegend nodes={nodes} labels={LABELS} />)
+    expect(getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Places'])
+  })
+
+  it('renders nothing on a hollow label alone (the key documents kinds; hollow is its addendum)', () => {
+    const { container } = render(
+      <GraphLegend nodes={[node('pc', 'You')]} labels={{ hollow: 'Name in the index' }} />,
+    )
+    expect(container.firstChild).toBeNull()
+  })
+
   it('renders nothing when no present kind carries a label', () => {
     const { container } = render(<GraphLegend nodes={[node('pc', 'You')]} labels={LABELS} />)
     expect(container.firstChild).toBeNull()
@@ -71,7 +109,9 @@ describe('GraphLegend', () => {
 
   it('has no a11y violations', async () => {
     const nodes = [node('faction', 'Guild'), node('location', 'Ward'), node('npc', 'Corr'), node('item', 'Ledger')]
-    const { container } = render(<GraphLegend nodes={nodes} labels={LABELS} />)
+    const { container } = render(
+      <GraphLegend nodes={nodes} labels={{ ...LABELS, hollow: 'Name in the index' }} />,
+    )
     expect(await axe(container)).toHaveNoViolations()
   })
 })

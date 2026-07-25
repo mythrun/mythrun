@@ -330,9 +330,11 @@ export const DiceMomentGated: Story = {
   },
 }
 
-// The same turn AFTER Continue — the card is released (the die + mod/total/DC/tier
-// readout stamped, no buttons), and the buffered post-check prose has been let
-// through, growing the tail below the card.
+// The same turn AFTER Continue — the card has settled to the one-line RECEIPT
+// (myth-twraw: skill · equation · verdict vs DC, no buttons, no die), and the
+// buffered post-check prose has been let through. On the real route,
+// client-core's `orderForDisplay` also files the receipt into its causal slot
+// (before the turn's prose) — here the fixture order already is causal.
 export const DiceMomentReleased: Story = {
   args: {
     items: CHECK_TURN,
@@ -340,6 +342,55 @@ export const DiceMomentReleased: Story = {
     reducedMotion: false,
     rollReveal: RELEASED_REVEAL,
     rollLabels: ROLL_LABELS,
+  },
+}
+
+// myth-1msig — an Ask-the-DM exchange framed as TABLE TALK: the @dm question
+// (attributed, mono) + the DM's serif answer inside one marked block, set
+// between two narration beats. The grouping arrives as plain data (on the real
+// route: client-core `buildTableTalkView`); the eyebrow is route-resolved i18n.
+export const TableTalkExchange: Story = {
+  args: {
+    items: [
+      {
+        kind: 'dm',
+        key: 'tt-dm-1',
+        turnId: 'T8',
+        text: 'The orrery turns. Osric Fen has not stopped working the crank, though the rhythm has changed.',
+        streaming: false,
+      },
+      {
+        kind: 'player',
+        key: 'tt-q-1',
+        turnId: null,
+        seq: 21,
+        userId: 'u1',
+        displayName: 'Miklos',
+        characterName: 'Kessa Vurm',
+        text: '@dm does Kessa know what the brass key opens?',
+        pending: false,
+      },
+      {
+        kind: 'dm',
+        key: 'tt-a-1',
+        turnId: 'T9',
+        text: 'Not common knowledge at her tier. She has heard it said, in the way things get said without anyone claiming to know, that it belongs to the upper archive.\n\nBack to you.',
+        streaming: false,
+      },
+      {
+        kind: 'dm',
+        key: 'tt-dm-2',
+        turnId: 'T10',
+        text: 'From the upper tier, nothing. The erased ring passes the lamp-point and catches the light for one second.',
+        streaming: false,
+      },
+    ],
+    connectionLine: null,
+    reducedMotion: false,
+    rollReveal: { phaseByKey: {}, gatedTurnIds: new Set<string>() },
+    rollLabels: ROLL_LABELS,
+    tableTalk: { blockByKey: { 'tt-q-1': 0, 'tt-a-1': 0 } },
+    tableTalkLabel: 'Table talk',
   },
 }
 

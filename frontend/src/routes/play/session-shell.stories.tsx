@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { I18nextProvider } from 'react-i18next'
 import { MemoryRouter } from 'react-router-dom'
 import { ThemeProvider } from '@mythrun/ui'
+import { StoryQueryProvider } from '../../storybook/story-query-provider.tsx'
 import { toWikiViewModel } from '@mythrun/client-core/worldgen'
 import type {
   ApiContext,
@@ -121,21 +122,25 @@ const meta: Meta<typeof SessionShell> = {
   parameters: { layout: 'fullscreen', a11y: { test: 'off' } },
   decorators: [
     (Story) => (
-      <ThemeProvider>
-        <I18nextProvider i18n={i18n}>
-          <MemoryRouter>
-            {/* Reproduces the app-frame full-bleed chain: a viewport FLOOR root
-                (min-h-screen) → the min-h-0 flex-1 content region → the shell. */}
-            {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- story stand-in for the app-frame full-bleed root (min-h-screen) + its min-h-0 flex-1 content region */}
-            <div className="flex min-h-screen flex-col">
-              {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the app-frame full-bleed content region (min-h-0 flex-1) the play route fills */}
-              <div className="flex min-h-0 flex-1 flex-col">
-                <Story />
+      // The query provider mirrors the app root: the shell's mount-time balance
+      // invalidation (myth-q53lj) reads the query client.
+      <StoryQueryProvider>
+        <ThemeProvider>
+          <I18nextProvider i18n={i18n}>
+            <MemoryRouter>
+              {/* Reproduces the app-frame full-bleed chain: a viewport FLOOR root
+                  (min-h-screen) → the min-h-0 flex-1 content region → the shell. */}
+              {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- story stand-in for the app-frame full-bleed root (min-h-screen) + its min-h-0 flex-1 content region */}
+              <div className="flex min-h-screen flex-col">
+                {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- the app-frame full-bleed content region (min-h-0 flex-1) the play route fills */}
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <Story />
+                </div>
               </div>
-            </div>
-          </MemoryRouter>
-        </I18nextProvider>
-      </ThemeProvider>
+            </MemoryRouter>
+          </I18nextProvider>
+        </ThemeProvider>
+      </StoryQueryProvider>
     ),
   ],
 }

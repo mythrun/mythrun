@@ -54,6 +54,19 @@ export interface PaintFogOptions {
   fogColor: string
   /** The fixed fog quad alpha (`FOG_PARAMS.fogAlpha`) — the SAME for every cell. */
   fogAlpha: number
+  /** The world's STATIC LAND coverage at a cell centre, in virtual px (ux-run3 —
+   *  `terrain-field.ts`'s `terrainLandAt`). Where the fog is WEATHER (advected,
+   *  draining), this is GROUND: a seeded landmass whose coverage is combined with the
+   *  fog's by `max`, so land keeps its cells after the fog has blown off and the field
+   *  reads as a coastline instead of a diagonal spray. Under a label the box-clear
+   *  still wins (`clearedAt`) — the paper knockout is the same on land as at sea.
+   *  Omitted → the pre-run3 weather-only field, unchanged to the cell. */
+  land?: ((px: number, py: number) => number) | undefined
+  /** TRUE inside a label's clear box, in virtual px — the knockout the fog gets for
+   *  free from FogSim's box-cleared density (`pd <= 0`) but LAND does not, since land
+   *  is painted from a static field the sim never sees. Only consulted for cells land
+   *  alone would fill. Omitted (or no `land`) → no knockout. */
+  clearedAt?: ((px: number, py: number) => boolean) | undefined
 }
 
 /**
@@ -102,6 +115,13 @@ const CLOUD_MAX =
  *   (`covBound ≤ thr`, see `CLOUD_MAX`), the three-octave `cloud()` eval is skipped —
  *   the dominant paint-side JS cost on faint fog. Neither path can change which cells
  *   paint; `cov`'s own expression (and float-op order) is untouched.
+ *
+ * With `opts.land` (ux-run3) a SECOND, static coverage joins the decision: the world's
+ * own landmass (`terrain-field.ts`), combined by `cov > thr || landCov > thr`. Land
+ * outlives the weather — a drained sim zeroes `pd` but the ground stays — so the
+ * `pd ≤ 0` skip becomes a land-only test rather than a `continue`, and the label
+ * knockout land needs (`clearedAt`) is consulted only for cells the fog itself did not
+ * already fill. Both fast paths above are preserved verbatim when `land` is absent.
  */
 export function paintFog(
   ctx: FogPaintTarget,
@@ -110,25 +130,51 @@ export function paintFog(
   gh: number,
   opts: PaintFogOptions,
 ): void {
-  if (opts.density <= 0) return
+  const land = opts.land
+  // With no land the weather is the whole field, so a zeroed base thickness paints
+  // nothing — the verbatim pre-run3 bail. Land does NOT scale with fog thickness, so
+  // with a land field the grid still has ground to draw.
+  if (opts.density <= 0 && land === undefined) return
   ctx.fillStyle = opts.fogColor
   ctx.globalAlpha = opts.fogAlpha
   for (let gy = 0; gy < gh; gy++) {
     for (let gx = 0; gx < gw; gx++) {
       const pd = density[gy * gw + gx] ?? 0
-      if (pd <= 0) continue
+      if (pd <= 0 && land === undefined) continue
       const thr = thresholdAt(gx, gy)
-      const pdNorm = pd / COVERAGE_DIVISOR
-      // Bound-skip: float multiplication is monotone in each non-negative operand and
-      // this bound has the same association shape as `cov` below, so
-      // `cov ≤ covBound` always — a skipped cell could never have painted.
-      const covBound = pdNorm * CLOUD_MAX * opts.density
-      if (covBound <= thr) continue
       const px = gx * CELL_PX + CELL_CENTER_PX
       const py = gy * CELL_PX + CELL_CENTER_PX
-      const cov = pdNorm * cloud(px, py, opts.wx, opts.wy, opts.t) * opts.density
-      if (cov > thr) ctx.fillRect(gx * CELL_PX, gy * CELL_PX, CELL_PX, CELL_PX)
+      if (fogFills(pd, thr, px, py, opts) || landFills(land, thr, px, py, opts)) {
+        ctx.fillRect(gx * CELL_PX, gy * CELL_PX, CELL_PX, CELL_PX)
+      }
     }
   }
   ctx.globalAlpha = 1
+}
+
+/** Does the WEATHER fill this cell? The verbatim pre-run3 decision (coverage, cloud
+ *  mask, base density, Bayer threshold) plus its bound-skip, extracted so the land
+ *  branch can sit beside it without disturbing the float-op order. */
+function fogFills(pd: number, thr: number, px: number, py: number, opts: PaintFogOptions): boolean {
+  if (pd <= 0 || opts.density <= 0) return false
+  const pdNorm = pd / COVERAGE_DIVISOR
+  // Bound-skip: float multiplication is monotone in each non-negative operand and this
+  // bound has the same association shape as `cov` below, so `cov ≤ covBound` always —
+  // a skipped cell could never have painted.
+  if (pdNorm * CLOUD_MAX * opts.density <= thr) return false
+  return pdNorm * cloud(px, py, opts.wx, opts.wy, opts.t) * opts.density > thr
+}
+
+/** Does the LAND fill this cell (ux-run3)? The static field's coverage against the same
+ *  Bayer threshold — so ground and weather are drawn in one material — knocked out
+ *  under a label box, which the fog gets for free from the sim's box-clear. */
+function landFills(
+  land: ((px: number, py: number) => number) | undefined,
+  thr: number,
+  px: number,
+  py: number,
+  opts: PaintFogOptions,
+): boolean {
+  if (land === undefined || land(px, py) <= thr) return false
+  return opts.clearedAt?.(px, py) !== true
 }

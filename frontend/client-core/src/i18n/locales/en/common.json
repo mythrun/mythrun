@@ -1,6 +1,8 @@
 {
   "back": "Back",
   "billing": {
+    "alaCarteHelp": "Bought credits never expire.",
+    "alaCarteTitle": "Or pay as you go",
     "buy": "Purchase",
     "cancelled": {
       "back": "Back to billing",
@@ -8,6 +10,9 @@
       "title": "Checkout cancelled"
     },
     "current": "Your plan",
+    "grantPerMonth": "{{amount}} / month",
+    "grantSessions": "Sessions",
+    "grantWorlds": "Worlds",
     "history": {
       "empty": "No purchases yet",
       "purchase": "Purchase · {{amount}}",
@@ -18,6 +23,8 @@
     },
     "manage": "Manage",
     "pendingUpgrade": "You already have an upgrade in progress. It'll settle shortly.",
+    "plansHelp": "Credits arrive each month. Unused credits don't carry over.",
+    "plansTitle": "Monthly plans",
     "portalLink": "Manage billing & payment methods",
     "priceEach": "{{price}} each",
     "pricePerMonth": "{{price}} / month",
@@ -28,12 +35,14 @@
       "viewHistory": "View purchase history"
     },
     "sectionTitle": "Sessions & billing",
-    "sessionHelp": "Session credits are spent when you start a session.",
+    "sessionHelp": "One credit starts one session.",
     "sessionLabel": "Session credits",
+    "sessionZeroHelp": "At zero, you can't start a session.",
     "subscribe": "Subscribe",
     "upgrade": "Upgrade",
-    "worldGenHelp": "World credits are spent when you build a new world.",
-    "worldGenLabel": "World credits"
+    "worldGenHelp": "One credit builds one world and its characters.",
+    "worldGenLabel": "World credits",
+    "worldGenZeroHelp": "At zero, you can't start a new campaign."
   },
   "callback": {
     "error": "Sign-in was unsuccessful. Head back and try again.",
@@ -66,6 +75,7 @@
       "play": {
         "body": "The world is waiting.",
         "enter": "Step into the world",
+        "enterContinue": "Continue session",
         "title": "Your character is ready"
       }
     },
@@ -88,7 +98,6 @@
       "replacePrompt": "Replace this link? The old link stops working.",
       "share": "Share"
     },
-    "lastSession": "Last session",
     "noAccess": {
       "body": "It may not exist, or you may not have access. Head home.",
       "title": "This campaign is closed to you"
@@ -113,6 +122,7 @@
     },
     "freeform": {
       "begin": "Begin",
+      "cost": "Building your world takes a few minutes.",
       "eyebrow": "In your words",
       "hint": "A few words or a few paragraphs. What makes your world tick?",
       "question": "Describe the world you want to play in.",
@@ -123,6 +133,7 @@
     },
     "guided": {
       "cooldown": "$t(shared.cooldown)",
+      "cost": "Drafting takes about a minute. You can revise everything.",
       "credits": "$t(shared.lowCredits)",
       "eyebrow": "From what you love",
       "find": "Weave it together →",
@@ -181,13 +192,15 @@
   },
   "characterCreate": {
     "chooser": {
-      "eyebrow": "Creating your character",
+      "eyebrow": "Taking your seat",
       "freeform": {
         "body": "Write what's important to you and Mythrun will fill in the rest. The quickest way to start.",
-        "cta": "Simply describe your character"
+        "cost": "About a minute.",
+        "cta": "Describe your character"
       },
       "guided": {
         "body": "Pick from options, question by question.",
+        "cost": "Five short steps.",
         "cta": "Build step by step"
       },
       "prompt": "How do you want to make your character?"
@@ -196,10 +209,12 @@
       "conceptPrompt": "Who are you?",
       "conceptWhisper": "A name, a calling, an outfit. Whatever matters most.",
       "continue": "Continue",
+      "cost": "Building your character takes about a minute.",
       "error": "$t(shared.somethingWrong)",
       "groundingPrompt": "And how do you come to be here?",
       "groundingWhisperFallback": "What brings you to this place?",
-      "stepIndicator": "{{current}} of {{total}}",
+      "stepConcept": "1 of 2 · Who you are",
+      "stepGrounding": "2 of 2 · How you arrive",
       "tooShort": "Tell us a little more."
     },
     "guided": {
@@ -422,7 +437,7 @@
         "scores": "Ability scores settle"
       },
       "countdown": "Ready in {{time}}",
-      "heading": "Bringing them to life…",
+      "stage": "Stage {{current}} of {{total}}",
       "stalled": "Still working. This one's taking a while.",
       "tableRoom": "The table has room.",
       "title": "Your character is coming together"
@@ -446,7 +461,7 @@
       "startOver": "Start over",
       "startOverConfirm": "Yes, start over",
       "startOverKeep": "Keep them",
-      "startOverPrompt": "Start over? This discards this character."
+      "startOverPrompt": "Start over? This character will be discarded."
     },
     "staging": {
       "beginConfirmNo": "Keep waiting",
@@ -525,8 +540,9 @@
       "needsCharacter": "Author your character →",
       "notPlayed": "The table waits for its first session",
       "recently": "recently",
-      "record_one": "{{sessions}} session · last played {{when}}",
-      "record_other": "{{sessions}} sessions · last played {{when}}",
+      "record_one": "{{sessions}} session · last played {{when}}",
+      "record_other": "{{sessions}} sessions · last played {{when}}",
+      "resume": "Resume →",
       "waiting": "The party's still assembling"
     },
     "createCampaign": "Create a campaign",
@@ -597,6 +613,7 @@
     },
     "end": {
       "cancel": "Keep playing",
+      "closing": "The DM is closing the session…",
       "confirm": "End session",
       "control": "End session",
       "credit": "This session used one credit.",
@@ -608,8 +625,7 @@
     },
     "input": {
       "dmBusy": "The DM is writing…",
-      "ending": "Ending the session…",
-      "pendingContinue": "Continue the scene first",
+      "pendingContinue": "Press Continue to read what happens",
       "pendingRoll": "Waiting on your roll",
       "placeholder": "What do you do next?",
       "send": "Send",
@@ -638,6 +654,7 @@
       },
       "wiki": {
         "back": "$t(back)",
+        "elsewhere": "Elsewhere",
         "empty": "$t(shared.wiki.empty)",
         "emptyBody": "Nothing recorded here yet.",
         "glossary": "$t(shared.wiki.glossary)",
@@ -648,6 +665,7 @@
           "npc": "$t(shared.entityGroup.npc)"
         },
         "index": "Explore",
+        "present": "This session",
         "references": "$t(shared.wiki.digDeeper)",
         "related": "$t(shared.wiki.related)",
         "search": "Search the world",
@@ -724,6 +742,13 @@
       "body": "The session failed to start. Try again.",
       "retry": "$t(shared.tryAgain)"
     },
+    "stream": {
+      "jump": "Jump to latest ↓",
+      "newMessages": "New messages ↓"
+    },
+    "tableTalk": {
+      "label": "Table talk"
+    },
     "thinking": {
       "dm": "The DM is thinking…",
       "typing": "is typing…"
@@ -796,8 +821,8 @@
     "cta": "Begin at level {{level}}",
     "error": "$t(shared.somethingWrong)",
     "eyebrow": "Starting level",
-    "grant1": "The absolute baseline.",
-    "grant2": "A little extra power.",
+    "grant1": "Untested, and everything ahead.",
+    "grant2": "A few scrapes survived, a few lessons kept.",
     "grant3": "Old enough to have found a calling.",
     "grant4": "Seasoned, and sure of it.",
     "grant5": "Let's skip the training montage.",
@@ -817,6 +842,7 @@
     "hold": "Your host is choosing where it all begins.",
     "holdTitle": "Setting the table",
     "loading": "Selecting your starting locations",
+    "open": "Open here",
     "prompt": "Where does the story open?"
   },
   "theme": {
@@ -869,13 +895,14 @@
       "world_introduction": "Writing the opening pages"
     },
     "safeToLeave": "Safe to leave. The world keeps forming.",
+    "safeToLeaveHold": "We'll hold it right here for you.",
     "stagePosition": "Stage {{current}} of {{total}} · {{stage}}",
     "statusDone": "Your world is ready",
     "statusProgress": "World generation progress",
     "statusTitle": "Weaving your world",
     "terminalBody": "This world's a dead end. Start a new one.",
     "terminalTitle": "This world can't be made",
-    "waitQuietly": "Wait quietly instead",
+    "waitQuietly": "Wait quietly",
     "watch": "Watch it take shape"
   },
   "worldReveal": {
@@ -889,6 +916,7 @@
       "location": "$t(shared.entityGroup.location)",
       "npc": "$t(shared.entityGroup.npc)"
     },
+    "legendHollow": "Name in the index",
     "loading": "Settling your world",
     "settling": "The table is still being set…",
     "title": "Your world",

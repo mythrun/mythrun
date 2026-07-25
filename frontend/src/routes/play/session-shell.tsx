@@ -4,6 +4,9 @@ import {
   useSession,
   useRollReveal,
   buildRevealView,
+  orderForDisplay,
+  buildTableTalkView,
+  useInvalidateBalance,
   useKnowledgeCache,
   useSessionSheet,
   type ApiContext,
@@ -85,10 +88,9 @@ function useDefaultCache(campaignId: string, refreshToken: number): KnowledgeCac
 function useDefaultSheet(
   campaignId: string,
   viewerUserId: string,
-  viewerCharacterName: string,
   ledgerFrames: readonly LedgerUpdateFrame[],
 ): SessionSheetState {
-  return useSessionSheet(campaignId, viewerUserId, viewerCharacterName, ledgerFrames)
+  return useSessionSheet(campaignId, viewerUserId, ledgerFrames)
 }
 const DEFAULT_KNOWLEDGE_HOOKS: PlayKnowledgeHooks = { useCache: useDefaultCache, useSheet: useDefaultSheet }
 
@@ -139,6 +141,26 @@ export function SessionShell({
   const rollReveal = useMemo(() => buildRevealView(items, reveal.state), [items, reveal.state])
   const rollLabels = useMemo(() => buildRollLabels(t), [t])
 
+  // myth-twraw: the DISPLAY order — a RELEASED card files into its causal slot
+  // (before its own turn's prose), so the durable transcript never reads
+  // effect-before-cause (the FT can stream prose before its roll tool call). The
+  // gate/composer logic above keeps reading the RAW `items`; only the stream
+  // renders the causal order.
+  const displayItems = useMemo(() => orderForDisplay(items, rollReveal), [items, rollReveal])
+  // myth-1msig: the @dm table-talk grouping — the question + its answering turn
+  // wrap in the marked OOC frame, so the fiction/meta boundary survives reread.
+  const tableTalk = useMemo(() => buildTableTalkView(displayItems), [displayItems])
+
+  // myth-q53lj: the session credit debits at START (POST /start), so the shared
+  // header balance must refresh the moment the live shell mounts — otherwise the
+  // counter shows the credit unspent while the end-confirm's past-tense
+  // disclosure ("This session used one credit.") says it is gone. Idempotent and
+  // cheap on the join path (a background refetch of an unchanged value).
+  const invalidateBalance = useInvalidateBalance()
+  useEffect(() => {
+    invalidateBalance()
+  }, [invalidateBalance])
+
   // myth-lhp99: the local ENDING latch. Set the instant the player confirms an end
   // (the control's confirm OR the wind-down's "Rest here") so the composer + the end
   // affordances gate immediately — before the farewell turn's dm_thinking arrives —
@@ -186,7 +208,6 @@ export function SessionShell({
   const knowledge = usePlayKnowledge({
     campaignId,
     viewerUserId,
-    viewerCharacterName: characterName,
     items,
     connectionStatus: connection.status,
     hooks: knowledgeHooks,
@@ -258,23 +279,34 @@ export function SessionShell({
         {/* The persistent end-session control (myth-lhp99 / myth-xxyo9) — true
             fixed chrome: the column is viewport-bounded, so this row never scrolls
             away and stays reachable from the live edge. The px inset matches the
-            stream's own padding, so the control shares the transcript grid line. */}
-        {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- grid-line inset wrapper (matches the stream's px) */}
-        <div className="px-[var(--space-4)]">
-          <EndSessionControl labels={endLabels} onEnd={endSession} disabled={ending} />
-        </div>
+            stream's own padding, so the control shares the transcript grid line.
+            myth-88lmb: the moment the confirm lands (`ending`) the whole control
+            is SWEPT — a stale question with one dead button must not keep asking;
+            the ONE end-transition signal lives at the live edge below. */}
+        {!ending && (
+          // eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- grid-line inset wrapper (matches the stream's px)
+          <div className="px-[var(--space-4)]">
+            <EndSessionControl labels={endLabels} onEnd={endSession} />
+          </div>
+        )}
         {/* The scroll slot — MessageStream is `h-full`, so it fills this flex-1
             min-h-0 region and scrolls internally (the page never scrolls). */}
         {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- transcript scroll slot; MessageStream (h-full) fills this flex-1 min-h-0 region */}
         <div className="flex min-h-0 flex-1 flex-col">
           <MessageStream
-            items={items}
+            items={displayItems}
             connectionLine={connectionLine}
             reducedMotion={reducedMotion}
             rollReveal={rollReveal}
             rollLabels={rollLabels}
             onRoll={onRoll}
             onContinue={onContinue}
+            // myth-em6bg: the off-live-edge pill labels; myth-1msig: the @dm
+            // table-talk grouping + its eyebrow.
+            jumpLabel={t('play.stream.jump')}
+            newMessagesLabel={t('play.stream.newMessages')}
+            tableTalk={tableTalk}
+            tableTalkLabel={t('play.tableTalk.label')}
             // The errata eyebrow for a `dm_correction` row (myth-d6knq) — resolved
             // route-side; the DS slip is i18n-agnostic. `text` is DM DATA.
             correctionLabel={t('play.correction.label')}
@@ -290,10 +322,13 @@ export function SessionShell({
             grid line instead of three near-misses. */}
         {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- grid-line inset wrapper (matches the stream's px) */}
         <div className="flex flex-col gap-[var(--space-2)] px-[var(--space-4)]">
+          {/* myth-88lmb: while the confirmed end renders, the live edge carries
+              the ONE farewell-weight signal ("The DM is closing the session…") in
+              place of the generic turn indicator — one signal, one place. */}
           <ThinkingIndicator
-            thinking={thinking}
+            thinking={thinking || ending}
             typingNames={typingNames}
-            thinkingLabel={t('play.thinking.dm')}
+            thinkingLabel={ending ? t('play.end.closing') : t('play.thinking.dm')}
             typingLabel={t('play.thinking.typing')}
           />
           {/* The wind-down offer (myth-lhp99) — hung off a detected long rest, the most
@@ -305,7 +340,6 @@ export function SessionShell({
               onKeepPlaying={() => {
                 setDismissedRestTurn(longRestTurn)
               }}
-              disabled={ending}
             />
           )}
           <SessionInput
@@ -315,12 +349,14 @@ export function SessionShell({
             onSummonDm={onSummonDm}
             // Terminal `disabled` when the transport has failed (sends during a
             // transient `reconnecting` stay pending + resend — the view-model owns
-            // that; `ended` short-circuits to the complete notice above). `busy`
-            // (myth-dd63v) is the SEPARATE transient gate — the DM mid-turn, a check
-            // awaiting Roll/Continue, or an end in flight — where the field stays
-            // typeable but Send waits behind a quiet reason line (never silently
-            // swallowed, the run-1 bug).
-            disabled={connection.status === 'failed'}
+            // that; `ended` short-circuits to the complete notice above) OR the
+            // player has confirmed an end (myth-88lmb: the farewell deserves a
+            // screen that has stopped asking for input — the field goes inert and
+            // its placeholder quiet, not merely send-gated). `busy` (myth-dd63v)
+            // is the SEPARATE transient gate — the DM mid-turn, a check awaiting
+            // Roll/Continue — where the field stays typeable but Send waits
+            // behind a quiet reason line (never silently swallowed, the run-1 bug).
+            disabled={connection.status === 'failed' || ending}
             busy={composerBusy}
             {...(composerBusyLabel !== undefined ? { busyLabel: composerBusyLabel } : {})}
             placeholder={t('play.input.placeholder')}
@@ -342,17 +378,19 @@ export function SessionShell({
 
 /** The composer caption for each gate state (myth-0q8jm) — the line names the
  *  BLOCKING PARTY, so it can never claim the DM is writing while the game waits
- *  on the player's roll. `idle` shows no caption. */
+ *  on the player's roll. `idle` shows no caption. `ending` shows none either
+ *  (myth-88lmb): the composer is hard-disabled during the farewell and the ONE
+ *  end-transition signal lives at the live edge — a second "Ending…" caption
+ *  here was one of the three duelling signals the sweep removed. */
 function composerLabelFor(gate: ComposerGateState, t: TFunction): string | undefined {
   switch (gate) {
-    case 'ending':
-      return t('play.input.ending')
     case 'awaitRoll':
       return t('play.input.pendingRoll')
     case 'awaitContinue':
       return t('play.input.pendingContinue')
     case 'dmWriting':
       return t('play.input.dmBusy')
+    case 'ending':
     case 'idle':
       return undefined
   }

@@ -12,6 +12,12 @@ data "terraform_remote_state" "shared" {
 locals {
   env = var.environment
 
+  # myth-z4f: one retention value for every log group this workspace owns, so a
+  # future bump moves them together instead of leaving one group behind. The
+  # migrate group (modules/serving/migrate.tf) is deliberately separate — it is
+  # already 30 and its lifetime is a schema history, not an incident window.
+  log_retention_days = 30
+
   # Secrets populated manually via AWS Console/CLI. Placeholder initial version
   # is OK because app never reads these until values are set.
   manual_secret_names = [
@@ -91,6 +97,7 @@ module "serving" {
   ecs_cluster_name       = data.terraform_remote_state.shared.outputs.ecs_cluster_name
   ecr_repository_url     = data.terraform_remote_state.shared.outputs.ecr_repository_url
   alb_arn                = data.terraform_remote_state.shared.outputs.alb_arn
+  alb_arn_suffix         = data.terraform_remote_state.shared.outputs.alb_arn_suffix
   alb_listener_https_arn = data.terraform_remote_state.shared.outputs.alb_listener_https_arn
   alb_dns_name           = data.terraform_remote_state.shared.outputs.alb_dns_name
   alb_zone_id            = data.terraform_remote_state.shared.outputs.alb_zone_id
@@ -132,7 +139,16 @@ module "serving" {
   # value for the staging environment.
   frontend_base_url = "https://staging.mythrun.com"
 
-  # Staging uses module defaults (256/512, 14-day log retention) per Week 0 §7.2.
+  # myth-89am: billing alarms page the same destination as everything else.
+  alerts_topic_arn = aws_sns_topic.alerts.arn
+
+  # myth-z4f: 30 days, up from the module's 14-day default. Two weeks is shorter
+  # than the interval at which a subtle bug gets noticed, so an incident that
+  # starts "when did this begin?" runs out of logs before it runs out of
+  # questions. At roughly a gigabyte a month this is cents; production passes 90.
+  log_retention_days = local.log_retention_days
+
+  # Staging uses module defaults for task sizing (256/512) per Week 0 §7.2.
 }
 
 # ======== Auth Module (Cognito User Pool + Google + Discord IdPs) ========
@@ -160,6 +176,10 @@ module "auth" {
   # at mythrun/staging/smoke-test-{owner,player_1,player_2,player_3}-credentials.
   # Production composition leaves this at the default (false).
   smoke_test_user_enabled = true
+
+  # myth-s48q: Cognito throttling alarms page the same destination as
+  # everything else in this environment.
+  alerts_topic_arn = aws_sns_topic.alerts.arn
 }
 
 # ======== Bootstrap-DB Task Definition ========
@@ -238,7 +258,7 @@ module "frontend_hosting" {
 
 resource "aws_cloudwatch_log_group" "smoke_prep_pipeline" {
   name              = "/ecs/mythrun-${var.environment}-smoke-prep-pipeline"
-  retention_in_days = 14
+  retention_in_days = local.log_retention_days
 
   tags = { Name = "mythrun-${var.environment}-smoke-prep-pipeline" }
 }
@@ -512,7 +532,59 @@ data "aws_iam_policy_document" "gh_actions_trust" {
       variable = "token.actions.githubusercontent.com:sub"
       values   = ["repo:mythrun/mythrun:environment:staging"]
     }
+
+    # myth-651: pin the workflow FILE, not just the repo + environment + branch.
+    # Without this, any workflow merged to main can assume this role inside the
+    # staging environment; with it, only the three enumerated below can.
+    #
+    # AWS added provider-specific OIDC claim validation in February 2026 and
+    # lists `job_workflow_ref` among the supported GitHub condition keys, so no
+    # GitHub-side subject-claim customization is needed — the claim ships by
+    # default.
+    #
+    # Default OFF. See var.pin_job_workflow_ref for how to verify the claim
+    # values against a real run before flipping it; a wrong value here takes CI
+    # down until someone reverts.
+    dynamic "condition" {
+      for_each = var.pin_job_workflow_ref ? [1] : []
+      content {
+        test     = "StringEquals"
+        variable = "token.actions.githubusercontent.com:job_workflow_ref"
+        values   = local.staging_job_workflow_refs
+      }
+    }
   }
+}
+
+locals {
+  # Every workflow whose jobs assume the staging deploy role. StringEquals over
+  # a list is an OR. _db-migrate-job.yml is a REUSABLE workflow: its jobs report
+  # their own file as job_workflow_ref, not the caller's, so it needs its own
+  # entry and deploy.yml's entry does not cover it.
+  #
+  # Once the myth-jnb build-role cutover lands, deploy.yml's `build` job assumes
+  # the BUILD role instead and its ref belongs on that list (it is already
+  # there); deploy.yml stays here for its three deploy jobs.
+  #
+  # This list is derived from `grep -rn role-to-assume .github/workflows/`, which
+  # is the only honest way to build it — every file naming
+  # mythrun-github-actions-staging must appear here or it loses AWS access the
+  # moment pin_job_workflow_ref flips.
+  #
+  # bootstrap-db-build.yml is on the list because it assumes the STAGING role
+  # TODAY (its build-and-push job), and the two gate variables are independent:
+  # nothing stops pin_job_workflow_ref being flipped before
+  # github_build_role_cutover. Omitting it would mean flipping the pin first
+  # silently breaks the bootstrap-db image build. After the cutover that job
+  # assumes the build role instead and this entry becomes inert — StringEquals
+  # over a list is an OR, so an entry nothing matches costs nothing — and it can
+  # be dropped then, or left as a no-op.
+  staging_job_workflow_refs = [
+    "mythrun/mythrun/.github/workflows/deploy.yml@refs/heads/main",
+    "mythrun/mythrun/.github/workflows/_db-migrate-job.yml@refs/heads/main",
+    "mythrun/mythrun/.github/workflows/deploy-frontend.yml@refs/heads/main",
+    "mythrun/mythrun/.github/workflows/bootstrap-db-build.yml@refs/heads/main",
+  ]
 }
 
 resource "aws_iam_role" "github_actions_staging" {
@@ -529,36 +601,83 @@ data "aws_iam_policy_document" "gh_actions_staging" {
     resources = ["*"]
   }
 
-  # ECR push/pull — scoped to the mythrun repo.
+  # ECR pull — kept on this role after the myth-jnb split. The deploy jobs do
+  # not pull images themselves (the ECS task execution role does that), but the
+  # migrate workflow resolves a SHA to a digest before running its task, and
+  # keeping read access here means an operator debugging a deploy is not blocked
+  # on a role they do not have.
   statement {
     actions = [
       "ecr:BatchCheckLayerAvailability",
       "ecr:GetDownloadUrlForLayer",
       "ecr:BatchGetImage",
-      "ecr:PutImage",
-      "ecr:InitiateLayerUpload",
-      "ecr:UploadLayerPart",
-      "ecr:CompleteLayerUpload",
     ]
     resources = [
       "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/mythrun",
       "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/mythrun-bootstrap-db",
-      "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/ecr-public/*",
     ]
+  }
+
+  # ---- ECR WRITE. Held by this role only until the build-role cutover
+  # (myth-jnb) completes. These are the permissions that make a compromised
+  # build step able to do more than build: with them, the same credentials that
+  # run a Dockerfile can also roll a service. They move wholesale to
+  # mythrun-github-actions-build, which has no ECS or PassRole authority at all.
+  #
+  # Gated rather than deleted because the cutover has to be sequenced against a
+  # GitHub-side change (a new `build` environment) and a workflow edit. Flipping
+  # github_build_role_cutover = true BEFORE the build jobs assume the new role
+  # breaks every image push. See the ordered steps in
+  # infra/environments/shared/github-actions-build-role.tf.
+  dynamic "statement" {
+    for_each = var.github_build_role_cutover ? [] : [1]
+    content {
+      actions = [
+        "ecr:PutImage",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+      ]
+      resources = [
+        "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/mythrun",
+        "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/mythrun-bootstrap-db",
+        "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/ecr-public/*",
+      ]
+    }
   }
 
   # Pull-through cache: auto-create cache repos + trigger upstream pulls.
   # Scoped to the ecr-public/* prefix (set by the shared workspace's
   # aws_ecr_pull_through_cache_rule.ecr_public pointing at public.ecr.aws).
   # Without these, the first `docker pull` through the cache fails at ECR authz.
-  statement {
-    actions = [
-      "ecr:CreateRepository",
-      "ecr:BatchImportUpstreamImage",
-    ]
-    resources = [
-      "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/ecr-public/*",
-    ]
+  # Build-time only, so it goes with the write permissions above.
+  dynamic "statement" {
+    for_each = var.github_build_role_cutover ? [] : [1]
+    content {
+      actions = [
+        "ecr:CreateRepository",
+        "ecr:BatchImportUpstreamImage",
+      ]
+      resources = [
+        "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/ecr-public/*",
+      ]
+    }
+  }
+
+  # The pre-cutover role also needs pull on the cache namespace, since the same
+  # role runs the docker build. Post-cutover that moves to the build role.
+  dynamic "statement" {
+    for_each = var.github_build_role_cutover ? [] : [1]
+    content {
+      actions = [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage",
+      ]
+      resources = [
+        "arn:aws:ecr:us-east-1:${data.aws_caller_identity.current.account_id}:repository/ecr-public/*",
+      ]
+    }
   }
 
   # ECS mutating actions scoped to the mythrun cluster via the ecs:cluster
@@ -727,14 +846,25 @@ resource "aws_iam_role_policy" "github_actions_staging" {
 }
 
 # ======== SNS Alerts Topic ========
-# Topic lands here; alarms (Week 0 §6.3) land in the Observability milestone.
+# Topic lands here. The billing alarms (myth-89am) publish to it from the
+# serving module via its alerts_topic_arn input; the broader infra alarm suite
+# (ECS/RDS/Redis/ALB/ACM/spend, Week 0 §6.3) lands in the Observability
+# milestone and should attach to this same topic.
 # Email subscription starts in PendingConfirmation — recipient must click the
 # AWS-sent confirmation link before alarms will deliver. Re-running terraform
 # apply while pending is a no-op; confirmation isn't a Terraform-managed attr.
 
 resource "aws_sns_topic" "alerts" {
-  name              = "mythrun-staging-alerts"
-  kms_master_key_id = "alias/aws/sns" # AWS-managed KMS for encryption-at-rest; zero additional cost
+  name = "mythrun-staging-alerts"
+
+  # Customer-managed key from the shared workspace, NOT alias/aws/sns.
+  # Encrypting with the AWS-managed key silently breaks every alarm on this
+  # topic: a CloudWatch alarm publishes as the service principal
+  # cloudwatch.amazonaws.com, the AWS-managed key's policy cannot be edited to
+  # authorize it, and the result is an alarm that goes red and delivers nothing.
+  # The only trace is a "Failed to execute action" line in the alarm's History
+  # tab. See infra/environments/shared/alerts-kms.tf for the full account.
+  kms_master_key_id = data.terraform_remote_state.shared.outputs.alerts_kms_key_arn
 
   tags = { Name = "mythrun-staging-alerts" }
 }
@@ -750,4 +880,87 @@ resource "aws_sns_topic_subscription" "alerts_email" {
   # no longer the literal "PendingConfirmation" string) — verified with:
   #   aws sns list-subscriptions-by-topic --topic-arn <arn> \
   #     --query 'Subscriptions[0].SubscriptionArn'
+}
+
+# ---- Topic policy (myth-gb0).
+#
+# Until now this topic carried SNS's default policy, which allows sns:Publish
+# from ANY principal in account 862127484110. Cross-account publishing was
+# already blocked by that default's SourceOwner condition; what this closes is
+# the in-account case, where any role that happens to hold sns:Publish could
+# push a fake alarm into the operator's inbox. Declaring a policy replaces the
+# default outright, which is the point.
+#
+# Nothing here grants management. Same-account access is satisfied by an
+# identity policy OR a resource policy, so Terraform and anyone with sns:*
+# continue to administer the topic normally.
+#
+# budgets.amazonaws.com is authorized alongside CloudWatch even though nothing
+# publishes budget notifications to THIS topic today. AWS Budgets fails closed
+# and silently against a policy that omits it — notifications simply stop, with
+# no error surfaced anywhere — so pre-authorizing it turns a future wiring
+# change into a change that works rather than one that appears to.
+#
+# Mirrors infra/environments/shared/alarms.tf, which does the same for the
+# shared topic. Both should move together.
+
+# The two statements carry different conditions on purpose — see the matching
+# comment in infra/environments/shared/alarms.tf. Short version: the Budgets
+# statement is AWS-published verbatim, conditions and all; the CloudWatch one
+# carries only aws:SourceAccount, because pinning aws:SourceArn is undocumented
+# for CloudWatch and an unpopulated condition key denies the publish, which
+# looks identical to the encryption defect this change exists to fix.
+
+data "aws_iam_policy_document" "alerts_topic" {
+  statement {
+    sid     = "AllowCloudWatchAlarmsToPublish"
+    effect  = "Allow"
+    actions = ["SNS:Publish"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudwatch.amazonaws.com"]
+    }
+
+    resources = [aws_sns_topic.alerts.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+
+  statement {
+    sid     = "AWSBudgetsSNSPublishingPermissions"
+    effect  = "Allow"
+    actions = ["SNS:Publish"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["budgets.amazonaws.com"]
+    }
+
+    resources = [aws_sns_topic.alerts.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+
+    # Budgets ARNs are region-less — note the double colon. The service is
+    # global and notifications originate from us-east-1 regardless of where the
+    # budget is viewed.
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:budgets::${data.aws_caller_identity.current.account_id}:*"]
+    }
+  }
+}
+
+resource "aws_sns_topic_policy" "alerts" {
+  arn    = aws_sns_topic.alerts.arn
+  policy = data.aws_iam_policy_document.alerts_topic.json
 }

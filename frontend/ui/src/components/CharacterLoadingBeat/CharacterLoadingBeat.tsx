@@ -23,13 +23,17 @@ import { VisuallyHidden } from '../VisuallyHidden/VisuallyHidden.tsx'
 //               by weight not decoration (motion-free, so reduced-motion users
 //               read the same state);
 //   `pending` — tertiary ink, marker slot empty: visibly not-yet.
-// The stage copy itself is praise-ledger ("A name surfaces." — do not rewrite);
-// the ellipsis is appended presentation, skipped when a label already ends
-// with one.
+// The stage copy itself is praise-ledger ("A name surfaces" — do not rewrite);
+// punctuation is appended PRESENTATION under the ux-run3 myth-1yxfr grammar:
+// exactly one line on screen carries the ellipsis (the active row); a done row
+// resolves its sentence with a period; pending stays bare.
 //
 // THE KICKER ROW: the eyebrow and the coarse estimate share one label·value
-// line ("BRINGING THEM TO LIFE…   ·   Ready in about 2 min"), so the estimate is
-// anchored to the panel's voice instead of floating attached to nothing.
+// line ("STAGE 3 OF 4   ·   Ready in under a minute"), so the estimate is
+// anchored to the panel's voice instead of floating attached to nothing. Since
+// ux-run3 myth-1yxfr the shell passes the FACTUAL stage counter here — the old
+// "Bringing them to life…" eyebrow doubled the screen H1's thought and carried
+// a second live ellipsis.
 //
 // THE FIGURE (myth-zyk6o — never an empty frame). The shared BeatFigure under
 // the ladder is the brand's "materializing" texture — but a fill meter at zero
@@ -114,6 +118,29 @@ function withWorkingEllipsis(label: string): string {
   return label.endsWith('…') ? label : `${label}…`
 }
 
+/** Strip a trailing ellipsis — the wait grammar (ux-run3 myth-1yxfr) allows
+ *  exactly ONE live ellipsis on screen: the active row's. Presentation only;
+ *  the catalog copy itself is never rewritten. */
+function withoutEllipsis(label: string): string {
+  return label.endsWith('…') ? label.slice(0, -1) : label
+}
+
+/** A DONE row resolves its sentence — "A name surfaces." — so completed reads
+ *  as settled prose, unmistakable from the active line (run 3 could not tell
+ *  the two apart when both trailed dots). */
+function settled(label: string): string {
+  const bare = withoutEllipsis(label)
+  return bare.endsWith('.') ? bare : `${bare}.`
+}
+
+/** The per-state label presentation: active carries the working ellipsis, done
+ *  settles into a period, pending stays a bare muted phrase. */
+function presentLabel(label: string, state: CharacterLoadingBeatProps['beats'][number]['state']): string {
+  if (state === 'active') return withWorkingEllipsis(label)
+  if (state === 'done') return settled(label)
+  return withoutEllipsis(label)
+}
+
 export const CharacterLoadingBeat = forwardRef<HTMLDivElement, CharacterLoadingBeatProps>(
   function CharacterLoadingBeat({ heading, beats, reducedMotion, countdownLabel, stalledLabel }, ref) {
     const total = beats.length
@@ -167,9 +194,7 @@ export const CharacterLoadingBeat = forwardRef<HTMLDivElement, CharacterLoadingB
                   data-testid="character-loading-beat-marker"
                   className={cn(MARKER_BASE, MARKER_STATE_CLASS[beat.state])}
                 />
-                <span className={RUNG_LABEL_CLASS}>
-                  {beat.state === 'active' ? withWorkingEllipsis(beat.label) : beat.label}
-                </span>
+                <span className={RUNG_LABEL_CLASS}>{presentLabel(beat.label, beat.state)}</span>
               </li>
             ))}
           </ul>
@@ -183,8 +208,11 @@ export const CharacterLoadingBeat = forwardRef<HTMLDivElement, CharacterLoadingB
           )}
         </div>
 
-        {/* The quantized figure — ambient breathe until the first beat lands,
-            then the honest fill; panel-weight frame (muted tone). */}
+        {/* The quantized figure — the faint IDLE shimmer until the first beat
+            lands (nearly blank, poised at the fill's origin — ux-run3
+            myth-c96rf: a breathing band at ~half density read as a progress
+            bar promising 90% at t=0), then the honest fill; panel-weight
+            frame (muted tone). */}
         {doneCount > 0 ? (
           <BeatFigure
             mode="fill"
@@ -195,7 +223,7 @@ export const CharacterLoadingBeat = forwardRef<HTMLDivElement, CharacterLoadingB
           />
         ) : (
           <BeatFigure
-            mode="breathe"
+            mode="idle"
             tone="muted"
             reducedMotion={reducedMotion}
             data-testid="character-loading-beat-figure"

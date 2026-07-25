@@ -308,6 +308,35 @@ describe('CharacterNewRoute — the freeform path', () => {
     ).toBeDefined()
   })
 
+  it('gives the concept step the essay floor and the grounding step the detail floor', async () => {
+    // ux-run3 myth-21lpi: the grounding step stacks a recap card and a long DM
+    // invitation above its field, and the essay floor walked the field's own
+    // bottom edge AND the Continue past a 1280x720 frame. "Who are you?" keeps
+    // the blank page's room; "how do you come to be here?" takes the detail floor.
+    const field = (): HTMLElement =>
+      within(screen.getByTestId('freeform-prompt')).getByRole('textbox')
+    renderRoute()
+    pickFreeform()
+    expect(field().style.minHeight).toContain('6 * 1lh')
+    answerAndContinue(CONCEPT)
+    await screen.findByText(CHOSEN_INVITATION)
+    expect(field().style.minHeight).toContain('3 * 1lh')
+  })
+
+  it('discloses the generation cost at the grounding Continue, and not before', async () => {
+    // ux-run3 myth-g3mt6: the grounding Continue is the character-generation
+    // trigger — the one press in this flow that spends. The concept Continue
+    // only pages forward, so it discloses nothing.
+    renderRoute()
+    pickFreeform()
+    expect(screen.queryByTestId('freeform-submit-hint')).toBeNull()
+    answerAndContinue(CONCEPT)
+    await screen.findByText(CHOSEN_INVITATION)
+    expect(screen.getByTestId('freeform-submit-hint').textContent).toBe(
+      i18n.t('characterCreate.freeform.cost'),
+    )
+  })
+
   it('submits BOTH conceptText and situationGroundingText, then hands off to the campaign surface', async () => {
     const { submit } = renderRoute()
     pickFreeform()
@@ -404,16 +433,17 @@ describe('CharacterNewRoute — the situation recap (MYT-102)', () => {
 })
 
 describe('CharacterNewRoute — freeform step signposting (MYT-102)', () => {
-  it('signposts "1 of 2" on the concept step and "2 of 2" on the grounding step', async () => {
+  it('signposts the NAMED steps — "1 of 2 · Who you are", then "2 of 2 · How you arrive"', async () => {
+    // ux-run3 myth-7ceqw (c): the signpost names each door, not just counts them.
     renderRoute()
     pickFreeform()
     expect(screen.getByTestId('freeform-step-indicator').textContent).toBe(
-      i18n.t('characterCreate.freeform.stepIndicator', { current: 1, total: 2 }),
+      i18n.t('characterCreate.freeform.stepConcept'),
     )
     answerAndContinue(CONCEPT)
     await screen.findByText(CHOSEN_INVITATION)
     expect(screen.getByTestId('freeform-step-indicator').textContent).toBe(
-      i18n.t('characterCreate.freeform.stepIndicator', { current: 2, total: 2 }),
+      i18n.t('characterCreate.freeform.stepGrounding'),
     )
   })
 })

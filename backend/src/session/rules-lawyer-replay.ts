@@ -49,6 +49,10 @@ export function makeReplayBuilders(sessionId: string): ReplayBuilders {
         summary: `${characterName}'s hit points are already at ${String(hp)}/${String(maxHp)} (no change).`,
         hp,
         maxHp,
+        // myth-hlydp: the replayed hp payload states the same authoritative set
+        // the live one does, so a redelivery converges on identical client
+        // state. Reused from the snapshot already read — no extra query.
+        activeConditions: row?.conditions ?? [],
       }
     },
     goldPayload: async (tx, _characterId, characterName) => {

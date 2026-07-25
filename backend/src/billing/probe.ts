@@ -7,19 +7,30 @@
 // loud — fix Dashboard), and transient Stripe-API errors (retry with
 // backoff).
 //
-// Read-only: only stripe.prices.list. Restricted API key in production
-// rejects any mutation regardless.
+// Also asserts every enabled webhook endpoint is pinned to the SDK's
+// STRIPE_API_VERSION — events are immutable, so a drifted endpoint means
+// every delivery is dropped uncredited and cannot be repaired at dispatch
+// time (myth-e3ary).
+//
+// Read-only: stripe.prices.list, billingPortal.configurations.list and
+// webhookEndpoints.list. Restricted API key in production rejects any
+// mutation regardless.
 
 import { randomUUID } from 'node:crypto'
 import Stripe from 'stripe'
 import type { Logger } from 'pino'
 import { LOOKUP_KEYS, type LookupKey, type LookupKeySpec } from './lookup-keys.js'
+import { probeWebhookEndpointVersion } from './probe-webhook-version.js'
 import {
   setSkuCache,
   type SkuCache,
   type SkuInternalEntry,
   type SkuPublicListing,
 } from './sku-cache.js'
+
+// Re-exported so `probe.js` stays the single import site for probe error
+// types (server.ts and the tests reach for them here).
+export { BillingProbeWebhookVersionError } from './probe-webhook-version.js'
 
 const PROBE_TIMEOUT_MS = 7000
 const PROBE_MAX_ATTEMPTS = 3
@@ -166,6 +177,8 @@ export async function probeStripeContract(stripe: Stripe, logger: Logger): Promi
   }
 
   await probePortalConfig(stripe, logger, bootId)
+
+  await probeWebhookEndpointVersion(stripe, logger, bootId)
 
   populateSkuCache(lookupKeys, byLookup)
 

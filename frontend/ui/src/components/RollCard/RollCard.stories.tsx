@@ -151,15 +151,24 @@ export const SkillAdvantage: Story = {
   args: { item: SKILL_ADV, phase: 'revealed' },
 }
 
-// Released — the settled record: readout, no Continue (the prose has been released).
+// Released — the settled RECEIPT (myth-twraw): one quiet mono line — skill ·
+// equation · verdict vs DC — on a hairline. The theater lives at `revealed`;
+// the durable transcript files this record in its causal slot.
 export const SkillReleased: Story = {
-  name: 'Skill — released (settled)',
+  name: 'Skill — released (the receipt)',
   args: { item: SKILL, phase: 'released' },
 }
 
-// Dice roll — the flavor variant: NdM + the stamped total, no DC/tier/Continue.
+// Dice roll — the flavor variant mid-theater: NdM + the stamped total, no
+// DC/tier/Continue.
 export const DiceRoll: Story = {
   name: 'Dice roll (2d20)',
+  args: { item: DICE, phase: 'revealed' },
+}
+
+// A released dice roll files as the same quiet receipt (NdM · total).
+export const DiceRollReleased: Story = {
+  name: 'Dice roll — released (the receipt)',
   args: { item: DICE, phase: 'released' },
 }
 

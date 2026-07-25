@@ -12,6 +12,7 @@ import {
   type StaticKeepOut,
   type VirtualDims,
   type VirtualGrowth,
+  type WorldgenLayout,
   type WorldSeat,
 } from '@mythrun/client-core/worldgen'
 import type {
@@ -111,6 +112,13 @@ export interface GraphCanvasParams {
    *  occluded under the card (on a phone it spans ~70% of the pane width). `null`/
    *  absent element → no keep-out (the reveal has no card). */
   keepOutRef: React.RefObject<HTMLElement | null> | undefined
+  /** The session-scoped layout home for this worldgen run (ux-run3 myth-aftau) —
+   *  pin-on-settle writes each frozen placement through to it, and a remount pins
+   *  the cached nodes straight back where the player saw them (only NEW entities
+   *  settle freely). `undefined` (the reveal, standalone stories) → render-scoped
+   *  layout, the pre-run3 behavior. Same required-with-`undefined` idiom as
+   *  `forceParams`. */
+  layout: WorldgenLayout | undefined
 }
 
 export interface GraphCanvas {
@@ -181,6 +189,17 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   // Recomputed via `refreshLabels` whenever an input moves; read by the draw, the
   // collision measure, and the fog-entity mapping (one set, three surfaces).
   const labeledRef = useRef<ReadonlySet<string>>(new Set<string>())
+  // SUPPRESSED labels (ux-run3 myth-k0sja): tier-issued names whose pinned neighbours
+  // leave neither an east nor a west slot free. They are NOT drawn — the node keeps its
+  // mark and goes hollow, its name findable in the wiki index — because two names in
+  // one slot is strictly worse than one name and one anonymous mark. Written by
+  // `chooseLabelSides`, subtracted from `labeledRef` to give `drawnLabelsRef`.
+  const suppressedRef = useRef<Set<string>>(new Set<string>())
+  // The set the DRAW, the collision measure and the fog actually consume: the tier's
+  // labeled set minus the suppressed. Recomputed by `applyBoxes` (the one place the
+  // suppression can change), so the three surfaces can never disagree about which
+  // names are on the map.
+  const drawnLabelsRef = useRef<ReadonlySet<string>>(new Set<string>())
   const densityRef = useRef<Partial<DensityParams>>(params.densityParams ?? {})
   // Density-aware growth for the dims derivation (recomputed every render — cheap,
   // pure): the SAME derivation WorldGenGraph hands the fog, so the layers agree (C5).
@@ -203,6 +222,9 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     edgeAppear: new Map(),
   })
   const settledRef = useRef(false) // reduced-motion: has the current graph been settled?
+  // The session-scoped layout home (myth-aftau): pin-on-settle persists into it,
+  // the graph sync rehydrates from it. `undefined` → render-scoped layout.
+  const layoutRef = useRef<WorldgenLayout | undefined>(params.layout)
   // Latest spread-tuner overrides, normalised to `{}` (never undefined) so `getSim`
   // passes them to `createForceSim` unconditionally under exactOptionalPropertyTypes.
   const forceParamsRef = useRef<Partial<ForceParams>>(params.forceParams ?? {})
@@ -215,6 +237,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
   forcefulRef.current = params.forcefulSettle
   showLabelsRef.current = showLabels
   forceParamsRef.current = params.forceParams ?? {}
+  layoutRef.current = params.layout
   densityRef.current = params.densityParams ?? {}
   growthRef.current = growthFrom(nodes.length, densityRef.current)
   // The pannable gate (audit v3): a zeroed seat never engages `cameraWorldDims`
@@ -356,9 +379,11 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
       pinned: pinnedRef.current,
       widthOf,
       sides: sidesRef.current,
+      suppressed: suppressedRef.current,
     })
+    drawnLabelsRef.current = drawnLabels(labeledRef.current, suppressedRef.current)
     sim.setBoxes(
-      measureNodeBoxes(ctx, nodesRef.current, labeledRef.current, boxWidthCacheRef.current, labelFontRef.current, sidesRef.current),
+      measureNodeBoxes(ctx, nodesRef.current, drawnLabelsRef.current, boxWidthCacheRef.current, labelFontRef.current, sidesRef.current),
     )
   }, [canvasRef])
 
@@ -372,7 +397,18 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     const sim = simRef.current
     if (sim === null) return
     const fresh = pinSettledLabels(sim, labeledRef.current, pinnedRef.current)
-    if (fresh > 0) applyBoxes()
+    if (fresh > 0) {
+      applyBoxes()
+      // Write the freshly-frozen constellation through to the session layout
+      // (myth-aftau) — AFTER the box pass, so the chosen label sides ride along.
+      persistPlacements({
+        sim,
+        nodes: nodesRef.current,
+        layout: layoutRef.current,
+        pinned: pinnedRef.current,
+        sides: sidesRef.current,
+      })
+    }
   }, [applyBoxes])
 
   // Reduced motion: settle the sim to convergence ONCE per graph change, idempotently —
@@ -395,7 +431,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     if (sim === null) return []
     if (reducedRef.current) ensureSettled()
     const t = reducedRef.current ? null : clockRef.current
-    return fogEntitiesFrom(nodesRef.current, sim.positions(), t, virtualRef.current, labeledRef.current, sidesRef.current)
+    return fogEntitiesFrom(nodesRef.current, sim.positions(), t, virtualRef.current, drawnLabelsRef.current, sidesRef.current)
   }, [ensureSettled])
 
   // Size the backing store to the pane AND cache the theme ink — the once-per-mount/resize
@@ -451,7 +487,7 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
           focusKey: focusRef.current,
           t: reducedRef.current ? null : clockRef.current,
           showLabels: showLabelsRef.current,
-          labeled: labeledRef.current,
+          labeled: drawnLabelsRef.current,
           sides: sidesRef.current,
           labelFont: labelFontRef.current,
           paper: paperRef.current,
@@ -504,6 +540,18 @@ export function useGraphCanvas(params: GraphCanvasParams): GraphCanvas {
     syncKeyRef.current = key
     const dimsChanged = syncVirtual()
     getSim().sync(nodes, edges)
+    // Rehydrate the session layout (myth-aftau) BEFORE the label/box passes: a
+    // remount pins every cached node straight back at its frozen placement (its
+    // worn side restored with it), so the side chooser and the collision boxes
+    // see the constellation the player already saw. New arrivals aren't in the
+    // cache and settle freely around it.
+    rehydratePlacements({
+      sim: getSim(),
+      nodes,
+      layout: layoutRef.current,
+      pinned: pinnedRef.current,
+      sides: sidesRef.current,
+    })
     syncKeepOuts()
     refreshLabels()
     applyBoxes()
@@ -740,6 +788,68 @@ function trackWorldDims(deps: WorldDimsDeps): boolean {
   simRef.current?.setSize(next.world.width, next.world.height)
   settledRef.current = false
   return true
+}
+
+/** The label set the map actually DRAWS (ux-run3 myth-k0sja): the tier's issued labels
+ *  minus the ones the slot resolver suppressed. Identity-stable in the common case
+ *  (nothing suppressed → the tier's own set), so the draw does no needless work. */
+function drawnLabels(labeled: ReadonlySet<string>, suppressed: ReadonlySet<string>): ReadonlySet<string> {
+  if (suppressed.size === 0) return labeled
+  return new Set([...labeled].filter((id) => !suppressed.has(id)))
+}
+
+/** The shared inputs of the two session-layout passes (myth-aftau): the live sim,
+ *  the current graph, the run's layout home (absent → both passes no-op), and the
+ *  hook's pin + side memories. */
+interface PlacementDeps {
+  sim: ForceSim
+  nodes: GraphNode[]
+  layout: WorldgenLayout | undefined
+  pinned: Set<string>
+  sides: Map<string, LabelSide>
+}
+
+/** Pin every cached node straight back at its frozen placement (myth-aftau — the
+ *  remount half). Keyed by the STABLE `synthKey` (a finalize swaps displayId, the
+ *  placement survives); pinned via the node's CURRENT displayId (the sim's pin
+ *  id-space). Idempotent per node (`pinned` is the guard), so the per-sync call
+ *  costs nothing once rehydrated. The cached label side is restored unless a live
+ *  interaction already chose one (the worn side sticks — no flapping). */
+function rehydratePlacements(deps: PlacementDeps): void {
+  const { sim, nodes, layout, pinned, sides } = deps
+  if (layout === undefined) return
+  for (const node of nodes) {
+    const placement = layout.placements.get(node.synthKey)
+    if (placement === undefined || pinned.has(node.displayId)) continue
+    sim.pin(node.displayId, placement.x, placement.y)
+    pinned.add(node.displayId)
+    if (placement.side !== undefined && !sides.has(node.displayId)) {
+      sides.set(node.displayId, placement.side)
+    }
+  }
+}
+
+/** Write the pinned constellation through to the session layout (myth-aftau — the
+ *  persist half; runs on fresh pins, after the box pass chose sides). Positions
+ *  come from the sim (`fx`-held — exact), keyed by `synthKey` with the current
+ *  displayId + worn side alongside, so a later mount rehydrates the identical
+ *  picture. */
+function persistPlacements(deps: PlacementDeps): void {
+  const { sim, nodes, layout, pinned, sides } = deps
+  if (layout === undefined) return
+  const positions = sim.positions()
+  for (const node of nodes) {
+    if (!pinned.has(node.displayId)) continue
+    const position = positions.get(node.displayId)
+    if (position === undefined) continue
+    const side = sides.get(node.displayId)
+    layout.placements.set(node.synthKey, {
+      displayId: node.displayId,
+      x: position.x,
+      y: position.y,
+      ...(side !== undefined ? { side } : {}),
+    })
+  }
 }
 
 interface ReseedDeps {

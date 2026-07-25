@@ -85,6 +85,27 @@ describe('WorldGenStatusCard — FIXED bars from the WATCHED_ENTITY_STAGES taxon
     expect(container.querySelectorAll('[data-cell-state="pending"]')).toHaveLength(TOTAL - 1)
   })
 
+  // The corroboration the run-3 reader went looking for and could not find
+  // (myth-fi1v1): the sentence over the bar says "Stage N of M", so the bar must have
+  // exactly M cells. Both numbers come from WATCHED_ENTITY_STAGES; this pins that they
+  // still do, in the one place a drift would be visible.
+  it('renders EXACTLY as many cells as the "Stage N of M" line names', () => {
+    const { container } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
+    const stated = WATCHED_ENTITY_STAGES.length
+    expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(stated)
+  })
+
+  // The other half of the same finding: the cell carrying "Stage N" has to be findable
+  // on the bar. Run 3's ember-only running cell measured within a few points of the
+  // pending track, so the reader could not locate it.
+  it('marks the RUNNING cell with an ink fill, not colour alone', () => {
+    const { container } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
+    const fills = container.querySelectorAll('[data-testid="worldgen-status-running-fill"]')
+    expect(fills).toHaveLength(1)
+    expect(fills[0]?.className).toMatch(/bg-ink/)
+    expect(fills[0]?.closest('[data-cell-state]')?.getAttribute('data-cell-state')).toBe('running')
+  })
+
   it('renders 4 pending bars before the first snapshot frame (empty stream)', () => {
     const { container } = render(<WorldGenStatusCard stages={[]} {...LABELS} />)
     expect(container.querySelectorAll('[data-cell-state]')).toHaveLength(TOTAL)
@@ -285,11 +306,16 @@ describe('WorldGenStatusCard — paper register (NO circle / spinner)', () => {
     }
   })
 
-  it('pulses (opacity fade) ONLY the running cell — the brand-sanctioned motion', () => {
+  it('pulses (opacity fade) ONLY the running cell fill — the brand-sanctioned motion', () => {
     const { container } = render(<WorldGenStatusCard stages={MID} {...LABELS} />)
-    expect(container.querySelector('[data-cell-state="running"]')).toHaveClass('animate-pulse')
+    // The pulse rides the running cell's INK SLIVER (ux-run3 myth-fi1v1), not the
+    // track: the cell's own edges stay put, so the row never flashes as a block.
+    const running = container.querySelector('[data-cell-state="running"]')
+    expect(running).not.toHaveClass('animate-pulse')
+    expect(running?.querySelector('[data-testid="worldgen-status-running-fill"]')).toHaveClass('animate-pulse')
     for (const cell of container.querySelectorAll('[data-cell-state="completed"]')) {
       expect(cell).not.toHaveClass('animate-pulse')
+      expect(cell.querySelector('[data-testid="worldgen-status-running-fill"]')).toBeNull()
     }
     const html = container.innerHTML
     expect(html).not.toMatch(/animate-spin|animate-bounce|animate-ping|translate|rotate|scale-/)
@@ -356,11 +382,22 @@ describe('WorldGenStatusCard — footer variant (MYT-89 audit v2: the mobile sta
     expect(container.querySelector('[data-variant="footer"]')).toBeNull()
   })
 
+  // ux-run3 myth-fi1v1's third nit: the card floats over BOTH canvases, and ux-run3
+  // gave the terrain layer a dense landmass to draw. Its surface must stay an opaque
+  // fill (never a tint or a translucent wash) or a busy seed reads through the text.
+  // Both variants; the footer sits under the pane but shares the vocabulary.
+  it.each(['overlay', 'footer'] as const)('%s: rides an OPAQUE surface — terrain never reads through the text', (variant) => {
+    const { container } = render(<WorldGenStatusCard variant={variant} stages={MID} {...LABELS} />)
+    const panel = container.querySelector(`[data-variant="${variant}"]`)
+    expect(panel?.className).toMatch(/bg-surface-overlay/)
+    expect(panel?.className).not.toMatch(/bg-\S*\/\d|opacity-/)
+  })
+
   it('keeps the paper register (square cells, pulse only on the running cell)', () => {
     const { container } = render(<WorldGenStatusCard variant="footer" stages={MID} {...LABELS} />)
     expect(container.querySelector('svg')).toBeNull()
     expect(container.querySelector('.rounded-full')).toBeNull()
-    expect(container.querySelector('[data-cell-state="running"]')).toHaveClass('animate-pulse')
+    expect(container.querySelector('[data-cell-state="running"] [data-testid="worldgen-status-running-fill"]')).toHaveClass('animate-pulse')
   })
 
   it('has no a11y violations', async () => {

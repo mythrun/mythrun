@@ -95,17 +95,37 @@
   Stripe's <code>api_version</code>, and a mismatch against the SDK's pinned
   <code>STRIPE_API_VERSION</code> (<code>2026-04-22.dahlia</code> at MYT-42) is treated as silent
   corruption — typed field access against the wrong version would read fields whose meaning has
-  shifted between versions. The dispatcher records the event ID in a short single-purpose
-  transaction so Stripe stops retrying, then returns without invoking any handler.
+  shifted between versions. The dispatcher logs the mismatch at error level and returns without
+  invoking any handler, and — deliberately — <em>without writing anything at all</em>.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Record-only ack on api-version mismatch, not a 5xx that retries</strong> — letting Stripe
-  redeliver wouldn't change the version mismatch, just accumulate noise. Recording the
-  <code>stripe_events</code> row alone (no downstream writes) acks the event, surfaces the mismatch
-  as a paging-grade log line, and leaves the response state on the manual-reconciliation path. The
-  version pin is bumped via spec patch alongside an SDK upgrade — see
-  <a href="./stripe-contract.html">Stripe contract</a>.
+  <strong>Log-and-drop on api-version mismatch, writing no <code>stripe_events</code> row</strong> —
+  letting Stripe redeliver wouldn't change the version mismatch, just accumulate noise, so the route
+  still answers 200. But the dispatcher used to record the <code>stripe_events</code> row on this
+  path, and that was a bug with teeth: the row marks the event processed, so a later redelivery hits
+  the idempotency check and rolls back as a duplicate. Events dropped by a version drift were
+  therefore <em>permanently</em> unreplayable — the money was gone even after the drift was fixed.
+  The row was never what stops Stripe retrying (the 200 is), so skipping it costs nothing and keeps
+  every dropped event recoverable via <code>stripe events resend</code> within Stripe's 30-day event
+  retention. This reverses the original round-5 "record-only ack" decision, whose stated rationale
+  ("so Stripe stops retrying") did not hold. The version pin is bumped via spec patch alongside an
+  SDK upgrade — see <a href="./stripe-contract.html">Stripe contract</a>.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Why the mismatch can't be repaired at dispatch time</strong> — the obvious fix is "re-fetch
+  the event through the pinned client and dispatch that." It doesn't work: a Stripe Event is
+  <em>immutable</em>. It is rendered once, at the delivering endpoint's <code>api_version</code>, and
+  <code>GET /v1/events/:id</code> returns those exact bytes no matter what
+  <code>Stripe-Version</code> the request carries. Verified against the live account — the retrieved
+  payload is byte-identical across a <code>2024-06-20</code> → <code>2026-04-22.dahlia</code>
+  request-version span, while the same header demonstrably re-renders a Subscription (moving
+  <code>current_period_*</code> between the subscription and its items). Stripe's own field
+  documentation agrees: <em>"the contents of <code>data</code> never change, so this value remains
+  static regardless of the API version currently in use."</em> Re-rendering objects works; re-rendering
+  events does not. That is why the real fix is a boot-time assertion on the endpoint's version
+  (below) rather than anything the dispatcher can do.
 </aside>
 
 <aside class="wiki-rationale">
@@ -117,18 +137,33 @@
   account's default API version, or, under <code>stripe listen --latest</code>, at the newest one —
   currently <code>2026-03-25.dahlia</code> and <code>2026-06-24.dahlia</code> respectively, neither
   of which equals the pinned <code>2026-04-22.dahlia</code>. So in dev a local checkout completes,
-  the webhook arrives, the dispatcher records the <code>stripe_events</code> row and returns 200 —
-  and <em>no handler runs, so no credits land</em>. A signed replay of the same event
-  <em>at the pinned version</em> grants perfectly, which is how the gate was confirmed to be the
-  sole blocker. The consequence for the
+  the webhook arrives, the dispatcher returns 200 — and <em>no handler runs, so no credits land</em>.
+  A signed replay of the same event <em>at the pinned version</em> grants perfectly, which is how the
+  gate was confirmed to be the sole blocker. The consequence for the
   <a href="../frontend/billing-credits.html">billing screens</a>: running the Stripe webhook
   forwarder is a necessary precondition for a local billing smoke, but not currently a sufficient
   one — the forwarded events must also carry the pinned version. The same mechanism is a production
   risk: the prod webhook endpoint was created by hand, so if its configured
-  <code>api_version</code> ever diverges from the SDK pin, real checkouts would record events and
-  never credit the paying customer. Aligning the endpoint's version to
-  <code>STRIPE_API_VERSION</code> (the runbook below) is therefore revenue-critical, and managing
-  the endpoint's version declaratively is the durable fix.
+  <code>api_version</code> ever diverges from the SDK pin, real checkouts are charged and never
+  credited. Aligning the endpoint's version to <code>STRIPE_API_VERSION</code> (the runbook below) is
+  therefore revenue-critical, and managing the endpoint's version declaratively is the durable fix.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Two gates now stand between that risk and production (myth-e3ary)</strong> — first, the
+  <a href="./stripe-contract.html">Stripe boot probe</a> lists every enabled webhook endpoint and
+  asserts its <code>api_version</code> equals <code>STRIPE_API_VERSION</code>. A drift — or an
+  endpoint left unpinned, following the mutable account default — throws, the boot gate turns that
+  into a non-zero exit, and ECS rolls the deploy back, so the misconfiguration never serves traffic.
+  Three cases deliberately do <em>not</em> fail the boot, because none is evidence of drift: an empty
+  endpoint list (the Stripe CLI forwards without registering one, and v2 event destinations don't
+  appear in the v1 list), a restricted key lacking <code>webhook_endpoints: read</code>, and a
+  transient Stripe error. Each logs
+  <code>billing.probe_webhook_version_unavailable</code> or
+  <code>…_skipped</code> instead. Second, the runtime
+  <code>stripe_webhook_api_version_mismatch</code> log feeds a CloudWatch alarm (myth-89am) that
+  pages on the first dropped delivery — covering the window the boot probe can't see, namely an
+  endpoint whose version changes while the task is already running.
 </aside>
 
 <p>
@@ -437,10 +472,21 @@
     <code>stripe_webhook_api_version_mismatch</code> → Stripe's account default API version was
     changed in the Dashboard, or a webhook endpoint is configured with an explicit API version
     different from the SDK pin. Both should be set to the SDK's pinned
-    <code>STRIPE_API_VERSION</code> value. In local dev this fires on <em>every</em> Stripe-CLI
-    forwarded event today (the forwarder's version doesn't match the pin — see the gate callout
-    above, myth-e3ary), so a local checkout that logs this and grants nothing is the known-open bug,
-    not a secret drift.
+    <code>STRIPE_API_VERSION</code> value. In production this pages via the
+    <code>stripe-webhook-api-version-mismatch</code> alarm and means paid customers are not being
+    credited right now — treat it as a revenue incident. The log line's <code>event_type</code> names
+    which deliveries were lost. <strong>Recovery:</strong> realign the endpoint's version — note that
+    <code>api_version</code> is <em>create-only</em> on the Stripe API (<code>POST</code>
+    <code>/v1/webhook_endpoints/:id</code> accepts only <code>url</code>,
+    <code>enabled_events</code>, <code>description</code>, <code>disabled</code>,
+    <code>metadata</code>), so unless the Dashboard exposes a version control on the endpoint this
+    means creating a replacement endpoint at the pinned version, moving its new signing secret into
+    Secrets Manager, redeploying, and deleting the old one. Then
+    <code>stripe events resend &lt;event_id&gt;</code> for each dropped event (they are left
+    unrecorded precisely so they stay replayable, within Stripe's 30-day event retention). In local
+    dev this fires on <em>every</em> Stripe-CLI forwarded event today (the forwarder's version
+    doesn't match the pin — see the gate callout above, myth-e3ary), so a local checkout that logs
+    this and grants nothing is the known-open dev-harness gap, not a secret drift.
   </li>
   <li>
     <code>billing.handler_validation_failed_committed</code> → a handler returned the

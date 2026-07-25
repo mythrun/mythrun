@@ -53,9 +53,15 @@ const stack = cva('flex [&>*]:min-w-0', {
     // flow screen seat its block with grow-weighted spacers (optical centering)
     // instead of pooling at the top edge (ux-run2 myth-ma8yv). On small viewports
     // the content usually exceeds the floor, so the spacers quietly collapse.
+    // `pageBelowBar` = the `page` floor minus one flow-affordance row: a `sm`
+    // control (--control-sm, 2rem) plus the funnel spine's own `gap={6}` (2rem)
+    // = 4rem, so 8.5 + 4 = 12.5rem. A screen seated UNDER the spine's Back bar
+    // would otherwise overflow the content region by exactly that row and seat
+    // its block below optical center (ux-run3 myth-4jbmr).
     minHeight: {
       screen: 'min-h-dvh',
       page: 'min-h-[calc(100dvh-8.5rem)]',
+      pageBelowBar: 'min-h-[calc(100dvh-12.5rem)]',
     },
     // flex-1 fill for the body region of a fixed-crown column. `grow={true}` →
     // this class; a NUMERIC weight is applied via inline `flexGrow` instead (an

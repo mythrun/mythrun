@@ -5,8 +5,10 @@ import { axe } from 'jest-axe'
 import type { LoadingBeat } from '@mythrun/client-core/contract'
 import { CharacterLoadingBeat } from './CharacterLoadingBeat.tsx'
 
-// The resolved beat heading the shell supplies (real MYT-100 copy).
-const HEADING = 'Bringing them to life…'
+// The resolved kicker the shell supplies — since ux-run3 myth-1yxfr the shell
+// passes the FACTUAL stage counter (the old "Bringing them to life…" eyebrow
+// doubled the screen H1 and carried a second live ellipsis).
+const HEADING = 'Stage 3 of 4'
 
 // Four ordered beats mid-progress: two done, one surfacing, one still pending —
 // the real stage-ladder copy (praise-ledger — reused verbatim).
@@ -21,18 +23,35 @@ const ALL_DONE: LoadingBeat[] = MID_BEATS.map((b) => ({ ...b, state: 'done' }))
 const ALL_PENDING: LoadingBeat[] = MID_BEATS.map((b) => ({ ...b, state: 'pending' }))
 
 describe('CharacterLoadingBeat', () => {
-  it('renders every beat label, in order, as a row — the ACTIVE row carrying the working ellipsis', () => {
+  it('renders every beat label, in order — DONE rows settle into a period, the ACTIVE row alone carries the ellipsis', () => {
     // (The active beat's label also appears in the SR live region, so assert via
-    // the rows rather than a document-wide text query.) The ellipsis is the
-    // now-state's motion-free "in progress" cue (ux-run2 myth-8ddt4).
+    // the rows rather than a document-wide text query.) The wait grammar
+    // (ux-run3 myth-1yxfr): a completed stage RESOLVES its sentence ("A name
+    // surfaces."), the one thing happening now trails the working ellipsis, and
+    // a pending stage stays a bare muted phrase — run 3 could not tell DONE from
+    // ACTIVE when two dark lines both trailed dots.
     const { getAllByTestId } = render(<CharacterLoadingBeat heading={HEADING} beats={MID_BEATS} reducedMotion={false} />)
     const rows = getAllByTestId('character-loading-beat-row')
     expect(rows.map((r) => r.textContent)).toEqual([
-      'A name surfaces',
-      'A calling takes shape',
+      'A name surfaces.',
+      'A calling takes shape.',
       'Ability scores settle…',
       'Equipment is gathered',
     ])
+  })
+
+  it('EXACTLY ONE line on screen carries the ellipsis — even when supplied labels already end with one (ux-run3 myth-1yxfr)', () => {
+    // Defensive against copy drift: a done label arriving with its own trailing
+    // ellipsis resolves to a period; only the active row ends with "…".
+    const dotted: LoadingBeat[] = [
+      { id: 'name', label: 'A name surfaces…', state: 'done' },
+      { id: 'class', label: 'A calling takes shape…', state: 'active' },
+      { id: 'scores', label: 'Ability scores settle…', state: 'pending' },
+    ]
+    const { getAllByTestId } = render(<CharacterLoadingBeat heading={HEADING} beats={dotted} reducedMotion={false} />)
+    const texts = getAllByTestId('character-loading-beat-row').map((r) => r.textContent)
+    expect(texts).toEqual(['A name surfaces.', 'A calling takes shape…', 'Ability scores settle'])
+    expect(texts.filter((t) => t.endsWith('…'))).toHaveLength(1)
   })
 
   it('tags each row with its beat state so done/active/pending style distinctly', () => {
@@ -85,17 +104,19 @@ describe('CharacterLoadingBeat', () => {
     expect(getByTestId('character-loading-beat-figure')).toHaveAttribute('data-beat-level', '1')
   })
 
-  it('NEVER renders an empty fill frame — the figure breathes until the first beat lands (ux-run2 myth-zyk6o)', () => {
-    // Run 2's blocker: at zero progress the fill meter painted nothing — an empty
-    // black-bordered rectangle indistinguishable from a rendering failure. Before
-    // the first completion the figure now runs the ambient BREATHE field (alive
-    // dither from frame one, the praised session-prep square); the determinate
-    // fill takes over only once there is something true to fill.
+  it('IDLES at zero progress — a nearly blank poised shimmer, emptier than any accretion state (ux-run3 myth-c96rf)', () => {
+    // Run 2 fixed the dead empty rectangle with the breathe field (myth-zyk6o);
+    // run 3 caught the over-correction: breathing at ~half density made the band
+    // read near-FULL at second zero, so the first real beat landing EMPTIED it —
+    // a progress bar promising 90% at t=0. The zero-state is now the faint IDLE
+    // shimmer at the fill's origin: still alive from frame one, but unmistakably
+    // empty-and-waiting; the determinate fill takes over on the first done beat
+    // and density only ever increases.
     const { getByTestId } = render(
       <CharacterLoadingBeat heading={HEADING} beats={ALL_PENDING} reducedMotion={false} />,
     )
     const figure = getByTestId('character-loading-beat-figure')
-    expect(figure).toHaveAttribute('data-beat-mode', 'breathe')
+    expect(figure).toHaveAttribute('data-beat-mode', 'idle')
     expect(figure).not.toHaveAttribute('data-beat-level')
   })
 

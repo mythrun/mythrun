@@ -33,13 +33,19 @@ const CARD_CLASS = cn(
   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',
 )
 // The side-by-side (columns=2) card is TALLER — a chunky door, sibling of the
-// situation-picker cards, with quiet paper below the copy instead of a letterbox.
+// situation-picker cards; the cost-of-path meta line at its foot is what earns
+// the height (ux-run3 myth-t6pxy), not empty paper.
 const TALL_CARD_CLASS = 'min-h-[10rem]'
 // The serif choice headline (the narrative register) over a quiet tertiary-ink
 // sub-line; min-w-0 lets a long line wrap instead of overflowing at 375px.
-const TEXT_STACK_CLASS = 'flex min-w-0 flex-col gap-[var(--space-1)]'
+// `self-stretch` lets the column fill a tall door card so the meta line's
+// mt-auto can dock it at the foot (a no-op in the content-height strip shape).
+const TEXT_STACK_CLASS = 'flex min-w-0 flex-col gap-[var(--space-1)] self-stretch'
 const TITLE_CLASS = 'font-body text-lg font-semibold leading-[1.4]'
 const SUBTITLE_CLASS = 'font-body text-sm text-ink-tertiary leading-[1.4]'
+// The cost-of-path line (myth-t6pxy) — machine-mono, quiet, seated at the foot
+// of a tall door card (mt-auto soaks the slack; pt keeps a floor of separation).
+const META_CLASS = 'mt-auto pt-[var(--space-3)] font-ui text-xs tracking-wide text-ink-tertiary'
 // The trailing ember affordance — the card's "enter" cue (decorative; the title is
 // the accessible name). Docked top-right on the title's line (leading matches the
 // title's line box) and it nudges right on hover so the whole card reads as
@@ -70,6 +76,7 @@ export const GhostChoiceList = forwardRef<HTMLDivElement, GhostChoiceListProps>(
               {item.subtitle !== undefined && (
                 <span className={SUBTITLE_CLASS}>{item.subtitle}</span>
               )}
+              {item.meta !== undefined && <span className={META_CLASS}>{item.meta}</span>}
             </span>
             <span aria-hidden="true" className={ARROW_CLASS}>
               →

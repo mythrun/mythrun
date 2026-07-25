@@ -22,7 +22,7 @@ import type { KnowledgeCache } from '../session/knowledge-cache.ts'
 import type { SessionSheetState } from '../session/use-session-sheet.ts'
 import type { CharacterOverlay } from '../session/ledger-reducer.ts'
 import type { CuratedSheet } from './character/index.ts'
-import type { WorldWikiProps } from './world-wiki.ts'
+import type { WikiPresence, WorldWikiProps } from './world-wiki.ts'
 
 // The matcher vocabulary (Task 3) — the settled-prose segmentation model + the terse
 // popover card + the compiled index. Re-exported so the highlighter (Task 11) and the
@@ -189,6 +189,11 @@ export interface KnowledgeSidebarProps extends Omit<BaseProps, 'children'> {
   sheetTabLabel: string
   /** The WorldWiki chrome labels forwarded to the embedded wiki. */
   wikiLabels: WikiTabLabels
+  /** The wiki index's presence split (ux-run3 myth-ry14g) — the entities the live
+   *  session has already named lead each browse group. DATA + its two resolved
+   *  sub-labels, composed by the play route from the transcript; absent ⇒ the
+   *  plain alphabetized index. */
+  wikiPresence?: WikiPresence
   /** The graph's SR-only roving node-list a11y label (the keyboard node-selection path —
    *  the canvas is `aria-hidden`) — a resolved i18n key. Forwarded to `WorldGenGraph.nodeListLabel`. */
   graphNodeListLabel: string

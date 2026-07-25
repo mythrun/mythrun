@@ -34,6 +34,7 @@
  *  equipment) read by `repo.characters.readPartyLedgerSnapshot`. Re-exported
  *  here so the tier layer has ONE import point for the snapshot type (T11). */
 export type { PartyLedgerSnapshot } from '../../repo/characters-ledger.js'
+import type { ActiveCondition } from '@mythrun/contract/events'
 import type { PartyLedgerSnapshot } from '../../repo/characters-ledger.js'
 
 /** MYT-73 §4.2 — the per-turn world delta the Fast Thinker appends after its
@@ -66,6 +67,15 @@ export interface LedgerUpdatePayload {
   readonly featureName?: string
   readonly usesRemaining?: number
   readonly condition?: string
+  // myth-hlydp: the character's FULL post-mutation active-condition set —
+  // authoritative, not a delta (same rule as `hp`/`gold` above). Set on every
+  // payload whose tool can move a condition: `update_condition` obviously, but
+  // ALSO `adjust_hp` and `take_rest`, because the §5a HP↔unconscious invariant
+  // and the long rest's exhaustion decrement mutate conditions without any
+  // `kind:'condition'` frame ever being emitted. Left ABSENT on gold / item /
+  // feature / spell_slot payloads, whose tools cannot touch conditions —
+  // absence means "no statement", not "empty set".
+  readonly activeConditions?: readonly ActiveCondition[]
   readonly diceRolled?: readonly number[]
 }
 

@@ -41,16 +41,26 @@ const LABELS = {
   },
 } as const
 
+// ux-run3 myth-ry14g — the play sidebar's presence split: the entities the live
+// session has already named lead their group. The reveal passes none of this.
+const PRESENCE = {
+  ids: ['l-reach'],
+  presentLabel: '[placeholder for this session]',
+  elsewhereLabel: '[placeholder for elsewhere]',
+}
+
 interface HomeDemoProps {
   initialQuery?: string
   initialView?: WikiView
   model?: typeof WIKI_FIXTURE_MODEL
+  presence?: typeof PRESENCE
 }
 
 function HomeDemo({
   initialQuery = '',
   initialView = 'index',
   model = WIKI_FIXTURE_MODEL,
+  presence,
 }: HomeDemoProps): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string>()
   const [query, setQuery] = useState(initialQuery)
@@ -67,6 +77,7 @@ function HomeDemo({
           view={view}
           onViewChange={setView}
           {...LABELS}
+          {...(presence !== undefined ? { presence } : {})}
         />
       </div>
     </div>
@@ -152,4 +163,17 @@ export const BrowseOnly: Story = {
 // the full browse view.
 export const Filtered: Story = {
   render: () => <HomeDemo initialQuery="ward" />,
+}
+
+// The IN-SESSION index (ux-run3 myth-ry14g): each row carries its one-line
+// handle, and the group the live transcript has touched leads with those entries
+// under a quiet sub-label — the rest file below their own. A group with only one
+// half stays unsplit (no lonely heading).
+export const InSessionPresence: Story = {
+  render: () => <HomeDemo presence={PRESENCE} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByText('[placeholder for this session]')).toBeVisible()
+    await expect(canvas.getByText('[placeholder for elsewhere]')).toBeVisible()
+  },
 }

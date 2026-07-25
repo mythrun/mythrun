@@ -11,10 +11,12 @@ import { resolveKindLabel } from './kind-label.ts'
 // wiki as a real PLACE: a home landing (the world's INTRODUCTION when the
 // model carries one, else search + browse-by-kind — WikiHome) opening onto
 // per-entity pages (fact body + RELATED cross-links + back, WikiPage). This
-// shell owns the D3 `useWikiNavigation` stack INTERNALLY, so its outer surface
-// stays the same plain-data props the reveal already passes (model +
-// selectedId/onSelect for the graph↔wiki bridge, query/onQuery for the
-// search).
+// shell owns the D3 `useWikiNavigation` stack INTERNALLY by default, so its
+// outer surface stays the same plain-data props the reveal already passes
+// (model + selectedId/onSelect for the graph↔wiki bridge, query/onQuery for the
+// search) — or takes a LIFTED stack through `navigation` when a consumer must
+// see the history (myth-g7kg6: mobile Back pops a wiki page before closing the
+// drawer). Lifting changes where the state lives, nothing about the behaviour.
 //
 // SCROLL MEMORY: the shell holds the handle on the in-view surface's scroll
 // container and captures its `scrollTop` right before every push — internal
@@ -67,11 +69,18 @@ export const WorldWiki = forwardRef<HTMLDivElement, WorldWikiProps>(function Wor
     indexLabel,
     glossaryLabel,
     stepContext,
+    presence,
+    navigation,
     'data-testid': dataTestId,
   },
   ref,
 ) {
-  const { current, push, back, setScroll } = useWikiNavigation()
+  // The stack is INTERNAL by default and LIFTED when the consumer supplies one
+  // (myth-g7kg6 — the mobile reveal needs to pop a wiki page on hardware Back
+  // before its drawer closes). The hook still runs either way: hooks can't be
+  // conditional, and an unread stack costs one unused useState.
+  const internalNavigation = useWikiNavigation()
+  const { current, push, back, setScroll } = navigation ?? internalNavigation
   const scrollRef = useRef<HTMLElement | null>(null)
   // The HOME scroll offset — shell-owned (see the scroll-memory note above).
   const homeScroll = useRef(0)
@@ -158,6 +167,7 @@ export const WorldWiki = forwardRef<HTMLDivElement, WorldWikiProps>(function Wor
           indexLabel={indexLabel}
           glossaryLabel={glossaryLabel}
           {...(stepContext !== undefined ? { stepContext } : {})}
+          {...(presence !== undefined ? { presence } : {})}
           scroll={homeScroll.current}
           scrollRef={scrollRef}
         />

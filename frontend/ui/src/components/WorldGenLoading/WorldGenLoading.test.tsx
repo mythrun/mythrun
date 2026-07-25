@@ -91,10 +91,14 @@ describe('WorldGenLoading', () => {
     expect(status.querySelector('[data-beat-mode]')).not.toBeNull()
   })
 
-  it('BREATHES at zero accretion — alive from frame one, never an empty fill frame (myth-zyk6o rule)', () => {
+  it('IDLES at zero accretion — a nearly blank poised shimmer, EMPTIER than any accretion state (ux-run3 myth-c96rf)', () => {
+    // Run 3's blocker: the breathe field rendered DENSER than early accretion,
+    // so the idle→accreting handoff read as a reset. The zero-state is now the
+    // faint IDLE shimmer at the fill's origin — still alive (never an empty
+    // frame), but unmistakably empty-and-waiting; ink only ever accrues.
     const { getByTestId } = render(<WorldGenLoading watchLabel={WATCH} flavorLabels={FLAVORS} />)
     const mark = getByTestId('worldgen-loading-mark')
-    expect(mark).toHaveAttribute('data-beat-mode', 'breathe')
+    expect(mark).toHaveAttribute('data-beat-mode', 'idle')
     expect(mark).not.toHaveAttribute('data-beat-level')
   })
 
@@ -250,6 +254,48 @@ describe('WorldGenLoading', () => {
     expect(countdown).toHaveAttribute('aria-hidden', 'true')
   })
 
+  it('clusters the countdown with the MARK as one "how it\'s going" unit, at raised presence (ux-run3 myth-b965d)', () => {
+    // Run 3: the ETA was the most trust-relevant datum on the screen yet ~5th
+    // heaviest, floating far below the whisper. It now sits directly under the
+    // glyph (one vitals unit) in the secondary-ink register — present, still
+    // quiet, never loud.
+    const { getByTestId, getByRole } = render(
+      <WorldGenLoading watchLabel={WATCH} flavorLabels={FLAVORS} countdownLabel="Ready in about 4 min" />,
+    )
+    const vitals = getByTestId('worldgen-loading-vitals')
+    expect(vitals).toContainElement(getByRole('status'))
+    expect(vitals).toContainElement(getByTestId('worldgen-loading-countdown'))
+    const countdown = getByTestId('worldgen-loading-countdown')
+    expect(countdown.className).toMatch(/text-sm/)
+    expect(countdown.className).toMatch(/text-ink-secondary/)
+    expect(countdown.className).not.toMatch(/text-xs|text-ink-tertiary/)
+  })
+
+  it('reserves the wait-line slot from first paint — a late-arriving estimate displaces nothing (ux-run3 myth-5ekb5)', () => {
+    const { getByTestId, queryByTestId } = render(<WorldGenLoading watchLabel={WATCH} flavorLabels={FLAVORS} />)
+    const slot = getByTestId('worldgen-loading-wait-slot')
+    expect(slot.className).toMatch(/min-h-\[/)
+    expect(queryByTestId('worldgen-loading-countdown')).toBeNull()
+  })
+
+  it('closes the leave loop — the verbatim leave line plus the concrete hold promise (ux-run3 myth-b965d)', () => {
+    // "Safe to leave. The world keeps forming." grants permission without a
+    // resumption promise; the hold line closes the loop. Both are real (non
+    // aria-hidden) content in the same quiet mono record register.
+    const { getByTestId } = render(
+      <WorldGenLoading
+        watchLabel={WATCH}
+        flavorLabels={FLAVORS}
+        leaveLabel="Safe to leave. The world keeps forming."
+        holdLabel="We'll hold it right here for you."
+      />,
+    )
+    expect(getByTestId('worldgen-loading-leave').textContent).toBe('Safe to leave. The world keeps forming.')
+    const hold = getByTestId('worldgen-loading-hold')
+    expect(hold.textContent).toBe("We'll hold it right here for you.")
+    expect(hold).not.toHaveAttribute('aria-hidden')
+  })
+
   it('re-renders the countdown as the consumer ticks it (the per-second walk)', () => {
     const { getByTestId, rerender } = render(
       <WorldGenLoading watchLabel={WATCH} flavorLabels={FLAVORS} countdownLabel="~4:37 left" />,
@@ -306,6 +352,36 @@ describe('WorldGenLoading', () => {
     const button = getByRole('button', { name: 'Watch it take shape' })
     fireEvent.click(button)
     expect(onWatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('RESERVES the watch slot from first paint — its appearance never shoves the composition (ux-run3 myth-5ekb5)', () => {
+    // Run 3: "Watch it take shape" materialized mid-wait and pushed everything
+    // below it ~75px down. Absent-then-present is fine; displacement is not —
+    // the slot holds its height from t=0 and the affordance appears inside it.
+    const { getByTestId, getByRole, queryByRole, rerender } = render(
+      <WorldGenLoading watchLabel={WATCH} flavorLabels={FLAVORS} />,
+    )
+    const slot = getByTestId('worldgen-loading-watch-slot')
+    expect(slot.className).toMatch(/min-h-\[/)
+    expect(queryByRole('button')).toBeNull()
+    rerender(<WorldGenLoading watchLabel={WATCH} flavorLabels={FLAVORS} watchReady onWatch={vi.fn()} />)
+    expect(getByTestId('worldgen-loading-watch-slot')).toContainElement(
+      getByRole('button', { name: WATCH }),
+    )
+  })
+
+  it('the watch affordance is the QUIET underlined text-link register — never a loud stay-CTA (ux-run3 myth-5ekb5)', () => {
+    // A solid primary button arguing "stay and watch" undercuts "Safe to
+    // leave." right below it. The affordance now matches the live map's "Wait
+    // quietly instead" return link: mono, secondary ink, underlined.
+    const { getByRole } = render(
+      <WorldGenLoading watchLabel={WATCH} flavorLabels={FLAVORS} watchReady onWatch={vi.fn()} />,
+    )
+    const link = getByRole('button', { name: WATCH })
+    expect(link.className).toMatch(/underline/)
+    expect(link.className).toMatch(/font-ui/)
+    expect(link.className).toMatch(/text-ink-secondary/)
+    expect(link.className).toMatch(/bg-transparent/)
   })
 
   it('keeps cycling the flavor line while the watch button is showing (gen keeps running)', () => {

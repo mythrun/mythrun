@@ -16,6 +16,18 @@ import type { BaseProps } from './index.ts'
  * Platform-neutral (§9): the cover/foot come in as `ReactNode` slots; no
  * className/style/DOM events. `children` are the body's TOP content.
  */
+/**
+ * The cta line's loudness tier (ux-run3 myth-7jc1h — the hub's resume
+ * hierarchy). Three weights of the same accent action register, so a grid of
+ * cards can rank its actions without badges: `loud` is the premier
+ * continue-session cue (semibold), `quiet` (default) the ordinary action line
+ * (medium — e.g. a dormant card's "Resume →"), `whisper` the quietest tier
+ * (normal weight — e.g. a cold start's "Author your character →", which must
+ * never out-shout an invested campaign). Weight is the axis — never a sub-AA
+ * opacity dim (the contrast rule).
+ */
+export type CoverCardCtaTone = 'loud' | 'quiet' | 'whisper'
+
 export interface CoverCardProps extends BaseProps {
   /**
    * The full-bleed cover header — the cover art (a `CoverDither`). Sits at the
@@ -36,6 +48,18 @@ export interface CoverCardProps extends BaseProps {
    * this line only names it. State-as-prose — never a chip/badge.
    */
   cta?: string
+  /**
+   * The cta line's loudness tier — default `quiet`. See {@link CoverCardCtaTone}.
+   * Ignored when no `cta` is given (the reserved empty line carries no tone).
+   */
+  ctaTone?: CoverCardCtaTone
+  /**
+   * Marks the grid's ONE promoted object (ux-run3 myth-7jc1h — the hub premier
+   * card): a heavier 2px edge plus a thin accent rule above the cta line, so the
+   * promoted card reads as the shelf's dominant object rather than relying on
+   * position alone. At most one card per grid should carry it.
+   */
+  promoted?: boolean
   /**
    * Fixed card width in px (the made-object's set size — e.g. the width the hub
    * grid auto-fills to). Omit to fill the container width; either way the 3:2

@@ -69,6 +69,18 @@ export function SessionInput({
   // The caption only reads while genuinely busy (never on the terminal-disabled
   // end state, which has its own complete-notice) and only when a label is given.
   const showBusy = busy && !disabled && busyLabel !== undefined
+  // myth-lkm09 — while SENDING is gated (busy or terminal), the composer's visual
+  // state must agree with its functional state (the run-3 truth-of-state finding:
+  // an emphasized live border + "What do you do next?" while gated reads as a lie):
+  //   • the FIELD drops to the TextArea `subdued` mute while busy (still typeable —
+  //     drafting-ahead stays honest; terminal `disabled` keeps its own treatment);
+  //   • the VISIBLE placeholder goes blank (the quiet busy caption below carries
+  //     the reason; the SR-only label keeps the field's accessible name);
+  //   • SEND stands down from the solid primary to the quiet ghost — the accent
+  //     fill stays the exclusive mark of a pressable Send, and the gate lifting
+  //     snaps it back (the decisive flip).
+  const gatedVisual = busy || disabled
+  const visiblePlaceholder = gatedVisual ? undefined : shownPlaceholder
 
   // Enter-to-send / Shift+Enter-newline. The keydown lives on the interactive
   // <textarea> itself (attached to the forwarded ref), NOT a wrapper element — a
@@ -106,8 +118,9 @@ export function SessionInput({
         id={fieldId}
         value={value}
         onChange={onChange}
-        placeholder={shownPlaceholder}
+        {...(visiblePlaceholder !== undefined ? { placeholder: visiblePlaceholder } : {})}
         disabled={disabled}
+        subdued={busy && !disabled}
         // The player's own writing wears the serif prose face + ember caret
         // (myth-xs9tc). Reading-size, not display-size: size/autoSize/rows unchanged.
         face="prose"
@@ -151,7 +164,7 @@ export function SessionInput({
               {summonLabel}
             </Button>
           </span>
-          <Button variant="primary" onPress={onSend} disabled={sendGated}>
+          <Button variant={gatedVisual ? 'ghost' : 'primary'} onPress={onSend} disabled={sendGated}>
             {sendLabel}
           </Button>
         </div>

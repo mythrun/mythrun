@@ -246,27 +246,80 @@ describe('PartyRoster', () => {
     const rows = getAllByTestId('party-roster-member')
     const kessaRow = rows[0]
     if (!kessaRow) throw new Error('no rows')
-    const primary = kessaRow.querySelector('.font-body')
+    // The NAME line is the truncating serif element (the initial tile is also
+    // serif but never truncates — myth-6g8x4).
+    const primary = kessaRow.querySelector('.font-body.truncate')
     const secondary = kessaRow.querySelector('.font-ui')
     expect(primary?.textContent).toContain('Kessa Vurm')
     expect(secondary?.textContent).toContain('Miklos')
     // A member with no character yet keeps the account name as the primary line.
     const pellRow = rows[2]
     if (!pellRow) throw new Error('no third row')
-    expect(pellRow.querySelector('.font-body')?.textContent).toContain('Pell')
+    expect(pellRow.querySelector('.font-body.truncate')?.textContent).toContain('Pell')
+  })
+
+  // ux-run2 myth-5dobj, third item: the Begin control is the one moment the
+  // system voice steps aside for the book voice. Every other control in the app
+  // is mono (Button's own `font-ui`); this label is serif. Unpinned until now,
+  // so a future Button refactor could have quietly taken it back to mono.
+  it('speaks the ceremonial Begin in the SERIF book voice, not the system mono', () => {
+    const { getByRole } = render(
+      <PartyRoster labels={LABELS} beginConfirming={false} onRequestBegin={noop} onCancelBegin={noop} members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+    )
+    const begin = getByRole('button', { name: LABELS.beginSolo })
+    const label = begin.querySelector('.font-body')
+    expect(label?.textContent).toBe(LABELS.beginSolo)
   })
 
   // ux-run2 myth-5dobj: the placeholder recedes, the person holds the ink —
   // the ghost invite row is transparent (dashed border only), and READY carries
-  // solid-ink state weight while the waiting states stay halftone.
+  // solid-ink state weight while the waiting states stay halftone. (The READY
+  // half asserts on a 2-member party — solo suppresses the marker, myth-6g8x4.)
   it('recedes the ghost invite row (transparent) and gives ready solid ink', () => {
-    const { getByTestId, getAllByTestId } = render(
+    const solo = render(
       <PartyRoster labels={LABELS} beginConfirming={false} onRequestBegin={noop} onCancelBegin={noop} members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
     )
-    expect(getByTestId('party-roster-invite').className).toContain('bg-transparent')
-    const [readyMarker] = getAllByTestId('party-roster-status')
+    expect(solo.getByTestId('party-roster-invite').className).toContain('bg-transparent')
+    const party = render(
+      <PartyRoster labels={LABELS} beginConfirming={false} onRequestBegin={noop} onCancelBegin={noop} members={READY_PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+    )
+    const [readyMarker] = party.getAllByTestId('party-roster-status')
     expect(readyMarker?.className).toContain('text-ink')
     expect(readyMarker?.className).toContain('font-semibold')
+  })
+
+  // ux-run3 myth-6g8x4 (a): a solo host's READY tag is informationally empty —
+  // there is no toggle and Begin fires regardless, so the state gates nothing.
+  it('suppresses the READY marker at a party of one, and restores it once a second seat exists', () => {
+    const solo = render(
+      <PartyRoster labels={LABELS} beginConfirming={false} onRequestBegin={noop} onCancelBegin={noop} members={SOLO} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+    )
+    // One real member (the invite ghost is chrome, not a seat) → no marker.
+    expect(solo.queryAllByTestId('party-roster-status')).toHaveLength(0)
+    const party = render(
+      <PartyRoster labels={LABELS} beginConfirming={false} onRequestBegin={noop} onCancelBegin={noop} members={READY_PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+    )
+    expect(party.getAllByTestId('party-roster-status')).toHaveLength(2)
+  })
+
+  // ux-run3 myth-6g8x4 (b): the diagonal hatch is the system's "missing" mark —
+  // a made character is NOT missing. Their square carries the character's serif
+  // initial; the hatch stays only for members still without a character.
+  it("sets the made character's serif initial in the square; the hatch stays for the unmade", () => {
+    const { getAllByTestId } = render(
+      <PartyRoster labels={LABELS} beginConfirming={false} onRequestBegin={noop} onCancelBegin={noop} members={PARTY} viewerIsOwner canBegin onBegin={noop} onInvite={noop} />,
+    )
+    const rows = getAllByTestId('party-roster-member')
+    // Kessa Vurm (made) → a serif "K" in the square, no hatch.
+    const kessaTile = rows[0]?.querySelector('[data-testid="party-roster-initial"]')
+    expect(kessaTile?.textContent).toBe('K')
+    expect(kessaTile?.className).toContain('font-body')
+    expect((kessaTile as HTMLElement | null)?.style.backgroundImage).toBeFalsy()
+    // Pell (still creating) → the hatch placeholder, no initial.
+    const pellRow = rows[2]
+    expect(pellRow?.querySelector('[data-testid="party-roster-initial"]')).toBeNull()
+    const pellTile = pellRow?.querySelector('span[aria-hidden="true"]')
+    expect((pellTile as HTMLElement | null)?.style.backgroundImage).toContain('repeating-linear-gradient')
   })
 
   it('disables Begin when the party is not finalizable, and swallows the press', async () => {

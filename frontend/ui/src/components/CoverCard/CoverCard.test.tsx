@@ -79,16 +79,16 @@ describe('CoverCard', () => {
         <span />
       </CoverCard>,
     )
-    // body region (cover, seam, body) → [top content, foot]
-    expect(withFoot.getByTestId('withfoot').children[2]?.children).toHaveLength(2)
+    // body region (cover, seam, body) → [top content, foot, reserved cta line]
+    expect(withFoot.getByTestId('withfoot').children[2]?.children).toHaveLength(3)
 
     const noFoot = render(
       <CoverCard data-testid="nofoot" cover={<span />}>
         <span />
       </CoverCard>,
     )
-    // body region → just the top content, no foot wrapper
-    expect(noFoot.getByTestId('nofoot').children[2]?.children).toHaveLength(1)
+    // body region → the top content + the reserved cta line, no foot wrapper
+    expect(noFoot.getByTestId('nofoot').children[2]?.children).toHaveLength(2)
   })
 
   it('anchors the foot to the card BASE — the narrative block absorbs the slack (myth-rhvkt)', () => {
@@ -124,13 +124,69 @@ describe('CoverCard', () => {
     expect(body?.lastElementChild).toBe(cta)
   })
 
-  it('omits the cta line when none is given', () => {
-    const { queryByTestId } = render(
-      <CoverCard cover={<span />}>
+  it('reserves an empty cta line when none is given — the 4-zone fixed footer (myth-7jc1h)', () => {
+    // Run 3: cards with and without a cta ended at different foot offsets, so
+    // member seals sat at three heights across one grid. The cta ZONE is now
+    // always the body's last line — an aria-hidden non-breaking space when the
+    // card has no action — so zones 3 and 4 hold one fixed offset on every card.
+    const { queryByTestId, getByTestId } = render(
+      <CoverCard data-testid="cc" cover={<span />}>
         b
       </CoverCard>,
     )
     expect(queryByTestId('cover-card-cta')).toBeNull()
+    const reserve = getByTestId('cc').children[2]?.lastElementChild
+    expect(reserve?.textContent).toBe('\u00A0')
+    expect(reserve?.getAttribute('aria-hidden')).toBe('true')
+  })
+
+  it('renders the cta tone tiers as weight — loud/quiet/whisper, never an opacity dim (myth-7jc1h)', () => {
+    const { getByTestId, rerender } = render(
+      <CoverCard data-testid="cc" cover={<span />} cta="Continue session →" ctaTone="loud">
+        b
+      </CoverCard>,
+    )
+    expect(getByTestId('cover-card-cta').classList.contains('font-semibold')).toBe(true)
+    rerender(
+      <CoverCard data-testid="cc" cover={<span />} cta="Resume →">
+        b
+      </CoverCard>,
+    )
+    // Default tier is quiet — the ordinary medium-weight action line.
+    expect(getByTestId('cover-card-cta').classList.contains('font-medium')).toBe(true)
+    rerender(
+      <CoverCard data-testid="cc" cover={<span />} cta="Author your character →" ctaTone="whisper">
+        b
+      </CoverCard>,
+    )
+    const whisper = getByTestId('cover-card-cta')
+    expect(whisper.classList.contains('font-normal')).toBe(true)
+    // Still the accent register — the tier is weight, not a sub-AA dim.
+    expect(whisper.classList.contains('text-accent-fg')).toBe(true)
+    expect(whisper.className).not.toContain('opacity')
+  })
+
+  it('promotes the premier object: 2px edge + a thin accent rule above the cta (myth-7jc1h)', () => {
+    const { getByTestId } = render(
+      <CoverCard data-testid="cc" cover={<span />} cta="Continue session →" ctaTone="loud" promoted>
+        b
+      </CoverCard>,
+    )
+    const el = getByTestId('cc')
+    expect(el.classList.contains('border-2')).toBe(true)
+    const rule = getByTestId('cover-card-promoted-rule')
+    expect(rule.classList.contains('bg-accent')).toBe(true)
+    // The rule sits directly above the cta line — the promoted imprint.
+    expect(rule.nextElementSibling).toBe(getByTestId('cover-card-cta'))
+  })
+
+  it('renders no accent rule when not promoted', () => {
+    const { queryByTestId } = render(
+      <CoverCard cover={<span />} cta="Resume →">
+        b
+      </CoverCard>,
+    )
+    expect(queryByTestId('cover-card-promoted-rule')).toBeNull()
   })
 
   it('forwards its ref to the underlying div', () => {

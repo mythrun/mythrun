@@ -173,7 +173,10 @@ function PickFields({
     <Stack gap={7}>
       <SeamlessInput
         key={step}
-        autoFocus
+        // The contract's platform-neutral opt-in, not a raw native autoFocus
+        // (ux-run3 myth-en2jj gave the DS the prop): typing is the step's one
+        // next action, and the key remounts it so each step re-focuses.
+        focusOnMount
         label={t(`campaignNew.guided.nameQuestion.${STEP_KEYS[step - 1] ?? 'one'}`)}
         placeholder={t('campaignNew.guided.titlePlaceholder')}
         value={pick.title}
@@ -216,28 +219,39 @@ function StepActions({
 }): React.JSX.Element {
   const { t } = useTranslation()
   return (
-    <Stack direction="row" gap={3} align="center">
-      {step > 1 ? (
+    <Stack gap={3}>
+      <Stack direction="row" gap={3} align="center">
+        {step > 1 ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Icon name="arrow-left" decorative />}
+            onPress={onBack}
+            data-testid="guided-back"
+          >
+            {t('back')}
+          </Button>
+        ) : null}
         <Button
-          variant="ghost"
-          size="sm"
-          icon={<Icon name="arrow-left" decorative />}
-          onPress={onBack}
-          data-testid="guided-back"
+          variant="primary"
+          size="lg"
+          loading={busy}
+          disabled={!ready}
+          onPress={onAdvance}
+          data-testid="guided-advance"
         >
-          {t('back')}
+          {t(step < 3 ? 'campaignNew.guided.next' : 'campaignNew.guided.find')}
         </Button>
+      </Stack>
+      {/* The commit disclosure at the generation trigger (ux-run3 myth-g3mt6):
+          Weave starts a real synthesis — one quiet line on duration +
+          revisability, exactly the preview-Begin pattern. Steps 1-2 are free
+          paging; only the trigger step discloses. */}
+      {step === 3 ? (
+        <Text role="meta" data-testid="guided-cost">
+          {t('campaignNew.guided.cost')}
+        </Text>
       ) : null}
-      <Button
-        variant="primary"
-        size="lg"
-        loading={busy}
-        disabled={!ready}
-        onPress={onAdvance}
-        data-testid="guided-advance"
-      >
-        {t(step < 3 ? 'campaignNew.guided.next' : 'campaignNew.guided.find')}
-      </Button>
     </Stack>
   )
 }

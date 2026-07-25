@@ -20,12 +20,22 @@
 //    restores HP — a kind-switch would leave the live sheet stale after a rest;
 //    see `buildRestPayloads` in backend `rules-lawyer-vitals.ts`). Only the
 //    hp/gold resolvers populate these fields (contract), so presence == authority.
-//  - Conditions carry `condition` + a prose `summary` but NO add/remove flag at
-//    the frame boundary (the FT tool's `apply|clear` is dropped by the
-//    publisher). A deterministic active-condition SET is therefore not derivable
-//    without parsing the prose (a ZFC violation), so we keep a chronological
-//    `conditionLog` of the summaries and let the sheet render it as recent
-//    changes. A maintained active set is a filed follow-up (needs a wire flag).
+//  - Conditions: this reducer still folds only the chronological `conditionLog`
+//    of summaries, which the sheet renders as recent changes.
+//
+//    STALE-COMMENT WARNING, READ BEFORE EXTENDING (myth-hlydp): the original
+//    reason for the log — "the frame carries no add/remove flag, so an active
+//    SET is not derivable without parsing prose" — NO LONGER HOLDS. The
+//    `ledger_update` frame now carries `activeConditions`: the character's FULL
+//    post-mutation set as `{ condition, level }` pairs, authoritative rather
+//    than a delta, present on the `hp` and `rest` frames too (a long rest moves
+//    two conditions at once; every HP write syncs the derived `unconscious`).
+//    Folding a real `activeConditions` onto this overlay is now a pure SET by
+//    field presence, exactly like `hp`/`gold` below — no prose parsing, no ZFC
+//    violation. It is deliberately NOT done here yet: `CharacterOverlay` gaining
+//    a required field ripples into every literal typed as it across
+//    frontend/ui, frontend/src/routes/play and copy-workbench, which wanted a
+//    quiet window rather than a race with the in-flight UX batch.
 //  - `seq` is IGNORED: the live intra-turn frame has none; the reconnect replay
 //    carries it. The fold must be indifferent, so it never reads `seq`.
 //  - The caller filters to the VIEWER's own character (matching `characterName`)

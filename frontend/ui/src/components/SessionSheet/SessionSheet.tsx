@@ -4,6 +4,7 @@ import type {
   AbilityTile,
   SheetEntry,
   SheetStat,
+  SheetStatKey,
   CharacterOverlay,
 } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
@@ -46,10 +47,12 @@ const FEATURES_TITLE = 'What they can do'
 const EQUIPMENT_TITLE = 'What they carry'
 const SPELLS_TITLE = 'What they can cast'
 
-// The stat key the live-HP overlay replaces. The shipped sheet view-model
-// (`buildStats`) emits the HP cell with this exact label + a `${hp} / ${maxHp}`
-// value; SessionSheet consumes that projection, so it keys the override on it.
-const HP_STAT_LABEL = 'HP'
+// The stat cell the live-HP overlay replaces — matched on the view-model's
+// STRUCTURAL key (myth-qeyqq), never on the 'HP' label string it happens to
+// carry. Keying on the copy meant a rename in `buildStats` would switch the
+// live overlay off in silence, leaving a player reading stale hit points off
+// the sheet mid-combat with nothing to show for it.
+const HP_STAT_KEY: SheetStatKey = 'hp'
 
 // The identity eyebrow — mono uppercase ember, the machine line under the serif name.
 const IDENT_CLASS = 'font-ui text-sm font-medium uppercase tracking-wide text-accent-fg'
@@ -170,12 +173,12 @@ function StatStripe({
   return (
     <div data-testid="session-sheet-stripe" className={STRIPE_CLASS}>
       {stats.map((stat) => {
-        const isHp = stat.label === HP_STAT_LABEL
+        const isHp = stat.key === HP_STAT_KEY
         const live = isHp && overlay.hp !== null
         const value = isHp && overlay.hp !== null ? formatLiveHp(overlay.hp, overlay.maxHp) : stat.value
         return (
           <div
-            key={stat.label}
+            key={stat.key}
             data-testid={isHp ? 'session-sheet-hp' : undefined}
             data-live={isHp ? String(live) : undefined}
             className={STRIPE_CELL}

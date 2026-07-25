@@ -189,9 +189,11 @@ function CopyLinkAction({
   )
 }
 
-/** The exit block + receipt footnote: quiet copy-link above the sole button,
- *  then a rule and the credit line BELOW it (myth-8x3uh) — logistics last, so
- *  the document ends on its own words, not on billing. */
+/** The exit ROW + receipt footnote: the outlined "Back to campaign" leads, the
+ *  ghost copy-link sits to its right (ux-run3 myth-bbald — the primary exit is
+ *  the eye's landing point, and the row shape alone tells the ghost apart from
+ *  the narrator line above), then a rule and the credit line BELOW (myth-8x3uh)
+ *  — logistics last, so the document ends on its own words, not on billing. */
 function RecapTail({
   labels,
   onBack,
@@ -203,11 +205,11 @@ function RecapTail({
 }): React.JSX.Element {
   return (
     <Stack gap={4}>
-      <Stack gap={2} align="start">
-        {onCopyLink !== undefined && <CopyLinkAction labels={labels} onCopyLink={onCopyLink} />}
+      <Stack direction="row" wrap gap={2} align="center">
         <Button variant="secondary" onPress={onBack} data-testid="recap-back">
           {labels.back}
         </Button>
+        {onCopyLink !== undefined && <CopyLinkAction labels={labels} onCopyLink={onCopyLink} />}
       </Stack>
       <Stack gap={3}>
         <Divider />
@@ -311,7 +313,10 @@ export function RecapView({
           </Stack>
         )}
       </Stack>
-      <Stack gap={3}>
+      {/* One step MORE air between the narrator line and the exit row than the
+          line has above it (myth-bbald) — the mono narrator line and the ghost
+          action must not read as the same species. */}
+      <Stack gap={4}>
         {threads.length > 0 && (
           <Text role="meta" as="p" data-testid="recap-threads-keep">
             {labels.threadsKeep}

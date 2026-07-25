@@ -15,13 +15,15 @@ import { cn } from '../../lib/cn.ts'
 // title/location line is serif DATA, the eyebrow the machine-mono register.
 // Theme-aware via semantic tokens.
 //
-// NARROW COLLAPSE: on phone widths a long scene prose would push the actual
-// prompt below the fold, so long prose (a deterministic length threshold —
-// structural, no cognition) clamps to a few lines below the `sm` step, with a
-// quiet disclosure toggle to read it all. Per the contract, the collapse is
-// presentation detail the component owns INTERNALLY (no callback); the clamped
-// text stays in the DOM, so assistive tech always has the full prose. At `sm`
-// and up the clamp never binds and the toggle is hidden.
+// COLLAPSE: long scene prose pushes the actual prompt — and at 720 the field
+// bottom and its Continue — below the fold, so long prose (a deterministic
+// length threshold — structural, no cognition) clamps to two lines at EVERY
+// width, with a quiet disclosure toggle to read it all (ux-run3 myth-21lpi:
+// the grounding step's textarea + submit must sit inside a 1280x720 frame; the
+// recap is ambient context and two lines + one click reclaim the fold for the
+// input). Per the contract, the collapse is presentation detail the component
+// owns INTERNALLY (no callback); the clamped text stays in the DOM, so
+// assistive tech always has the full prose.
 //
 // The toggle's labels are fixed brand chrome, not passed-in copy — the contract
 // carries no label props, exactly like FreeformPrompt's fixed "Continue" and
@@ -35,9 +37,13 @@ const HIDE_LABEL = 'Show less'
  *  structural (a length check, not a judgment call). */
 const COLLAPSIBLE_MIN_CHARS = 240
 
+// The card's own margins are one step tighter than a standard paper card
+// (space-3, not space-4 — ux-run3 myth-21lpi took BOTH halves of the critic's
+// "tighten the recap card's margins OR clamp its body" prescription; the fold
+// needed both). Ambient context earns less padding than the prompt it serves.
 const CARD_CLASS = cn(
   'flex w-full min-w-0 flex-col gap-[var(--space-2)]',
-  'rounded-none border border-border bg-surface p-[var(--space-4)]',
+  'rounded-none border border-border bg-surface p-[var(--space-3)]',
 )
 // The machine-register eyebrow — quiet tertiary ink (ambient, not ember).
 const EYEBROW_CLASS = 'font-ui text-xs font-medium uppercase tracking-wide text-ink-tertiary'
@@ -45,14 +51,15 @@ const EYEBROW_CLASS = 'font-ui text-xs font-medium uppercase tracking-wide text-
 const TITLE_LINE_CLASS = 'font-body text-base leading-[1.4]'
 const TITLE_CLASS = 'font-semibold text-ink'
 const LOCATION_CLASS = 'font-normal italic text-ink-secondary'
-// The scene prose — quiet secondary-ink serif.
-const PROSE_CLASS = 'font-body text-sm leading-[1.5] text-ink-secondary'
-// Collapsed long prose clamps ONLY below the `sm` step (the narrow regime).
-const PROSE_CLAMP_CLASS = 'max-sm:line-clamp-3'
+// The scene prose — quiet secondary-ink serif, capped at the reading measure
+// (ux-run3 myth-7ceqw: the card's text must not wrap at ~95-100ch).
+const PROSE_CLASS = 'max-w-[70ch] font-body text-sm leading-[1.5] text-ink-secondary'
+// Collapsed long prose clamps to two lines at every width (myth-21lpi).
+const PROSE_CLAMP_CLASS = 'line-clamp-2'
 // The disclosure toggle — the quiet underlined mono link idiom (GuidedBuilder's
-// Back/skip affordance), shown only below `sm` where the clamp binds.
+// skip affordance), shown whenever the prose is long enough to clamp.
 const TOGGLE_CLASS = cn(
-  'self-start rounded-none bg-transparent cursor-pointer sm:hidden',
+  'self-start rounded-none bg-transparent cursor-pointer',
   'font-ui text-xs tracking-wide text-ink-tertiary underline underline-offset-2',
   'hover:text-ink transition-colors duration-[var(--duration-fast)]',
   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-fg',

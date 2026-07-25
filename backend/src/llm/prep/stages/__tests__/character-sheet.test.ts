@@ -39,6 +39,7 @@ import {
   validateCoherence,
 } from '../character-sheet.js'
 import type { CharacterSheetOutput } from '../../../schemas/character-sheet.js'
+import { LlmRateLimitedError, LlmStructuredOutputError } from '../../../errors.js'
 
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
@@ -750,6 +751,91 @@ describe('runCharacterSheetStage', () => {
     ).rejects.toThrow(/level out of range/)
 
     // The non-coherence error short-circuits: only ONE generation, no retry budget burn.
+    expect(mockGenerateText).toHaveBeenCalledTimes(1)
+  })
+
+  // myth-evpfr — a schema rejection is a BAD DRAW, not a dead run. Before this,
+  // one stochastic schema violation (the 2026-07 `.max(80)` equipment-name
+  // landmine) terminal-failed the player's whole character with no second draw.
+  it('regenerates on a SCHEMA rejection, then succeeds (bad draw → good draw)', async () => {
+    const { userId, worldId, campaignId } = await seedMember()
+
+    mockGenerateText
+      // generateObject's repair chain exhausted → LlmStructuredOutputError.
+      .mockRejectedValueOnce(new LlmStructuredOutputError('repair chain exhausted'))
+      .mockResolvedValueOnce({
+        output: SHEET,
+        finishReason: 'stop',
+        usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10 },
+      } as never)
+
+    const result = await runCharacterSheetStage(createRepo(pool), {
+      campaignId,
+      userId,
+      worldId,
+      narrative: NARRATIVE,
+      worldTone: 't',
+      worldEra: 'e',
+    })
+
+    expect(mockGenerateText).toHaveBeenCalledTimes(2)
+    // Only the SUCCESSFUL draw's tokens are attributable — a rejected draw
+    // throws before returning usage, so its spend is unrecoverable.
+    expect(result.inputTokens).toBe(7)
+    expect(result.outputTokens).toBe(3)
+    const spells = await pool.query(
+      `SELECT spell_name FROM character_spells WHERE character_id = $1`,
+      [result.characterId],
+    )
+    expect(spells.rows[0]).toMatchObject({ spell_name: 'Cure Wounds' })
+  })
+
+  it('terminal-fails LOUD (keeping the LlmStructuredOutputError class) once the schema-retry budget is exhausted', async () => {
+    // The bound is what keeps this from masking a real defect: a SYSTEMATIC
+    // schema mismatch never draws clean, so it still fails — and it must fail
+    // AS a structured-output error, since that class is what pipeline_runs.error
+    // and the stage-failed event's errorCode report.
+    const { userId, worldId, campaignId } = await seedMember()
+    mockGenerateText.mockRejectedValue(new LlmStructuredOutputError('repair chain exhausted'))
+
+    await expect(
+      runCharacterSheetStage(createRepo(pool), {
+        campaignId,
+        userId,
+        worldId,
+        narrative: NARRATIVE,
+        worldTone: 't',
+        worldEra: 'e',
+      }),
+    ).rejects.toBeInstanceOf(LlmStructuredOutputError)
+
+    // Bounded at SHEET_MAX_ATTEMPTS — not an unbounded redraw loop.
+    expect(mockGenerateText).toHaveBeenCalledTimes(3)
+    const join = await pool.query(
+      `SELECT * FROM campaign_characters WHERE campaign_id = $1 AND user_id = $2`,
+      [campaignId, userId],
+    )
+    expect(join.rowCount).toBe(0)
+  })
+
+  it('does NOT spend the retry budget on a non-schema generation error', async () => {
+    // A rate-limit is transient and carries its own classification (terminal:
+    // false → BullMQ retries the job). Redrawing here would burn the budget and
+    // relabel a retryable failure as a terminal one.
+    const { userId, worldId, campaignId } = await seedMember()
+    mockGenerateText.mockRejectedValue(new LlmRateLimitedError('slow down'))
+
+    await expect(
+      runCharacterSheetStage(createRepo(pool), {
+        campaignId,
+        userId,
+        worldId,
+        narrative: NARRATIVE,
+        worldTone: 't',
+        worldEra: 'e',
+      }),
+    ).rejects.toBeInstanceOf(LlmRateLimitedError)
+
     expect(mockGenerateText).toHaveBeenCalledTimes(1)
   })
 })

@@ -283,9 +283,89 @@ describe('WikiHome — the introduction (the world\'s front door)', () => {
   })
 })
 
+// ux-run3 myth-ry14g — the index was a memory test: twelve alphabetized bare
+// names, the scene's antagonist rendered identically to a session-one
+// shopkeeper. Two fixes, both in the prose register (no chips, no dots): a quiet
+// one-line HANDLE under each name, and PRESENCE grouping so the people the
+// transcript has already named sit above the rest.
+/** The row's <li> / the group's <section> — thrown, not asserted away, so a
+ *  markup change fails loudly instead of feeding `undefined` to `within`. */
+function ancestor(el: HTMLElement, selector: 'li' | 'section'): HTMLElement {
+  const found = el.closest(selector)
+  if (found === null) throw new Error(`expected an ancestor <${selector}>`)
+  return found
+}
+
+describe('WikiHome — handles + presence grouping (ux-run3 myth-ry14g)', () => {
+  const presenceOf = (...ids: string[]) => ({
+    presence: { ids, presentLabel: 'Seen this session', elsewhereLabel: 'Elsewhere' },
+  })
+
+  it("renders each entity's one-line handle beneath its name", () => {
+    const { getByRole } = renderHome()
+    const row = ancestor(getByRole('button', { name: 'Maeris Vale' }), 'li')
+    const handle = within(row).getByTestId('wiki-row-handle')
+    expect(handle).toHaveTextContent('[placeholder for what Maeris Vale does and for whom]')
+    // The gloss follows the name — an index entry, not part of the row's own
+    // accessible name (the link still announces as the person).
+    expect(getByRole('button', { name: 'Maeris Vale' })).toBeInTheDocument()
+  })
+
+  it('renders no handle line for an entity that carries neither kernel nor fact', () => {
+    // Sunspire is the fixture's deliberate empty-body specimen.
+    const { getByRole } = renderHome()
+    const row = ancestor(getByRole('button', { name: 'Sunspire' }), 'li')
+    expect(within(row).queryByTestId('wiki-row-handle')).toBeNull()
+  })
+
+  it('splits a group into the present block and the rest, present FIRST', () => {
+    const { getByRole, getByText } = renderHome(presenceOf('l-reach'))
+    const locations = ancestor(getByRole('heading', { name: 'Locations' }), 'section')
+    const seen = within(locations).getByText('Seen this session')
+    const elsewhere = within(locations).getByText('Elsewhere')
+    expect(seen.compareDocumentPosition(elsewhere) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // The named place leads; a place the transcript has not touched files below.
+    const reach = getByText('Ashfen Reach')
+    expect(seen.compareDocumentPosition(reach) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(elsewhere.compareDocumentPosition(reach) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy()
+  })
+
+  it('counts a root as present when a NESTED child is the one named (under their place)', () => {
+    // The Drowned Ward nests under Ashfen Reach; naming the child lifts the
+    // whole branch, so the place a person was met in stays intact.
+    const { getByRole } = renderHome(presenceOf('l-ward'))
+    const locations = ancestor(getByRole('heading', { name: 'Locations' }), 'section')
+    const seen = within(locations).getByText('Seen this session')
+    const parentRow = getByRole('button', { name: 'Ashfen Reach' })
+    expect(seen.compareDocumentPosition(parentRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('leaves a group unsplit when every entity is present (no lonely heading)', () => {
+    const { getByRole, queryByText } = renderHome(presenceOf('n-vale', 'l-ward'))
+    const people = ancestor(getByRole('heading', { name: 'People' }), 'section')
+    expect(within(people).queryByText('Seen this session')).toBeNull()
+    expect(within(people).queryByText('Elsewhere')).toBeNull()
+    // Other groups (which do have both halves) still split.
+    expect(queryByText('Seen this session')).not.toBeNull()
+  })
+
+  it('renders exactly the un-split index when no presence is supplied (the reveal)', () => {
+    const { queryByText } = renderHome()
+    expect(queryByText('Seen this session')).toBeNull()
+    expect(queryByText('Elsewhere')).toBeNull()
+  })
+})
+
 describe('WikiHome — a11y', () => {
   it('has no a11y violations', async () => {
     const { container } = renderHome({ selectedId: 'f-guild' })
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('has no a11y violations with handles + presence grouping', async () => {
+    const { container } = renderHome({
+      presence: { ids: ['l-reach'], presentLabel: 'Seen this session', elsewhereLabel: 'Elsewhere' },
+    })
     expect(await axe(container)).toHaveNoViolations()
   })
 })

@@ -48,8 +48,9 @@ export interface WorldGenLoadingProps extends Omit<BaseProps, 'children'> {
    *  fill (ux-run2 myth-i2pdo — `worldGenAccretion`: completed stages + arrived
    *  entities over the expected total, so structural resolution means work
    *  happened and stillness means stillness). At 0 (or omitted) the mark runs
-   *  the ambient breathe field instead — alive from frame one, never an empty
-   *  fill frame. */
+   *  the faint IDLE shimmer instead (ux-run3 myth-c96rf) — nearly blank but
+   *  alive, everywhere emptier than any accretion state, so the first real
+   *  event reads as a beginning, never a reset. */
   accretion?: number
   /** The permission-to-leave line (already-resolved i18n, e.g. "Safe to leave.
    *  The world keeps forming." — ux-run2 myth-i2pdo), quietly closing the
@@ -57,6 +58,11 @@ export interface WorldGenLoadingProps extends Omit<BaseProps, 'children'> {
    *  (re-entry lands back on this wait with progress intact). Omitted → no
    *  line. */
   leaveLabel?: string
+  /** The concrete hold promise paired directly under the leave line (ux-run3
+   *  myth-b965d — permission without a resumption promise left the loop open),
+   *  e.g. "We'll hold it right here for you." Same quiet mono register; real
+   *  content. Omitted → no line. */
+  holdLabel?: string
   /** The countdown line (already-resolved i18n string, e.g. "Ready in about
    *  4 min") — the consumer owns the tick, the AGGREGATE derivation (the whole
    *  visible wait — the same budget the act-two status card shows), the coarse

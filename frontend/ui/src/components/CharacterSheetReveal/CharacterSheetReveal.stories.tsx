@@ -43,11 +43,11 @@ const MARTIAL_CURATED: CuratedSheet = {
   name: 'Kessa Vurm',
   identityLine: 'Level 3 · Human Fighter · Champion · Toll-clerk of Greenward',
   stats: [
-    { label: 'Armor Class', value: '16' },
-    { label: 'Hit Points', value: '28' },
-    { label: 'Proficiency', value: '+2' },
-    { label: 'Hit Die', value: 'd10' },
-    { label: 'Speed', value: '30 ft' },
+    { key: 'ac', label: 'Armor Class', value: '16' },
+    { key: 'hp', label: 'Hit Points', value: '28' },
+    { key: 'proficiency', label: 'Proficiency', value: '+2' },
+    { key: 'hitDie', label: 'Hit Die', value: 'd10' },
+    { key: 'speed', label: 'Speed', value: '30 ft' },
   ],
   abilities: [
     { abbrev: 'STR', score: 16, modifier: 3 },
@@ -105,11 +105,11 @@ const CASTER_CURATED: CuratedSheet = {
   name: 'Ilma the Unwritten',
   identityLine: 'Level 3 · Gnome Wizard · Evocation · Runaway apprentice',
   stats: [
-    { label: 'Armor Class', value: '12' },
-    { label: 'Hit Points', value: '17' },
-    { label: 'Proficiency', value: '+2' },
-    { label: 'Hit Die', value: 'd6' },
-    { label: 'Speed', value: '25 ft' },
+    { key: 'ac', label: 'Armor Class', value: '12' },
+    { key: 'hp', label: 'Hit Points', value: '17' },
+    { key: 'proficiency', label: 'Proficiency', value: '+2' },
+    { key: 'hitDie', label: 'Hit Die', value: 'd6' },
+    { key: 'speed', label: 'Speed', value: '25 ft' },
   ],
   abilities: [
     { abbrev: 'STR', score: 8, modifier: -1 },

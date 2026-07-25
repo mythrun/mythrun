@@ -2,6 +2,7 @@ import type { TranscriptItem } from '../../session/transcript-types.ts'
 import type { EntityIndex } from '../../session/entity-index.ts'
 import type { EntityHighlightLabels } from './dm-message-props.ts'
 import type { RollRevealView } from '../../session/roll-reveal.ts'
+import type { TableTalkView } from '../../session/transcript-presentation.ts'
 import type { RollCardLabels } from './roll-card.ts'
 
 // MessageStream (MYT-92) — the scroll container that maps each TranscriptItem to its
@@ -52,4 +53,19 @@ export interface MessageStreamProps {
    *  Absent ⇒ the correction still renders (the slip degrades to no eyebrow), so every
    *  pre-correction caller is unaffected. */
   correctionLabel?: string
+  /** Resolved label for the scroll-to-latest pill while the reader sits OFF the live
+   *  edge (myth-em6bg — fills the T9 contract gap; the old chrome name was inlined).
+   *  Absent ⇒ an inline English fallback (back-compat). */
+  jumpLabel?: string
+  /** Resolved label the pill swaps to when NEW content lands while scrolled up
+   *  (myth-em6bg — "new messages ↓"); also announced via a polite live region so an
+   *  off-edge arrival is never silent. Absent ⇒ an inline English fallback. */
+  newMessagesLabel?: string
+  /** The @dm table-talk grouping (myth-1msig) — item key → block ordinal, computed
+   *  route-side (`buildTableTalkView`). Contiguous items of one block wrap in the
+   *  marked TableTalk frame. Absent ⇒ no exchange is framed (back-compat). */
+  tableTalk?: TableTalkView
+  /** The resolved TableTalk eyebrow ("Table talk") forwarded to each framed block.
+   *  Absent ⇒ the frame renders with an empty eyebrow (the rule still marks it). */
+  tableTalkLabel?: string
 }

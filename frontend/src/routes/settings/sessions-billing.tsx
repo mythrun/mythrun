@@ -21,17 +21,23 @@ import {
   type HistoryRowView,
   type CheckoutBody,
 } from '@mythrun/client-core'
-import type { SubscriptionTierView, AlaCarteView, PurchaseHistoryRow } from '@mythrun/client-core/contract'
+import type {
+  SubscriptionTierView,
+  AlaCarteView,
+  PackGrant,
+  PurchaseHistoryRow,
+} from '@mythrun/client-core/contract'
 import { redirectTo, currentOrigin, currentHref } from '../../platform/web/navigation.ts'
 
 // The wired Sessions & Billing surface (MYT-95 Task 11) — the composition shell the
 // `/settings` route mounts under Suspense. It reads the three billing suspense
 // queries and hands each derived view to a DS component:
-//   • CreditBalance   — both credit buckets, itemised, NEVER summed (spec §4).
+//   • CreditBalance   — both credit buckets, itemised, NEVER summed (spec §4), each
+//     in its own explained tile (MYT-9jrh9).
 //   • PackList        — the price-ordered subscription tiers, each with its GATED
 //     CTA (subscribe / upgrade / manage) resolved upstream by `subscriptionCta`
 //     (an active subscriber can never reach plain subscribe — the double-subscribe
-//     guard), over the à-la-carte packs with quantity presets.
+//     guard) AND its grant ledger, over the à-la-carte packs with quantity presets.
 //   • PurchaseHistory — the terse ledger feed; a pack row (lookup_key null) names
 //     no credit count, an invoice row may name its tier.
 // Each affordance routes to the matching client-core mutation and then navigates
@@ -46,6 +52,7 @@ interface Formatters {
   readonly money: (cents: number, currency: string) => string
   readonly perMonth: (price: string) => string
   readonly each: (price: string) => string
+  readonly grants: (sku: SkuListing, recurring: boolean) => PackGrant[]
 }
 
 function makeFormatters(t: TFunction, locale: string): Formatters {
@@ -60,10 +67,27 @@ function makeFormatters(t: TFunction, locale: string): Formatters {
       ...(whole ? { minimumFractionDigits: 0, maximumFractionDigits: 0 } : {}),
     }).format(cents / 100)
   }
+  const count = new Intl.NumberFormat(locale)
+  // The grant ledger every tier/pack card renders (MYT-9jrh9). It is composed from
+  // the SKU payload's own `sessionsGranted` / `worldsGranted`, never from a frontend
+  // table of tier sizes — the catalogue is served from the Stripe-probed SKU cache, so
+  // reading it here is what keeps the pricing UI from drifting off Stripe. Sessions
+  // lead, then worlds, in EVERY card: the fixed order is what lets the reader scan
+  // across the three tiers instead of re-reading each one. A zero grant renders no row
+  // (the session pack has no world, and an empty "Worlds 0" line is noise, not data).
+  const grants = (sku: SkuListing, recurring: boolean): PackGrant[] => {
+    const amount = (n: number): string =>
+      recurring ? t('billing.grantPerMonth', { amount: count.format(n) }) : count.format(n)
+    const rows: PackGrant[] = []
+    if (sku.sessionsGranted > 0) rows.push({ label: t('billing.grantSessions'), value: amount(sku.sessionsGranted) })
+    if (sku.worldsGranted > 0) rows.push({ label: t('billing.grantWorlds'), value: amount(sku.worldsGranted) })
+    return rows
+  }
   return {
     money,
     perMonth: (price) => t('billing.pricePerMonth', { price }),
     each: (price) => t('billing.priceEach', { price }),
+    grants,
   }
 }
 
@@ -79,6 +103,7 @@ function buildTierViews(
       lookupKey: sku.lookup_key,
       displayName: sku.displayName,
       priceLabel: fmt.perMonth(fmt.money(sku.price.unit_amount_cents, sku.price.currency)),
+      grants: fmt.grants(sku, true),
       cta: decision.cta,
       isCurrent: decision.isCurrent,
     }
@@ -90,6 +115,10 @@ function buildAlaCarteViews(packs: readonly SkuListing[], fmt: Formatters): AlaC
     lookupKey: sku.lookup_key,
     displayName: sku.displayName,
     unitPriceLabel: fmt.each(fmt.money(sku.price.unit_amount_cents, sku.price.currency)),
+    // Per UNIT, not per chosen quantity — the price line reads "$9 each", so the
+    // ledger beside it reads the same way. This is where the reader learns the world
+    // pack carries the session that plays the world it just bought.
+    grants: fmt.grants(sku, false),
   }))
 }
 
@@ -106,10 +135,12 @@ function historyRowLabel(row: HistoryRowView, t: TFunction, money: Formatters['m
   return row.refunded ? `${base} ${t('billing.history.refundedSuffix')}` : base
 }
 
-/** The two credit buckets + a one-line plain-language explainer of what spends each
- *  (MYT-9jrh9). Run-1's counters were bare label-number pairs with no way to form a
- *  mental model; the mechanics are real — session credits gate starting a session,
- *  world credits gate building a world. */
+/** The two credit buckets, each in its own tile with its own explainer (MYT-9jrh9).
+ *  Run-1's counters were bare label-number pairs with no way to form a mental model;
+ *  the mechanics are real and the copy states them — a session credit starts one
+ *  session, a world credit builds one world (characters included) and is what starts
+ *  a new campaign. The explainers live WITH their number rather than in a block below
+ *  the pair, so neither line can be read against the wrong currency. */
 function CreditSection({
   view,
   t,
@@ -118,22 +149,16 @@ function CreditSection({
   readonly t: TFunction
 }): React.JSX.Element {
   return (
-    <Stack gap={2}>
-      <CreditBalance
-        session={view.session}
-        sessionLabel={t('billing.sessionLabel')}
-        worldGen={view.worldGen}
-        worldGenLabel={t('billing.worldGenLabel')}
-      />
-      <Stack gap={1}>
-        <Text role="ui-caption" data-testid="billing-session-help">
-          {t('billing.sessionHelp')}
-        </Text>
-        <Text role="ui-caption" data-testid="billing-world-help">
-          {t('billing.worldGenHelp')}
-        </Text>
-      </Stack>
-    </Stack>
+    <CreditBalance
+      session={view.session}
+      sessionLabel={t('billing.sessionLabel')}
+      sessionHelp={t('billing.sessionHelp')}
+      sessionZeroHelp={t('billing.sessionZeroHelp')}
+      worldGen={view.worldGen}
+      worldGenLabel={t('billing.worldGenLabel')}
+      worldGenHelp={t('billing.worldGenHelp')}
+      worldGenZeroHelp={t('billing.worldGenZeroHelp')}
+    />
   )
 }
 
@@ -209,6 +234,10 @@ export function SessionsBilling(): React.JSX.Element {
         onTierCta={onTierCta}
         onBuyAlaCarte={onBuyAlaCarte}
         labels={{
+          plansTitle: t('billing.plansTitle'),
+          plansHelp: t('billing.plansHelp'),
+          alaCarteTitle: t('billing.alaCarteTitle'),
+          alaCarteHelp: t('billing.alaCarteHelp'),
           subscribe: t('billing.subscribe'),
           upgrade: t('billing.upgrade'),
           manage: t('billing.manage'),

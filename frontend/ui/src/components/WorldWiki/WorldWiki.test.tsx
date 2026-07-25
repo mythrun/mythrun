@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render } from '@testing-library/react'
+import { act, render } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { axe } from 'jest-axe'
-import type { WikiViewModel } from '@mythrun/client-core/contract'
+import type { WikiViewModel, WikiNavigation } from '@mythrun/client-core/contract'
+import { useWikiNavigation } from '@mythrun/client-core/worldgen'
 import { WorldWiki } from './WorldWiki.tsx'
 import { WIKI_FIXTURE_MODEL, WIKI_FIXTURE_MODEL_BARE } from './wiki-fixture.ts'
 
@@ -56,6 +57,41 @@ describe('WorldWiki — the composed journey', () => {
     expect(getByRole('heading', { name: 'The Tallow Guild' })).toBeInTheDocument()
     await user.click(getByRole('button', { name: 'Back' }))
     expect(getByRole('textbox', { name: 'Search the world' })).toBeInTheDocument()
+  })
+
+  // myth-g7kg6 — a consumer that must SEE the history (the mobile reveal, whose
+  // hardware Back pops a wiki page before closing the drawer) supplies the
+  // stack. The wiki navigates identically; the consumer just gets to read
+  // `canBack` and call `back()` from outside.
+  it('drives a LIFTED navigation stack when one is supplied, reporting it outward', async () => {
+    const user = userEvent.setup()
+    let outside: WikiNavigation | undefined
+    function Lifted() {
+      const navigation = useWikiNavigation()
+      outside = navigation
+      return (
+        <WorldWiki
+          model={WIKI_FIXTURE_MODEL}
+          onSelect={vi.fn()}
+          onQuery={vi.fn()}
+          navigation={navigation}
+          {...LABELS}
+        />
+      )
+    }
+    const { getByRole } = render(<Lifted />)
+    expect(outside?.canBack).toBe(false)
+
+    await user.click(getByRole('button', { name: 'The Tallow Guild' }))
+    expect(getByRole('heading', { name: 'The Tallow Guild' })).toBeInTheDocument()
+    expect(outside?.canBack).toBe(true)
+
+    // The OUTSIDE holder pops the page — the wiki follows it home.
+    act(() => {
+      outside?.back()
+    })
+    expect(getByRole('textbox', { name: 'Search the world' })).toBeInTheDocument()
+    expect(outside?.canBack).toBe(false)
   })
 
   it('notifies onSelect for internal navigation, keeping the graph in step', async () => {

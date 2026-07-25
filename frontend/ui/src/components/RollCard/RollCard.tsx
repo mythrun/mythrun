@@ -48,6 +48,32 @@ const CARD_CLASS = cn(
   'px-[var(--space-5)] py-[var(--space-4)]',
 )
 
+// myth-twraw — the settled RECEIPT: once RELEASED (Continue pressed, moved-on
+// demotion, or replayed history) the theater is over, and the full card below
+// fresh narration would file the roll after its consequences. The card collapses
+// to a compact one-line record — skill, the whole equation, the verdict against
+// the DC — on a QUIET hairline (border, not border-strong: the receipt recedes;
+// the surrounding prose is the point). The route's `orderForDisplay` files it in
+// its causal slot between the player's message and the outcome prose.
+const RECEIPT_CLASS = cn(
+  'rounded-none border border-border bg-surface',
+  'px-[var(--space-4)] py-[var(--space-2)]',
+  'text-center font-ui text-xs text-ink-secondary',
+)
+
+// The one-line receipt text, composed from frame DATA + the resolved labels
+// (the same beats/misses + DC vocabulary as the full readout — no new copy).
+// skill_check: "perception · 14 + 2 = 16 beats DC 12"; dice_roll: "2d20 · 17".
+function receiptText(item: CardItem, labels: RollCardLabels): string {
+  if (item.kind === 'dice_roll') {
+    const f = item.frame
+    return `${String(f.count)}d${String(f.sides)} · ${String(f.total)}`
+  }
+  const f = item.frame
+  const verb = f.outcomeTier === 'fail' ? labels.misses : labels.beats
+  return `${f.skill} · ${equationText(f)} ${verb} ${labels.dc} ${String(f.dc)}`
+}
+
 // The die stamps the USED d20: skill_check shows the effective natural roll
 // (total − modifier — matches adv/dis without exposing both dice on the face);
 // dice_roll shows the summed total.
@@ -189,11 +215,23 @@ export const RollCard = forwardRef<HTMLDivElement, RollCardProps>(function RollC
   // The ONLY in-component reveal state: the local DieSpin transition. Roll flips it
   // true; DieSpin lands and calls back; we clear it and commit the roll route-side.
   const [spinning, setSpinning] = useState(false)
-  const revealed = phase === 'revealed' || phase === 'released'
+  const revealed = phase === 'revealed'
 
   function handleSpinComplete(): void {
     setSpinning(false)
     onRoll()
+  }
+
+  // myth-twraw — RELEASED is the settled record, not the theater: the card files
+  // as a compact one-line receipt (skill · equation · verdict vs DC). The full
+  // reveal composition (die, readout, tier weight, nat-20 plate) lives at
+  // `revealed`, where the player is actually watching.
+  if (phase === 'released') {
+    return (
+      <div ref={ref} data-roll-card={item.kind} data-testid="roll-receipt" className={RECEIPT_CLASS}>
+        {receiptText(item, labels)}
+      </div>
+    )
   }
 
   return (
@@ -224,7 +262,7 @@ export const RollCard = forwardRef<HTMLDivElement, RollCardProps>(function RollC
           </Button>
         )}
         {revealed && item.kind === 'skill_check' && <SkillReadout frame={item.frame} labels={labels} />}
-        {phase === 'revealed' && item.kind === 'skill_check' && <Button onPress={onContinue}>{labels.continue}</Button>}
+        {revealed && item.kind === 'skill_check' && <Button onPress={onContinue}>{labels.continue}</Button>}
       </Stack>
     </div>
   )

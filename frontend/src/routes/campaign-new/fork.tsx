@@ -12,10 +12,16 @@ import { useTranslation } from 'react-i18next'
 //
 // GEOMETRY (ux-run2 myth-ma8yv, critique 002): a full-page moment with exactly
 // one job must not huddle in the upper half above ~300px of dead paper — the
-// block seats optically above center (minHeight="page" + 1:2 grow spacers, the
-// dead space framing the choice instead of trailing it). The spacers collapse
-// on short viewports where the content already fills the region. Width stays
-// the funnel column's (`maxWidth="form"` on the campaign-new spine).
+// block seats optically above center (grow-weighted 2:5 spacers, the dead
+// space framing the choice instead of trailing it). The spacers collapse on
+// short viewports where the content already fills the region. Width stays the
+// funnel column's (`maxWidth="form"` on the campaign-new spine). The floor is
+// `pageBelowBar`, not `page` (ux-run3 myth-4jbmr): this screen renders under
+// the spine's Back bar, and the plain page floor overflowed the region by that
+// row — seating the block ~24px below optical center. Arithmetic at 1280x720:
+// region 584px, floor 520px, block 324px → 196px of slack. 1:2 spacers put the
+// midpoint dead on geometric center; 2:5 lifts it the last ~11px above, the
+// "just above" the eye wants, and the column still ends inside the region.
 export interface ForkScreenProps {
   /** Chose "Start from an idea" → the controller advances to `freeform`. */
   onFreeform: () => void
@@ -40,8 +46,8 @@ export function ForkScreen({ onFreeform, onGuided }: ForkScreenProps): React.JSX
     },
   ]
   return (
-    <Stack minHeight="page" data-testid="screen-fork">
-      <Stack grow={1} />
+    <Stack minHeight="pageBelowBar" data-testid="screen-fork">
+      <Stack grow={2} />
       <Stack gap={6}>
         <Stack gap={2}>
           <Text role="ui-label" data-testid="fork-eyebrow">
@@ -59,7 +65,7 @@ export function ForkScreen({ onFreeform, onGuided }: ForkScreenProps): React.JSX
         </Stack>
         <GhostChoiceList items={choices} data-testid="fork-choices" />
       </Stack>
-      <Stack grow={2} />
+      <Stack grow={5} />
     </Stack>
   )
 }

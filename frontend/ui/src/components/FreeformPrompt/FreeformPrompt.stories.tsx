@@ -40,12 +40,16 @@ function Live({
   whisperVoice,
   compact = false,
   withBack = false,
+  gated = false,
+  submitHint,
 }: {
   initial?: string
   stepIndicator?: string
   whisperVoice?: 'hint' | 'dm'
   compact?: boolean
   withBack?: boolean
+  gated?: boolean
+  submitHint?: string
 }): React.JSX.Element {
   const [value, setValue] = useState(initial)
   return (
@@ -61,6 +65,8 @@ function Live({
       {...(whisperVoice !== undefined && { whisperVoice })}
       {...(compact && { compact })}
       {...(withBack && { onBack: () => undefined, backLabel: 'Back' })}
+      {...(gated && { submitDisabled: value.trim() === '' })}
+      {...(submitHint !== undefined && { submitHint })}
     />
   )
 }
@@ -116,6 +122,27 @@ export const CompactDetail: Story = {
   render: () => (
     <div className="max-w-[720px] bg-bg p-[var(--space-6)]">
       <Live compact withBack />
+    </div>
+  ),
+}
+
+// The GROUNDING step (ux-run3 myth-7ceqw / myth-g3mt6 / myth-21lpi) — the flow's
+// one press that spends: the named step signpost, the DM's own invitation, the
+// detail floor, Continue standing down over an empty required field (type to
+// watch the accent fill arrive), and the commit disclosure riding the action row
+// beside the control it discloses. Type into the field to see the flip.
+export const GroundingCommit: Story = {
+  name: 'Grounding step (gated + cost disclosed)',
+  render: () => (
+    <div className="max-w-[720px] bg-bg p-[var(--space-6)]">
+      <Live
+        stepIndicator="2 of 2 · How you arrive"
+        whisperVoice="dm"
+        compact
+        withBack
+        gated
+        submitHint="Building your character takes about a minute."
+      />
     </div>
   ),
 }

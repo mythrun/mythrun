@@ -5,8 +5,11 @@ import { BeatFigure } from './BeatFigure.tsx'
 // BeatFigure — the loading-beat family's shared full-width quantized dither figure. `fill`
 // advances a hard-binary Bayer meter in decelerating quantized frames (the front band shimmers
 // in place between advances; the completed region is locked solid); `breathe` sweeps an
-// indeterminate density wave with no progress. The self-driving demos below step the PUBLIC
-// props on a timer to preview the live feel (production drives them from real phase/beat state).
+// indeterminate density wave with no progress (the no-progress ambient hold); `idle` is the
+// nearly blank poised zero-state for accreting surfaces (ux-run3 myth-c96rf) — a faint pulse
+// at the fill's origin, cell-wise emptier than any accretion state. The self-driving demos
+// below step the PUBLIC props on a timer to preview the live feel (production drives them from
+// real phase/beat state).
 
 const meta: Meta<typeof BeatFigure> = {
   title: 'Foundations/BeatFigure',
@@ -87,6 +90,18 @@ export const Breathing: Story = {
 export const BreathingStill: Story = {
   name: 'Breathe · reduced-motion still',
   args: { mode: 'breathe', reducedMotion: true },
+}
+
+// The idle zero-state (ux-run3 myth-c96rf) — nearly blank: a faint slow pulse seated at the
+// fill's origin. Must read unmistakably EMPTIER than FillUnderway (idle < any accretion).
+export const Idle: Story = {
+  name: 'Idle · poised zero-state',
+  args: { mode: 'idle', reducedMotion: false },
+}
+
+export const IdleStill: Story = {
+  name: 'Idle · reduced-motion still',
+  args: { mode: 'idle', reducedMotion: true },
 }
 
 // Frozen-paper tone (the opt-in 1-bit relic) — kept for a small tile that wants it; on a

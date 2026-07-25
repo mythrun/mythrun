@@ -367,19 +367,40 @@
 <h2>SNS alerts topic</h2>
 
 <p>
-  <code>mythrun-staging-alerts</code> is the SNS topic that CloudWatch alarms will eventually
-  publish to. It lands with a single email subscription to <code>dev@mythrun.com</code> and is
-  encrypted at rest with the AWS-managed <code>alias/aws/sns</code> key. The email subscription
-  starts in <code>PendingConfirmation</code> and stays there until the recipient clicks the AWS-sent
+  <code>mythrun-staging-alerts</code> is the SNS topic this environment's alarms publish to: the
+  billing and retrieval log-metric alarms from the serving module, the API health and 5xx alarms,
+  and the Cognito throttling alarms from the auth module. Alarms on resources every environment
+  shares — the RDS instance, Redis, the ALB itself, the wildcard certificate, the NAT gateway — go
+  to a separate <code>mythrun-shared-alerts</code> topic in the shared workspace instead, so a
+  future production composition inherits one alarm per shared resource rather than a second copy of
+  each. Both topics carry a single email subscription to <code>dev@mythrun.com</code>, which starts
+  in <code>PendingConfirmation</code> and stays there until the recipient clicks the AWS-sent
   confirmation link — that confirmation is not a Terraform-managed attribute, so re-running
   <code>apply</code> while pending is a no-op.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Topic now, alarms later</strong> — MYT-30 stops at the topic and subscription so
-  first-deploy surfaces (ECS CircuitBreaker rollbacks, task failures) have a destination the day
-  they're wired up. The actual alarm resources live in the Observability milestone.
+  <strong>A customer-managed KMS key, not <code>alias/aws/sns</code></strong> — the AWS-managed key
+  looks like the free, obvious choice, and it silently breaks every alarm. Encrypting a published
+  message requires the publisher to reach <code>kms:GenerateDataKey</code>, and the AWS-managed
+  key's policy grants that only to principals inside the account. A CloudWatch alarm publishes as
+  the service principal <code>cloudwatch.amazonaws.com</code>, which is not one, and an AWS-managed
+  key's policy cannot be edited to add it. The alarm still turns red; the notification is simply
+  never delivered, leaving one line in the alarm's History tab as the only evidence. Both topics
+  therefore use the customer-managed <code>alias/mythrun-alerts</code> key from the shared
+  workspace, whose policy names both <code>cloudwatch.amazonaws.com</code> and
+  <code>budgets.amazonaws.com</code>.
 </aside>
+
+<p>
+  Because a green <code>apply</code> proves nothing about delivery, each topic is smoke-tested once
+  after it is wired:
+  <code
+    >aws cloudwatch set-alarm-state --alarm-name mythrun-staging-api-down --state-value ALARM
+    --state-reason "delivery smoke test"</code
+  >
+  should produce an email.
+</p>
 
 <h2>Operating this piece</h2>
 
@@ -423,22 +444,55 @@
   </li>
 </ol>
 
-<h3 id="deregister-an-old-task-definition-revision">Deregister an old task-definition revision</h3>
+<h3 id="deregister-an-old-task-definition-revision">
+  Prune orphan task-definition revisions (quarterly)
+</h3>
+
+<p>
+  Revisions accumulate from two directions and are never adopted from one of them. Every CI deploy
+  registers a revision and points its service at it; every Terraform edit that touches a task
+  definition registers one too, but <code>ignore_changes = [task_definition]</code> on the services
+  means Terraform's revision sits unused until the next CI deploy supersedes it. ECR has a lifecycle
+  policy for images; task definitions have no equivalent, so nothing prunes them. They cost nothing
+  and break nothing — this is housekeeping, run about once a quarter, not an incident response.
+</p>
+
 <ol>
   <li>
-    AWS never deletes task-def revisions, only marks them <code>INACTIVE</code>. Old revisions
-    accumulate but cost nothing.
-  </li>
-  <li>
-    To prune:
-    <code>aws ecs list-task-definitions --family-prefix mythrun-&lt;env&gt;-api</code> then
+    For each family — <code>api</code>, <code>worker</code>, <code>migrate</code>,
+    <code>smoke-prep-pipeline</code>, <code>bootstrap-db</code> — find what is actually in use.
+    Service-backed families answer directly:
     <code
-      >aws ecs deregister-task-definition --task-definition mythrun-&lt;env&gt;-api:&lt;N&gt;</code
+      >aws ecs describe-services --cluster mythrun --services mythrun-&lt;env&gt;-api --query
+      'services[].taskDefinition'</code
     >.
   </li>
   <li>
-    Do not deregister the revision currently pinned to a running service — describe the service
-    first to confirm the revision numbers don't overlap.
+    The families with no service (<code>migrate</code>, <code>smoke-prep-pipeline</code>,
+    <code>bootstrap-db</code>) are invoked by <code>run-task</code> against whatever revision is
+    latest at invocation time, so keep the newest and treat the rest as prunable.
+  </li>
+  <li>
+    List the active revisions:
+    <code
+      >aws ecs list-task-definitions --family-prefix mythrun-&lt;env&gt;-api --status ACTIVE</code
+    >.
+  </li>
+  <li>
+    Deregister each revision that is neither in use nor the newest:
+    <code
+      >aws ecs deregister-task-definition --task-definition mythrun-&lt;env&gt;-api:&lt;N&gt;</code
+    >. Keep a few recent ones — they are the fastest rollback path if a deploy goes bad.
+  </li>
+  <li>
+    Never deregister the revision a running service is pinned to. ECS will not stop the running
+    tasks, but the service can no longer scale or replace them, and the failure surfaces later as an
+    unexplained inability to recover.
+  </li>
+  <li>
+    Deregistering is reversible in effect but not in identity: revisions go
+    <code>INACTIVE</code> rather than being deleted, and AWS does eventually remove INACTIVE
+    revisions on its own schedule. Do not plan to re-activate one.
   </li>
 </ol>
 
@@ -627,6 +681,70 @@
     </tr>
   </tbody>
 </table>
+
+<h3>Billing alarms</h3>
+
+<p>
+  <code>billing-alarms.tf</code> holds four CloudWatch log-metric-filters over the API log group and
+  an alarm on each, publishing to the SNS topic passed in as <code>alerts_topic_arn</code> (staging
+  wires <code>aws_sns_topic.alerts</code>). Everything matches structured pino fields —
+  <code>$.event</code> for the boot probe's events, <code>$.msg</code> for the dispatcher's, since
+  that one logs through Fastify's request logger where the event name is the message key. Metrics
+  land in the <code>Mythrun/&lt;env&gt;/Billing</code> namespace.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Alarm</th>
+      <th>Fires on</th>
+      <th>Response</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>billing-probe-config-failure</code></td>
+      <td>
+        <code>billing.probe_failed</code>, <code>billing.probe_portal_failed</code>,
+        <code>billing.probe_webhook_version_failed</code>
+      </td>
+      <td>
+        Stripe config drifted; the task is crashlooping and ECS is rolling back. Fix the Dashboard.
+      </td>
+    </tr>
+    <tr>
+      <td><code>billing-probe-auth-failure</code></td>
+      <td><code>billing.probe_auth_failed</code></td>
+      <td>Rotate or re-scope <code>STRIPE_SECRET_KEY</code>.</td>
+    </tr>
+    <tr>
+      <td><code>billing-probe-transient-failure</code></td>
+      <td>
+        <code>billing.probe_transient_failed</code>,
+        <code>billing.probe_portal_transient_failed</code>
+      </td>
+      <td>Stripe unreachable. Check status.stripe.com and the task's egress path.</td>
+    </tr>
+    <tr>
+      <td><code>stripe-webhook-api-version-mismatch</code></td>
+      <td><code>stripe_webhook_api_version_mismatch</code></td>
+      <td>
+        <strong>Revenue incident</strong> — paid customers are not being credited. Realign the
+        endpoint's version, then replay the dropped events.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<aside class="wiki-rationale">
+  <strong>Alarms live in the module, not the environment root</strong> — they sit beside the log
+  group they filter, so a future production composition inherits them by construction. An alarm that
+  has to be remembered per-environment is an alarm that will be missing in the environment that
+  matters. Each metric transformation sets <code>default_value = 0</code> so the alarms hold a real
+  OK state and self-recover rather than parking in <code>INSUFFICIENT_DATA</code>, and alarm
+  creation is skipped entirely when <code>alerts_topic_arn</code> is empty so a fresh environment
+  can apply before its topic exists.
+</aside>
 
 <h2>Source</h2>
 

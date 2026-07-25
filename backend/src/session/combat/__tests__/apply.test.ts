@@ -380,6 +380,7 @@ function makeFakeLedger(rows: Map<string, FakeRow>, journal: LedgerEventInput[] 
   return {
     findLedgerCharacterByName: (_sessionId, name) => Promise.resolve(resolveFind(name)),
     readPartyLedgerSnapshot: () => Promise.resolve(snapshot()),
+    readConditions: () => Promise.resolve([]),
     writeHp: (characterId, newHp) => Promise.resolve(setHp(characterId, newHp)),
     findLedgerEvent: (turnId, toolCallId, characterId) =>
       Promise.resolve(hasEvent(turnId, toolCallId, characterId)),

@@ -171,6 +171,7 @@ function fakeLedger(overrides: Partial<LedgerOps> = {}): LedgerOps {
     writeLedgerEvent: unimplemented('writeLedgerEvent'),
     findLedgerEvent: unimplemented('findLedgerEvent'),
     readPartyLedgerSnapshot: unimplemented('readPartyLedgerSnapshot'),
+    readConditions: () => Promise.resolve([]),
     ...overrides,
   }
 }

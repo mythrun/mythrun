@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Dialog as RadixDialog } from 'radix-ui'
 import type { DrawerProps } from '@mythrun/client-core/contract'
 import { cn } from '../../lib/cn.ts'
@@ -30,6 +30,8 @@ import { Icon } from '../Icon/Icon.tsx'
 //     is driven by the close edge, returning focus to the handle.
 //   • DismissableLayer stays mounted while closed, so its Esc/outside-click
 //     dismissal is suppressed there — no spurious onOpenChange(false).
+//   • The SUMMON GESTURE's own dismissal is suppressed (`useSummonGuard`) —
+//     see that hook for why the drawer, not its consumers, owns that guard.
 //   • The closed sheet keeps `role="dialog"` off the a11y tree: `role="none"`
 //     while closed (belt to inert's braces), Radix's `dialog` while open.
 //
@@ -67,6 +69,55 @@ function useEdgeFocus(
       }
     }
   }, [open, contentRef, handleRef])
+}
+
+// THE SUMMON GUARD (myth-cwhdk) — the drawer survives the gesture that opened
+// it, without anyone having to time anything.
+//
+// Radix Dialog (≥1.1.17, `deferPointerDownOutside`) ARMS outside-dismiss at a
+// gesture's pointerdown and DELIVERS it at that gesture's trailing click. A
+// consumer that summons the drawer from the surface behind it — the reveal's
+// graph-node tap, which selects on pointerup — therefore opens a sheet that the
+// same gesture's click immediately dismisses: a one-gesture open→shut flash on
+// real pointers (caught live in D5). D5 worked around it consumer-side by
+// deferring the summon one macrotask, which is a race won by a hair rather than
+// a guarantee, and every future consumer would have had to rediscover it.
+//
+// The guard is gesture IDENTITY, not elapsed time. Radix hands the outside-
+// dismiss the POINTERDOWN that armed it (`detail.originalEvent`), so the drawer
+// remembers the pointerdown that was in flight when it opened and refuses any
+// dismissal carrying that same event object. A dismissal from any LATER gesture
+// carries a different pointerdown and passes through untouched. Nothing here
+// depends on when the click lands relative to React's commit — the answer is
+// the same whether it is the next microtask or a second later.
+//
+// The document listener only exists while the drawer is CLOSED: the summoning
+// pointerdown is by definition one that happened before it opened.
+function useSummonGuard(open: boolean): (event: { detail: { originalEvent: Event } }) => boolean {
+  const lastPointerDownRef = useRef<Event | null>(null)
+  const summonGestureRef = useRef<Event | null>(null)
+
+  useEffect(() => {
+    if (open) return
+    const remember = (event: Event): void => {
+      lastPointerDownRef.current = event
+    }
+    document.addEventListener('pointerdown', remember, true)
+    return () => {
+      document.removeEventListener('pointerdown', remember, true)
+    }
+  }, [open])
+
+  // On the OPEN edge, adopt whatever gesture was in flight; on close, forget it
+  // (so the sheet never holds a stale event — and its target — alive).
+  useEffect(() => {
+    summonGestureRef.current = open ? lastPointerDownRef.current : null
+  }, [open])
+
+  return useCallback((event: { detail: { originalEvent: Event } }): boolean => {
+    const summon = summonGestureRef.current
+    return summon !== null && event.detail.originalEvent === summon
+  }, [])
 }
 
 // The sheet: full-width paper at the modal tier, hidden by a pure transform
@@ -120,6 +171,7 @@ export function Drawer({
   const contentRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<HTMLButtonElement>(null)
   useEdgeFocus(resolvedOpen, contentRef, handleRef)
+  const isSummonGesture = useSummonGuard(resolvedOpen)
 
   return (
     <RadixDialog.Root modal={false} open={resolvedOpen} onOpenChange={handleOpenChange}>
@@ -147,8 +199,10 @@ export function Drawer({
           onEscapeKeyDown={(e: KeyboardEvent) => {
             if (!resolvedOpen) e.preventDefault()
           }}
-          onInteractOutside={(e: Event) => {
-            if (!resolvedOpen) e.preventDefault()
+          onInteractOutside={(e) => {
+            // Closed: the force-mounted layer's dismissal is spurious. Open:
+            // everything dismisses EXCEPT the gesture that did the summoning.
+            if (!resolvedOpen || isSummonGesture(e)) e.preventDefault()
           }}
           className={SHEET_CLASS}
         >
@@ -163,8 +217,21 @@ export function Drawer({
             ) : null}
           </div>
           {/* The body owns the scrolling (not the sheet), so the header stays
-              put and the children's scroll position survives close→open. */}
-          <div className="min-h-0 flex-1 overflow-y-auto p-[var(--space-4)]">{children}</div>
+              put and the children's scroll position survives close→open — but
+              it is a flex COLUMN (myth-1k9qt), so a child that declares itself
+              a fill (`flex-1 min-h-0` — `<Box grow>`) is handed the sheet's
+              height and scrolls INTERNALLY instead. That matters for children
+              with per-page scroll memory: while the body was the only scroller,
+              the wiki's own scroll container never moved, so every `scrollTop`
+              it captured read 0 and restore was silently inert on mobile.
+              Children that don't opt in are laid out and scrolled exactly as
+              before (a column flex item keeps its content height). */}
+          <div
+            data-mythrun-drawer-body=""
+            className="flex min-h-0 flex-1 flex-col overflow-y-auto p-[var(--space-4)]"
+          >
+            {children}
+          </div>
         </RadixDialog.Content>
         {/* The handle — AFTER the sheet in DOM order so it paints on top at the
             same z tier. Pinned at the right edge, vertically centered, in BOTH

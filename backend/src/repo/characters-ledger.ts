@@ -152,7 +152,10 @@ interface SnapshotFeature {
   readonly recharge: string
 }
 
-interface SnapshotCondition {
+/** Structurally identical to the contract's `ActiveCondition` (the wire shape
+ *  the `ledger_update` frame carries). Kept as its own name because this is the
+ *  DB projection; the publisher maps one onto the other. */
+export interface SnapshotCondition {
   readonly condition: string
   readonly level: number | null
 }
@@ -203,6 +206,13 @@ export interface LedgerOps {
     level: number | null,
   ): Promise<ConditionWriteResult>
   clearCondition(characterId: string, condition: ConditionName): Promise<ConditionWriteResult>
+  /** myth-hlydp: the character's CURRENT active-condition set, ordered by name.
+   *  A narrow single-query read — the `ledger_update` emit sites on the hot HP
+   *  path need exactly this and must not pay for a whole `readPartyLedgerSnapshot`
+   *  (which fans out per character across slots / features / spells / equipment).
+   *  Sites that ALREADY hold a post-mutation snapshot reuse its `conditions`
+   *  instead of calling this. */
+  readConditions(characterId: string): Promise<readonly SnapshotCondition[]>
   shortRest(sessionId: string, requests: readonly ShortRestRequest[]): Promise<void>
   longRest(sessionId: string): Promise<void>
   /** The rest-relevant per-participant numbers (incl. pre-derived CON mod) the
@@ -474,6 +484,19 @@ export function charactersLedgerNs(c: ClientLike): LedgerOps {
         [characterId, condition],
       )
       return (res.rowCount ?? 0) > 0 ? { outcome: 'changed' } : { outcome: 'noop' }
+    },
+
+    /** myth-hlydp: the character's active-condition set. Same projection and
+     *  ORDER BY as readPartyLedgerSnapshot's per-character conditions read, so
+     *  the two sources of `activeConditions` are byte-identical for a given
+     *  character state. */
+    readConditions: async (characterId): Promise<readonly SnapshotCondition[]> => {
+      const res = await c.query<{ condition: string; level: number | null }>(
+        `SELECT condition, level FROM character_conditions
+          WHERE character_id = $1 ORDER BY condition ASC`,
+        [characterId],
+      )
+      return res.rows.map((r) => ({ condition: r.condition, level: r.level }))
     },
 
     /** Party-wide short rest — pure writes from the resolver-rolled totals.

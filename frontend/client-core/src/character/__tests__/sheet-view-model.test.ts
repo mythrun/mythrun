@@ -96,7 +96,8 @@ describe('sheetViewModel — caster spells panel', () => {
     )
     expect(curated.spells).toEqual([
       { name: 'Cantrips', gloss: 'Guidance' },
-      { name: 'Level 1', gloss: 'Cure Wounds · Detect Magic' },
+      // NBSP-bound separator (myth-vshy0): '·' binds to the FOLLOWING name.
+      { name: 'Level 1', gloss: 'Cure Wounds ·\u00A0Detect Magic' },
       { name: 'Level 2', gloss: 'Hold Person' },
     ])
   })
@@ -106,12 +107,21 @@ describe('sheetViewModel — stats stripe + full sheet', () => {
   it('always shows AC/HP/Proficiency and adds Hit Die + Speed when present', () => {
     const { curated } = sheetViewModel(baseSheet({ hitDie: 8, speed: 30 }))
     expect(curated.stats).toEqual([
-      { label: 'AC', value: '14' },
-      { label: 'HP', value: '21' },
-      { label: 'Proficiency', value: '+2' },
-      { label: 'Hit Die', value: 'd8' },
-      { label: 'Speed', value: '30 ft' },
+      { key: 'ac', label: 'AC', value: '14' },
+      { key: 'hp', label: 'HP', value: '21' },
+      { key: 'proficiency', label: 'Proficiency', value: '+2' },
+      { key: 'hitDie', label: 'Hit Die', value: 'd8' },
+      { key: 'speed', label: 'Speed', value: '30 ft' },
     ])
+  })
+
+  // myth-qeyqq: every cell carries a STRUCTURAL key alongside its display
+  // label, so a consumer that needs to find one cell (the in-session live-HP
+  // overlay) matches on identity instead of on the copy. Renaming a label is
+  // then a copy change, not a silent behaviour change.
+  it('gives every cell a structural key, independent of its display label', () => {
+    const { curated } = sheetViewModel(baseSheet({ hitDie: 8, speed: 30 }))
+    expect(curated.stats.map((s) => s.key)).toEqual(['ac', 'hp', 'proficiency', 'hitDie', 'speed'])
   })
 
   it('omits Hit Die and Speed when absent', () => {

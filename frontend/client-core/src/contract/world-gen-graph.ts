@@ -141,13 +141,32 @@ export interface WorldGenGraphProps extends Omit<BaseProps, 'children'> {
    *  drift). Omit it (the generation graph) and no legend renders. The DS owns no
    *  copy: a kind absent from the map is left out of the key. */
   legend?: GraphLegendLabels
+  /** The worldgen run this graph belongs to — the key into client-core's SESSION
+   *  LAYOUT CACHE (ux-run3 myth-aftau; production passes the campaign id). Supplying
+   *  it makes the layout WORLD state instead of render state: pin-on-settle writes
+   *  each frozen placement (and its worn label side) into the cache, the run's one
+   *  terrain seed is rolled here, and a REMOUNT — the player toggling back from the
+   *  calm wait, or returning to the route — pins every cached node straight back
+   *  where they last saw it. New entities still settle freely around that pinned
+   *  constellation, so a later visit reads as the same world plus accretion rather
+   *  than a re-roll. Omitted (the reveal, the stories) → render-scoped layout, the
+   *  pre-run3 behaviour. */
+  layoutCacheKey?: string
 }
 
 /** A resolved kind → display-label map for the graph legend (myth-466cy). Keyed by
  *  entity kind (`faction`/`location`/`npc`/`item`, plus `pc`/`world` when a world
  *  carries them); values are i18n'd strings the consumer supplies (the DS owns no
  *  copy). A kind with no entry is omitted from the key. */
-export type GraphLegendLabels = Partial<Record<string, string>>
+export type GraphLegendLabels = Partial<Record<string, string>> & {
+  /** RESERVED — not an entity kind (ux-run3): the label for the map's HOLLOW
+   *  outline marks, nodes whose name has tier-retired at the current density
+   *  (present on the map, named in the wiki index — see canvas-draw's `hollow`).
+   *  Supplying it appends an outline-swatch entry at the END of the key; omit it
+   *  and the hollow state goes undocumented (the pre-run3 key, e.g. the
+   *  generation graph). */
+  hollow?: string
+}
 
 /**
  * The GENERATION graph's screen-reader model (MYT-89 Phase E, E1). Every field is

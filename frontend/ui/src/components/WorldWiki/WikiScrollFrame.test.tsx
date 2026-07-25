@@ -4,10 +4,12 @@ import { fireEvent, render } from '@testing-library/react'
 import { FADE_BAND_PX, WikiScrollFrame } from './WikiScrollFrame.tsx'
 
 // WikiScrollFrame is the wiki's reading scroll region with an overflow affordance
-// (myth-lcvv2): a persistent scrollbar + shallow edge fades that announce a
-// definition running past the panel edge. Since ux-run2 (myth-9dcfq) the fade is
-// a CSS MASK on the scroll element itself — never a paint overlay — clamped to a
-// band shallower than one text line.
+// (myth-lcvv2): a persistent scrollbar + edge fades that announce a definition
+// running past the panel edge. Since ux-run2 (myth-9dcfq) the fade is a CSS MASK
+// on the scroll element itself — never a paint overlay. Since ux-run3 (myth-02zhi)
+// the band spans one full reading line and the scroll element carries a one-line
+// bottom padding floor: a line reads as fully shown or fully hidden, never a
+// razor slice, and the last line never sits flush at the fold.
 
 /** Stub the scroll metrics jsdom doesn't lay out, then fire a scroll so the
  *  edge hook recomputes against them. */
@@ -87,11 +89,27 @@ describe('WikiScrollFrame', () => {
     expect(el.getAttribute('data-scroll-edges')).toBe('top')
   })
 
-  it('keeps the fade band shallower than one text line — a full row can never ghost (ux-run2 myth-9dcfq)', () => {
-    // The wiki's tightest row type is the glossary term at text-sm (14px) with
-    // its default ~1.43 leading → ~20px lines. The band must stay strictly under
-    // that: it may graze the SLICED edge of the line the fold cuts, never span a
-    // whole line (the old 32px band digested entire tappable rows).
-    expect(FADE_BAND_PX).toBeLessThan(20)
+  it('spans one full reading line — the fold-cut line dissolves, never slices (ux-run3 override of myth-9dcfq)', () => {
+    // The wiki's reading prose is 16px at 1.6 leading → 25.6px lines. Run-3
+    // OVERRODE the earlier sub-line clamp (12px): a band shallower than a line
+    // can only graze the sliced edge, which the run-3 critics saw as either an
+    // invisible cue (the chargen rails' "no fade, hard clip") or a razor slice
+    // through descenders (the reveal pane) — verified against the live DOM,
+    // where the 12px mask WAS applied yet read as no affordance at all. The
+    // band must swallow the whole cut line before the razor edge…
+    expect(FADE_BAND_PX).toBeGreaterThanOrEqual(Math.ceil(16 * 1.6))
+    // …while staying under the 32px wash that ghosted whole tappable rows
+    // (myth-9dcfq's original failure). The padding floor below — not an even
+    // deeper band — carries the never-flush duty at end-of-scroll.
+    expect(FADE_BAND_PX).toBeLessThan(32)
+  })
+
+  it('carries a one-line bottom padding floor so the last line never sits flush at the fold (ux-run3)', () => {
+    // At end-of-scroll the bottom fade clears by design — the floor is what
+    // keeps the final line a full line-height clear of the border there. It
+    // rides inline off the SAME constant as the band (one source of truth; a
+    // consumer contentClassName can never defeat it).
+    const { getByTestId } = render(<WikiScrollFrame data-testid="scroll">x</WikiScrollFrame>)
+    expect(getByTestId('scroll').style.paddingBottom).toBe(`${String(FADE_BAND_PX)}px`)
   })
 })

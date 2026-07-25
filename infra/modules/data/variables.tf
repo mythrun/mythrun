@@ -47,3 +47,14 @@ variable "redis_engine_version" {
   type        = string
   default     = "7.1"
 }
+
+variable "redis_num_cache_clusters" {
+  description = "Number of nodes in the replication group: 1 primary plus (n-1) read replicas. Promoted from a literal so the memory alarms can fan out over every node without waiting on a computed attribute (see redis_member_cluster_ids in outputs.tf). Week 0 §7.2's production sizing adds one replica; raising this ALSO requires automatic_failover_enabled = true, which is a separate deliberate change."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.redis_num_cache_clusters >= 1
+    error_message = "redis_num_cache_clusters must be at least 1 (the primary)."
+  }
+}

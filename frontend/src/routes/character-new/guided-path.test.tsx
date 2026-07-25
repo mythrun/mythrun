@@ -223,6 +223,26 @@ describe('GuidedPath — journey signposting + situation recap (MYT-102)', () =>
     expect(rail.getByText('Arrival').closest('[data-state]')?.getAttribute('data-state')).toBe('now')
   })
 
+  it('holds the grounding field + its Continue in frame: detail floor, gated, cost disclosed', () => {
+    // ux-run3 myth-21lpi / myth-7ceqw / myth-g3mt6 — the last screen of the
+    // guided flow stacks a rail, a recap card and a long DM invitation above
+    // its field, so the field takes the DETAIL floor (the essay floor walked
+    // the field's own bottom edge and the commit control past a 1280x720
+    // frame), Continue stands down while the field is empty, and the press
+    // that spends discloses what it costs.
+    const { container } = renderGuided({ startingLevel: 3, situation: SITUATION })
+    buildToNotes(container)
+    answerAndContinue('')
+
+    const prompt = within(screen.getByTestId('freeform-prompt'))
+    expect(prompt.getByRole('textbox').style.minHeight).toContain('3 * 1lh')
+    const continueBtn = prompt.getByRole('button', { name: q('characterCreate.freeform.continue') })
+    expect(continueBtn.hasAttribute('disabled')).toBe(true)
+    expect(screen.getByTestId('freeform-submit-hint').textContent).toBe(
+      q('characterCreate.freeform.cost'),
+    )
+  })
+
   it('renders the situation recap above the grounding prompt when a situation is supplied', () => {
     const { container } = renderGuided({ startingLevel: 3, situation: SITUATION })
     buildToNotes(container)
