@@ -209,6 +209,11 @@ function fakeSessionState(opts: {
     incrUsageSt: unused('incrUsageSt'),
     totalUsageTokens: unused('totalUsageTokens'),
     resetSessionSpend: unused('resetSessionSpend'),
+    // myth-nu0hm additions — the session-progress floor. The turn WORKER reads
+    // and raises it around the controller (on the turn_end beat); the controller
+    // only exposes this turn's raw contextTokens, so these stay throwing stubs.
+    progressFraction: unused('progressFraction'),
+    raiseProgressFraction: unused('raiseProgressFraction'),
     // MYT-74a T11 additions — the end-of-session flow owns these; the controller
     // never calls them, so they stay as throwing stubs.
     tryMarkEnding: unused('tryMarkEnding'),
@@ -634,6 +639,59 @@ describe('SessionController (PG-direct, MYT-68 §3.7)', () => {
 
     // Unchanged from the pre-turn snapshot — the omitted-usage render added 0.
     expect(flushed.value).toEqual<FlushedTurnState>({ usage: { input: 11, output: 13 } })
+  })
+
+  // ── myth-nu0hm — the FT context-fill reading the progress fraction uses ───
+  it('contextTokens is null BEFORE the render (no reading to report yet)', async () => {
+    const { controller } = build()
+    await controller.loadFromRedis()
+    expect(controller.contextTokens()).toBeNull()
+  })
+
+  it('contextTokens exposes the render’s final-step input tokens', async () => {
+    const withContext: AssistantMessage = {
+      role: 'assistant',
+      parts: [{ kind: 'text', text: 'The room is silent.' }],
+      usage: { input: 5, output: 7 },
+      contextTokens: 420_000,
+    }
+    const { controller } = build({ assistant: withContext })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    expect(controller.contextTokens()).toBe(420_000)
+  })
+
+  it('contextTokens is null when the render reported none', async () => {
+    // The FT's usage promise never resolved. Not an error — the progress
+    // fraction falls back to the cumulative-token term alone.
+    const noContext: AssistantMessage = {
+      role: 'assistant',
+      parts: [{ kind: 'text', text: 'The room is silent.' }],
+      usage: { input: 5, output: 7 },
+    }
+    const { controller } = build({ assistant: noContext })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    expect(controller.contextTokens()).toBeNull()
+  })
+
+  it('contextTokens is a LEVEL, not an accumulator — it does not fold in prior turns', async () => {
+    // The context term is "how full the window got on the LATEST turn", so a
+    // pre-existing usage accumulator must not bleed into it. Monotonicity is
+    // applied downstream over the published fraction, never here.
+    const withContext: AssistantMessage = {
+      role: 'assistant',
+      parts: [{ kind: 'text', text: 'The room is silent.' }],
+      usage: { input: 5, output: 7 },
+      contextTokens: 1_000,
+    }
+    const { controller } = build({
+      assistant: withContext,
+      turnState: { summary: '', usage: { input: 900_000, output: 50_000 } },
+    })
+    await controller.loadFromRedis()
+    await controller.processDmTurn(1)
+    expect(controller.contextTokens()).toBe(1_000)
   })
 
   // ── MYT-73 §2.4 — the post-turn Scribe job assembly + enqueue ─────────────

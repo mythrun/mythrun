@@ -170,6 +170,7 @@ function makeSession(
     thinking: false,
     typingUserIds: [],
     ended: false,
+    progress: null,
     sendMessage: vi.fn(),
     summonDm: vi.fn(),
     endSession: vi.fn(),

@@ -106,6 +106,7 @@ function makeSession(overrides: Partial<SessionView> = {}): SessionView {
     thinking: false,
     typingUserIds: [],
     ended: false,
+    progress: null,
     sendMessage: vi.fn(),
     summonDm: vi.fn(),
     endSession: vi.fn(),

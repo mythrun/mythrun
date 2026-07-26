@@ -135,6 +135,31 @@ export interface ParticipantSummary {
   characterName: string
 }
 
+/**
+ * myth-nu0hm — how far through its mechanical ceiling this session is.
+ *
+ * `fraction` is 0..1, MONOTONIC NON-DECREASING within a session, and COARSE
+ * (always an exact multiple of 0.05). It is the max of the server's mechanical
+ * ceilings — cumulative token spend against the session budget, and the Fast
+ * Thinker's context fill against its usable window — because the session ends
+ * when EITHER is reached. Computed in backend/src/session/session-progress.ts.
+ *
+ * PURELY MECHANICAL, and deliberately so: it is the one progress number the
+ * PLAYER sees, so under enforced ignorance it may never encode plot state, NPC
+ * secrets, or any narrative judgment about how close the story is to an ending.
+ * The narrative side of converging lives with the SlowThinker, on the secret
+ * side of the boundary, and never rides this field.
+ *
+ * A client should render it as an approximate "how much evening is left"
+ * signal, never as a countdown to an exact moment: the fraction can hold flat
+ * across several turns, and it can jump a bucket or two after a token-heavy
+ * combat turn. It must never be shown decreasing — the server guarantees it
+ * won't, and a client that interpolates should clamp the same way.
+ */
+export interface SessionProgress {
+  readonly fraction: number
+}
+
 // Client -> Server payloads. Discriminated on `type`.
 export type ClientFrame =
   | { type: 'player_message'; text: string }
@@ -164,7 +189,12 @@ export type ClientFrame =
 // (that would corrupt reconnect-replay ordering). Per architecture overview
 // §5.2, which lists no seq on the presence frames.
 export type ServerFrame =
-  | { type: 'session_ready' }
+  // myth-nu0hm: `progress` rides session_ready so a client that has just joined
+  // is not blank until the next turn completes — the fraction is session-scoped
+  // state the server already holds, so the very first frame can carry it.
+  // OPTIONAL and additive: absent on a brand-new session (nothing burned yet)
+  // and whenever the read fails, and no existing consumer breaks by ignoring it.
+  | { type: 'session_ready'; progress?: SessionProgress }
   | {
       type: 'player_joined'
       userId: string
@@ -187,6 +217,18 @@ export type ServerFrame =
       messages: ServerFrame[]
       participants: ParticipantSummary[]
       mode: 'exploration' | 'combat'
+      // myth-nu0hm: `progress` rides session_reconnect too, and in practice this
+      // — not `session_ready` — is the arm that reaches a real client. The
+      // shipped web client connects with `seedLastSeq: 0`, so it always puts
+      // `lastSeq=0` on the upgrade URL; the server's `parseLastSeq` treats 0 as
+      // a valid seq, takes the RECONNECT branch, and `session_ready` is never
+      // sent. Carrying the fraction on only the two originally-pinned frames
+      // would have left every real join blank until the first turn completed.
+      //
+      // ABSENT on the corrected-turn whole-turn-replace, which reuses this frame
+      // kind (turn-publisher's `turnReplace`) but makes no progress statement.
+      // Absence means "no statement" — hold the last known value, don't reset.
+      progress?: SessionProgress
     }
   | { type: 'error'; message: string }
   // MYT-66 DM-turn streaming frames (server -> client only). `turnId` is stable
@@ -195,7 +237,12 @@ export type ServerFrame =
   // presence-frame rule above.
   | { type: 'dm_thinking'; turnId: string }
   | { type: 'text_delta'; turnId: string; text: string }
-  | { type: 'turn_end'; turnId: string }
+  // myth-nu0hm: `progress` rides turn_end because that frame already fires
+  // exactly once per turn, AFTER persist + flush — the natural beat on which
+  // the mechanical counters have just moved. OPTIONAL: absent when the
+  // computation fails, so a progress hiccup can never cost the table a
+  // turn_end (which is what tells the client the turn is over).
+  | { type: 'turn_end'; turnId: string; progress?: SessionProgress }
   | { type: 'turn_error'; turnId: string; message: string }
   // MYT-68 DM-turn mechanical frames. Live-streamed during a turn (no seq) and
   // replayed from session_messages rows on reconnect (carrying the row's seq).

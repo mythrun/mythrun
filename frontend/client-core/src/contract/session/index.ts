@@ -22,6 +22,12 @@ export type { CardItem, RollPhase, RollRevealView } from '../../session/roll-rev
 // of the barrel, mirroring TranscriptItem vs. emptyTranscript.
 export type { TableTalkView } from '../../session/transcript-presentation.ts'
 
+// myth-atxhx session-progress band (session/session-progress.ts) — the coarse
+// position vocabulary SessionProgressLine renders. TYPE only; the runtime
+// derivations (progressBand / canOfferEnd / frameProgressFraction) stay out of
+// the barrel, mirroring TranscriptItem vs. emptyTranscript.
+export type { SessionProgressBand } from '../../session/session-progress.ts'
+
 // Prop contracts — one per @mythrun/ui play component (Tasks 9–14).
 export type { MessageStreamProps } from './message-stream-props.ts'
 export type { DmMessageProps } from './dm-message-props.ts'
@@ -35,6 +41,8 @@ export type { ThinkingIndicatorProps } from './thinking-indicator-props.ts'
 export type { SessionStartBeatProps } from './session-start-beat-props.ts'
 // myth-ep74g — the between-sessions preparing hold prop contract.
 export type { SessionPreparingProps } from './session-preparing-props.ts'
+// myth-atxhx — the quiet session-position line (a line, never a meter).
+export type { SessionProgressLineProps } from './session-progress-line-props.ts'
 
 // MYT-93 dice-moment prop contracts (RollCard / DieSpin — Tasks 4/5). RollCardLabels is
 // the resolved bundle the play route threads through MessageStream to each card.

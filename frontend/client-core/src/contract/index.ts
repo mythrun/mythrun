@@ -285,6 +285,10 @@ export type {
   ThinkingIndicatorProps,
   SessionStartBeatProps,
   SessionPreparingProps,
+  // myth-atxhx — the quiet session-position readout: a coarse BAND + its resolved
+  // word. The cost-derived fraction deliberately does not cross this surface.
+  SessionProgressBand,
+  SessionProgressLineProps,
   CardItem,
   RollPhase,
   RollRevealView,

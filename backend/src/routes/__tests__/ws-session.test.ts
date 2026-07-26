@@ -440,6 +440,9 @@ describe('ws-session route (integration)', () => {
       const types = frames.map((f) => f.type)
       expect(types).toContain('session_ready')
       expect(types).toContain('player_joined')
+      // myth-nu0hm — a fresh session has published no progress, so the OPTIONAL
+      // field is absent. Absence means "no statement"; a 0 would be a claim.
+      expect(frames.find((f) => f.type === 'session_ready')).not.toHaveProperty('progress')
       const joined = frames.find((f) => f.type === 'player_joined')
       expect(joined).toMatchObject({ userId, displayName })
       // player_joined is a seq-LESS presence frame — it must NOT carry a seq
@@ -449,6 +452,113 @@ describe('ws-session route (integration)', () => {
       expect(await sessionState.countPresence(campaignId)).toBe(1)
       // A returning player cancels any pending suspend on connect.
       expect(suspendQueue.removes).toContain(`suspend-${sessionId}`)
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('myth-nu0hm: session_ready carries the stored progress fraction to a joining client', async () => {
+    // A player joining mid-session must not sit at empty until the next turn
+    // completes — the floor is session-scoped state the server already holds,
+    // so the very first frame can carry it.
+    const sessionState = makeSessionState(redis, KEY_PREFIX)
+    await sessionState.raiseProgressFraction(campaignId, 0.65)
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}`)
+    try {
+      const frames = await collectFrames(ws, 2)
+      const ready = frames.find((f) => f.type === 'session_ready')
+      expect(ready).toMatchObject({ progress: { fraction: 0.65 } })
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('myth-nu0hm: session_reconnect carries the fraction — the arm the shipped client actually hits', async () => {
+    // The shipped web client connects with seedLastSeq:0, so it always puts
+    // `lastSeq=0` on the upgrade URL; parseLastSeq treats 0 as a valid seq and
+    // handleConnect takes the RECONNECT branch. session_ready is therefore never
+    // sent to a real player — if the fraction rode only that frame, every real
+    // join would sit blank until the first turn completed.
+    const sessionState = makeSessionState(redis, KEY_PREFIX)
+    await sessionState.raiseProgressFraction(campaignId, 0.4)
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      expect(first?.type).toBe('session_reconnect')
+      expect(first).toMatchObject({ progress: { fraction: 0.4 } })
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('myth-nu0hm: session_reconnect OMITS the fraction on a session with no progress yet', async () => {
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      expect(first?.type).toBe('session_reconnect')
+      expect(first).not.toHaveProperty('progress')
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  // myth-nu0hm — the progress read is defensive on BOTH connect arms: a Redis
+  // blip must degrade the readout, never the join. Without these, a transient
+  // failure on the progress key would take out session entry entirely, which is
+  // a far worse outcome than a missing band.
+  async function rebuildAppWithFailingProgress(): Promise<void> {
+    if (app) await app.close()
+    const failing = {
+      ...makeSessionState(redis, KEY_PREFIX),
+      progressFraction: (): Promise<number> => Promise.reject(new Error('redis down')),
+    }
+    app = Fastify({ logger: false })
+    await app.register(websocket)
+    const deps: WsSessionDeps = {
+      repo: createRepo(pool),
+      sessionState: failing,
+      hub,
+      suspendQueue,
+      containerId: CONTAINER_ID,
+      redisRealtime: redis,
+      redisKeyPrefix: KEY_PREFIX,
+      dmTriggerQueue: noopDmTriggerQueueLocal(),
+      sessionTurnQueue: noopTurnQueue(),
+      triggerState: makeTriggerState(redis, KEY_PREFIX),
+      turnPublisher: createTurnPublisher(redis, KEY_PREFIX),
+      reconcileQueue: noopReconcileQueue(),
+      lock: createSessionLock(redis, KEY_PREFIX, 45_000),
+    }
+    await app.register(wsSessionRoutes, deps)
+    await app.ready()
+  }
+
+  it('myth-nu0hm: a failed progress read still sends session_ready (degrade the band, not the join)', async () => {
+    await rebuildAppWithFailingProgress()
+    const ticket = await mint()
+    // No lastSeq at all -> the fresh-connect arm, the one that sends session_ready.
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}`)
+    try {
+      const frames = await collectFrames(ws, 1)
+      const ready = frames.find((f) => f.type === 'session_ready')
+      expect(ready).toBeDefined()
+      expect(ready).not.toHaveProperty('progress')
+    } finally {
+      ws.terminate()
+    }
+  })
+
+  it('myth-nu0hm: a failed progress read still sends session_reconnect', async () => {
+    await rebuildAppWithFailingProgress()
+    const ticket = await mint()
+    const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}&lastSeq=0`)
+    try {
+      const [first] = await collectFrames(ws, 1)
+      expect(first?.type).toBe('session_reconnect')
+      expect(first).not.toHaveProperty('progress')
     } finally {
       ws.terminate()
     }
@@ -1931,6 +2041,7 @@ function makeStubSessionState(): {
   getCombatState: ReturnType<typeof vi.fn>
   clearCombatState: ReturnType<typeof vi.fn>
   tryMarkResumed: ReturnType<typeof vi.fn>
+  progressFraction: ReturnType<typeof vi.fn>
 } {
   return {
     nextSeq: vi.fn().mockResolvedValue(1),
@@ -1954,6 +2065,10 @@ function makeStubSessionState(): {
     getCombatState: vi.fn().mockResolvedValue(null),
     clearCombatState: vi.fn().mockResolvedValue(undefined),
     tryMarkResumed: vi.fn().mockResolvedValue(true),
+    // myth-nu0hm: the fresh-connect path reads the session-progress floor to
+    // put on session_ready. 0 → the OPTIONAL field is omitted, which is the
+    // shape these unit tests assert against.
+    progressFraction: vi.fn().mockResolvedValue(0),
   }
 }
 

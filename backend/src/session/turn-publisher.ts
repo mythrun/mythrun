@@ -19,7 +19,11 @@
 
 import type { Redis } from 'ioredis'
 import { sessionChannel } from '../contract/session-channel.js'
-import type { ParticipantSummary, ServerFrame } from '../contract/session-events.js'
+import type {
+  ParticipantSummary,
+  ServerFrame,
+  SessionProgress,
+} from '../contract/session-events.js'
 import type {
   CombatResolvedFramePayload,
   CombatStartedFramePayload,
@@ -48,7 +52,10 @@ export interface TurnPublisher {
   combatStarted(campaignId: string, turnId: string, p: CombatStartedFramePayload): Promise<void>
   combatResolved(campaignId: string, turnId: string, p: CombatResolvedFramePayload): Promise<void>
   dmCorrection(campaignId: string, turnId: string, p: DmCorrectionFramePayload): Promise<void>
-  turnEnd(campaignId: string, turnId: string): Promise<void>
+  /** myth-nu0hm — `progress` is the OPTIONAL mechanical session-progress
+   *  fraction. Omitted when the turn couldn't compute one; the frame still
+   *  ships, because turn_end is what tells the client the turn is over. */
+  turnEnd(campaignId: string, turnId: string, progress?: SessionProgress): Promise<void>
   turnError(campaignId: string, turnId: string, message: string): Promise<void>
   /** myth-aiiao — the corrected-turn WHOLE-TURN REPLACE: publish a live
    *  `session_reconnect` frame carrying ONE turn's rebuilt replay messages.
@@ -240,8 +247,15 @@ export function createTurnPublisher(redis: Redis, keyPrefix: string): TurnPublis
     combatStarted,
     combatResolved,
     dmCorrection,
-    async turnEnd(campaignId, turnId): Promise<void> {
-      await publish(campaignId, { type: 'turn_end', turnId })
+    async turnEnd(campaignId, turnId, progress): Promise<void> {
+      // exactOptionalPropertyTypes — conditionally spread so the key is ABSENT
+      // when there is no fraction, never present-with-undefined. Rebuilt
+      // field-by-field (not passed through) so the wire shape stays checked.
+      await publish(campaignId, {
+        type: 'turn_end',
+        turnId,
+        ...(progress !== undefined ? { progress: { fraction: progress.fraction } } : {}),
+      })
     },
     async turnError(campaignId, turnId, message): Promise<void> {
       await publish(campaignId, { type: 'turn_error', turnId, message })

@@ -11,6 +11,7 @@ import { type TriggerState, makeTriggerState } from '../trigger-state.js'
 import { SCRIBE_JOB_NAME, type ScribeQueueLike } from '../scribe-queue.js'
 import type { WorkingSetProposal } from '../working-set/types.js'
 import { SESSION_TOKEN_BUDGET } from '../st-config.js'
+import { FT_USABLE_CONTEXT_TOKENS } from '../ft-config.js'
 import { type TurnProcessorDeps, processTurnJob } from '../turn-worker.js'
 import { CAMPAIGN, KEY_PREFIX, SESSION, TURN, correctionPayload, fakeHandle, fakeLock, fakeRepo, makeTiers, newCalls, payload, recordingPublisher, silentLogger } from './_helpers/turn-worker-harness.js'
 import { type ScribeCall, inertCombatLedger, inertDmTriggerQueue, inertEndSession, inertFinalize, inertLedgerTx, inertScribeQueue, inertStEvalQueue, inertTurnQueue, recordingScribeQueue } from './_helpers/turn-worker-deps.js'
@@ -435,4 +436,161 @@ describe('processTurnJob — scribe enqueue & budget auto-end', () => {
 
 
 
+})
+
+// ── myth-nu0hm — the mechanical session-progress fraction on turn_end ───────
+describe('processTurnJob — session-progress signal (myth-nu0hm)', () => {
+  let redis: Redis
+  let sessionState: SessionState
+  let triggerState: TriggerState
+
+  beforeEach(async () => {
+    redis = new IoRedisMock()
+    await redis.flushall()
+    sessionState = makeSessionState(redis, KEY_PREFIX)
+    triggerState = makeTriggerState(redis, KEY_PREFIX)
+  })
+  afterEach(async () => {
+    await redis.quit()
+    vi.clearAllMocks()
+  })
+
+  /** The suite's standard deps, with the session-state seam overridable so a
+   *  test can drive the failure arm. */
+  function progressDeps(
+    calls: ReturnType<typeof newCalls>,
+    overrides?: {
+      sessionState?: SessionState
+      makeTiers?: TurnProcessorDeps['makeTiers']
+    },
+  ): TurnProcessorDeps {
+    return {
+      lock: fakeLock(fakeHandle({ extendReturns: true, release: vi.fn((): Promise<void> => Promise.resolve()) })),
+      sessionState: overrides?.sessionState ?? sessionState,
+      repo: fakeRepo(),
+      triggerState,
+      sessionTurnQueue: inertTurnQueue(),
+      dmTriggerQueue: inertDmTriggerQueue(),
+      stEvalQueue: inertStEvalQueue(),
+      scribeQueue: inertScribeQueue(),
+      endSession: inertEndSession(),
+      finalizeEndedSession: inertFinalize(),
+      combatLedger: inertCombatLedger(),
+      ledgerTx: inertLedgerTx(),
+      publisher: recordingPublisher(calls),
+      makeTiers: overrides?.makeTiers ?? makeTiers,
+      heartbeatMs: 10_000,
+      logger: silentLogger,
+    }
+  }
+
+  /** A Fast Thinker that reports a specific context fill (the final tool-loop
+   *  step's input tokens). The StubFastThinker reports none. */
+  function tiersWithContext(contextTokens: number): TurnProcessorDeps['makeTiers'] {
+    return () => ({
+      ft: {
+        render: async (_ctx, emit) => {
+          await emit.emitText('(the DM considers the scene…)')
+          return {
+            role: 'assistant' as const,
+            parts: [{ kind: 'text' as const, text: '(the DM responds.)' }],
+            contextTokens,
+          }
+        },
+      },
+      combatEvents: [],
+    })
+  }
+
+  it('turn_end carries the TOKEN-BUDGET fraction when that ceiling is nearer', async () => {
+    // Half the session budget burned, negligible context fill.
+    await sessionState.flushTurnState(CAMPAIGN, {
+      usage: { input: SESSION_TOKEN_BUDGET / 2, output: 0 },
+    })
+    const calls = newCalls()
+
+    const result = await processTurnJob(progressDeps(calls), payload())
+
+    expect(result).toEqual({ ran: true })
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    expect(calls.turnEndProgress).toEqual([{ fraction: 0.5 }])
+  })
+
+  it('turn_end carries the CONTEXT-FILL fraction when THAT ceiling is nearer', async () => {
+    // Barely any cumulative spend, but the FT's window is 90% full — the
+    // session still ends when the window fills, so the max must pick this.
+    await sessionState.flushTurnState(CAMPAIGN, { usage: { input: 1_000, output: 0 } })
+    const calls = newCalls()
+
+    await processTurnJob(
+      progressDeps(calls, { makeTiers: tiersWithContext(FT_USABLE_CONTEXT_TOKENS * 0.9) }),
+      payload(),
+    )
+
+    expect(calls.turnEndProgress).toEqual([{ fraction: 0.9 }])
+  })
+
+  it('the published fraction NEVER walks back when the context term falls', async () => {
+    // A previous combat-heavy turn pushed the floor to 0.85. This turn is
+    // terse: low context fill, modest spend. The bar must hold, not drop.
+    await sessionState.raiseProgressFraction(CAMPAIGN, 0.85)
+    await sessionState.flushTurnState(CAMPAIGN, {
+      usage: { input: SESSION_TOKEN_BUDGET * 0.1, output: 0 },
+    })
+    const calls = newCalls()
+
+    await processTurnJob(
+      progressDeps(calls, { makeTiers: tiersWithContext(1_000) }),
+      payload(),
+    )
+
+    expect(calls.turnEndProgress).toEqual([{ fraction: 0.85 }])
+    // ...and the floor is still 0.85 for the next turn / a joining client.
+    expect(await sessionState.progressFraction(CAMPAIGN)).toBe(0.85)
+  })
+
+  it('the fraction is COARSE — an awkward spend lands on a 0.05 bucket', async () => {
+    await sessionState.flushTurnState(CAMPAIGN, {
+      usage: { input: Math.round(SESSION_TOKEN_BUDGET * 0.5199), output: 0 },
+    })
+    const calls = newCalls()
+
+    await processTurnJob(progressDeps(calls), payload())
+
+    expect(calls.turnEndProgress).toEqual([{ fraction: 0.5 }])
+  })
+
+  it('a progress failure OMITS the fraction but still publishes turn_end', async () => {
+    // The fraction is a readout; turn_end is what tells the client the turn is
+    // over. A Redis hiccup must cost the number, never the turn.
+    const broken: SessionState = {
+      ...sessionState,
+      totalUsageTokens: () => Promise.reject(new Error('redis down')),
+    }
+    const calls = newCalls()
+
+    const result = await processTurnJob(progressDeps(calls, { sessionState: broken }), payload())
+
+    expect(result).toEqual({ ran: true })
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    expect(calls.turnEndProgress).toEqual([undefined])
+  })
+
+  it('the CONVERGE path (rows already durable) still publishes a fraction', async () => {
+    // No fresh render there, so there is no context reading — the cumulative
+    // token term plus the stored floor still give an honest number.
+    await sessionState.flushTurnState(CAMPAIGN, {
+      usage: { input: SESSION_TOKEN_BUDGET * 0.4, output: 0 },
+    })
+    const calls = newCalls()
+    const deps: TurnProcessorDeps = {
+      ...progressDeps(calls),
+      repo: fakeRepo({ turnRowsExist: true }),
+    }
+
+    const result = await processTurnJob(deps, payload())
+
+    expect(result).toEqual({ ran: true })
+    expect(calls.turnEndProgress).toEqual([{ fraction: 0.4 }])
+  })
 })

@@ -332,15 +332,20 @@ describe('makeSessionState — turn state', () => {
     expect(await s.totalUsageTokens('c1')).toBe(14)
   })
 
-  it('resetSessionSpend DELs :usage, :usage:st, and :summary (§8 session-start reset)', async () => {
+  it('resetSessionSpend DELs :usage, :usage:st, :summary, and :progress (§8 session-start reset)', async () => {
     const s = makeSessionState(redis, 'p:')
     await s.flushTurnState('c1', { usage: { input: 5, output: 9 } })
     await s.incrUsageSt('c1', 4)
     await s.setRunningSummary('c1', 'a running summary')
+    await s.raiseProgressFraction('c1', 0.6)
     await s.resetSessionSpend('c1')
     expect(await redis.exists('p:session:c1:usage')).toBe(0)
     expect(await redis.exists('p:session:c1:usage:st')).toBe(0)
     expect(await redis.exists('p:session:c1:summary')).toBe(0)
+    // myth-nu0hm — without this the campaign's NEXT session opens pinned at the
+    // previous session's fraction: the floor never falls on its own.
+    expect(await redis.exists('p:session:c1:progress')).toBe(0)
+    expect(await s.progressFraction('c1')).toBe(0)
   })
 
   it('loadTurnState returns empties when unset', async () => {
@@ -610,5 +615,96 @@ describe('makeSessionState — combat state (MYT-75)', () => {
     await ss.setCombatState(cId, sampleCombat())
     await ss.refreshTtls(cId)
     expect(await redis.ttl(`${KEY_PREFIX}session:${cId}:combat`)).toBeGreaterThan(0)
+  })
+})
+
+describe('makeSessionState — session-progress floor (myth-nu0hm)', () => {
+  let redis: Redis
+
+  beforeEach(async () => {
+    redis = new IoRedisMock()
+    await redis.flushall()
+  })
+  afterEach(async () => {
+    await redis.quit()
+  })
+
+  it('progressFraction reads 0 for a session that has published none', async () => {
+    expect(await makeSessionState(redis, KEY_PREFIX).progressFraction('c-none')).toBe(0)
+  })
+
+  it('raiseProgressFraction stores the fraction and returns it', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    expect(await ss.raiseProgressFraction(cId, 0.35)).toBe(0.35)
+    expect(await ss.progressFraction(cId)).toBe(0.35)
+  })
+
+  it('RAISES on a higher candidate', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    await ss.raiseProgressFraction(cId, 0.35)
+    expect(await ss.raiseProgressFraction(cId, 0.6)).toBe(0.6)
+    expect(await ss.progressFraction(cId)).toBe(0.6)
+  })
+
+  it('HOLDS on a lower candidate — the floor is the monotonic guarantee', async () => {
+    // The context-fill term legitimately falls (a terse turn after a combat
+    // burst), so the max-of-ceilings candidate can drop. The bar must not.
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    await ss.raiseProgressFraction(cId, 0.6)
+    expect(await ss.raiseProgressFraction(cId, 0.2)).toBe(0.6)
+    expect(await ss.progressFraction(cId)).toBe(0.6)
+  })
+
+  it('holds flat on an equal candidate and still refreshes the TTL', async () => {
+    // The equal/lower arm skips the SET but must keep the key alive, or a long
+    // stretch inside one bucket lets the floor lapse mid-session.
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    await ss.raiseProgressFraction(cId, 0.45)
+    expect(await ss.raiseProgressFraction(cId, 0.45)).toBe(0.45)
+    expect(await redis.ttl(`${KEY_PREFIX}session:${cId}:progress`)).toBeGreaterThan(0)
+  })
+
+  it('sets a TTL on the :progress key', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    await ss.raiseProgressFraction(cId, 0.3)
+    expect(await redis.ttl(`${KEY_PREFIX}session:${cId}:progress`)).toBeGreaterThan(0)
+  })
+
+  it('reads a corrupt floor as 0 rather than pinning the session', async () => {
+    // One bad byte must not latch a live session's bar. Losing the floor
+    // degrades to recomputing from the cumulative counters — nearly right.
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    await redis.set(`${KEY_PREFIX}session:${cId}:progress`, 'garbage')
+    expect(await ss.progressFraction(cId)).toBe(0)
+    // ...and a corrupt floor must not block the next honest raise.
+    expect(await ss.raiseProgressFraction(cId, 0.4)).toBe(0.4)
+  })
+
+  it('reads a negative stored floor as 0', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    await redis.set(`${KEY_PREFIX}session:${cId}:progress`, '-0.5')
+    expect(await ss.progressFraction(cId)).toBe(0)
+  })
+
+  it('clamps an out-of-range stored floor to 1', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    await redis.set(`${KEY_PREFIX}session:${cId}:progress`, '4.2')
+    expect(await ss.progressFraction(cId)).toBe(1)
+  })
+
+  it('is isolated per campaign', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    await ss.raiseProgressFraction('c-A', 0.8)
+    expect(await ss.progressFraction('c-B')).toBe(0)
+    expect(await ss.progressFraction('c-A')).toBe(0.8)
+  })
+
+  it('never decreases across a realistic falling-context session', async () => {
+    const ss = makeSessionState(redis, KEY_PREFIX)
+    const seen: number[] = []
+    for (const candidate of [0.05, 0.1, 0.55, 0.15, 0.2, 0.5, 0.25]) {
+      seen.push(await ss.raiseProgressFraction(cId, candidate))
+    }
+    expect(seen).toEqual([0.05, 0.1, 0.55, 0.55, 0.55, 0.55, 0.55])
   })
 })

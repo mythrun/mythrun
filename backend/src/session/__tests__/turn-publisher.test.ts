@@ -86,7 +86,34 @@ describe('createTurnPublisher', () => {
 
     expect(received).toHaveLength(1)
     const [msg] = received
+    // myth-nu0hm — no progress argument → the key is ABSENT, not
+    // present-with-undefined. A client keys off presence, so an
+    // `undefined`-valued field would read as "no statement" only by accident.
     expect(msg?.frame).toEqual({ type: 'turn_end', turnId: TURN })
+    expect(Object.hasOwn(msg?.frame ?? {}, 'progress')).toBe(false)
+  })
+
+  it('turnEnd carries the myth-nu0hm session-progress fraction when given one', async () => {
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    await pub.turnEnd(CAMPAIGN, TURN, { fraction: 0.65 })
+    await tick()
+
+    expect(received).toHaveLength(1)
+    const [msg] = received
+    expect(msg?.frame).toEqual({ type: 'turn_end', turnId: TURN, progress: { fraction: 0.65 } })
+  })
+
+  it('turnEnd survives the JSON round-trip with an exact 0.05 bucket', async () => {
+    // The bucket the naive `Math.round(x / 0.05) * 0.05` botches into
+    // 0.35000000000000003 — assert the wire carries the clean value.
+    const pub = createTurnPublisher(publisherClient, KEY_PREFIX)
+    await pub.turnEnd(CAMPAIGN, TURN, { fraction: 0.35 })
+    await tick()
+
+    const [msg] = received
+    const frame = msg?.frame as { progress?: { fraction: number } }
+    expect(frame.progress?.fraction).toBe(0.35)
+    expect(JSON.stringify(frame.progress)).toBe('{"fraction":0.35}')
   })
 
   it('dmCorrection publishes a dm_correction frame carrying turnId + text (no live seq) — myth-d6knq shared contract', async () => {

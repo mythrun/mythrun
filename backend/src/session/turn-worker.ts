@@ -104,6 +104,8 @@ import {
 } from './session-end.js'
 import { QUEUE_SESSION_SUSPEND, type SuspendQueueLike } from './session-suspend.js'
 import { SESSION_TOKEN_BUDGET } from './st-config.js'
+import { computeProgressFraction } from './session-progress.js'
+import type { SessionProgress } from '../contract/session-events.js'
 import { buildSessionReconcileQueue, buildSessionAnalysisQueue } from '../server-queues.js'
 import { sessionChannel } from '../contract/session-channel.js'
 import { makeWorkingSetRepo } from '../redis/working-set.js'
@@ -467,7 +469,10 @@ export async function processTurnJob(
       // even on the converge path it must NOT advance the watermark past
       // unresponded player seqs (same invariant as the fresh-run arm below).
       if (!isPlayerless) await deps.triggerState.setRespondedSeq(campaignId, job.data.maxConsumedSeq)
-      await deps.publisher.turnEnd(campaignId, turnId)
+      // myth-nu0hm — the converge path has no fresh render, so there is no
+      // context-fill reading for this turn; the cumulative token term plus the
+      // stored floor still give an honest (never-decreasing) fraction.
+      await deps.publisher.turnEnd(campaignId, turnId, await resolveProgress(deps, campaignId, null))
       return { ran: true }
     }
 
@@ -779,7 +784,15 @@ export async function processTurnJob(
     }
     // turn_end is the WORKER's, published only AFTER persist + flush + watermark
     // (so a client never sees turn_end for a turn that did not durably land).
-    await deps.publisher.turnEnd(campaignId, turnId)
+    // myth-nu0hm — the progress fraction rides it. Computed HERE, on the beat
+    // that already exists, from counters the flush above just moved: two Redis
+    // round-trips against keys this worker is already talking to, off the
+    // player-visible latency path (the prose streamed turns ago).
+    await deps.publisher.turnEnd(
+      campaignId,
+      turnId,
+      await resolveProgress(deps, campaignId, controller.contextTokens()),
+    )
     return { ran: true }
   } catch (err) {
     // The §5 latch-terminal is deliberate, not a failure to swallow — let it
@@ -888,6 +901,44 @@ interface CombatApplyIds {
   readonly campaignId: string
   readonly sessionId: string
   readonly turnId: string
+}
+
+/**
+ * myth-nu0hm — resolve the mechanical session-progress fraction to ride
+ * `turn_end`.
+ *
+ * Reads the cumulative session spend (the SAME `totalUsageTokens` the ST's
+ * wind-down arm reads, so the two signals can never disagree about how much of
+ * the budget is gone), folds in this turn's FT context fill, then RAISES the
+ * session's stored floor and returns the effective value.
+ *
+ * `contextTokens` is null when the turn produced no reading — the converge path
+ * (no fresh render) or a render whose usage never resolved. That is not an
+ * error: the token term alone plus the floor still yields a truthful,
+ * non-decreasing number.
+ *
+ * Returns `undefined` on ANY failure, and swallows it. The fraction is a
+ * nice-to-have readout; `turn_end` is the frame that tells the client its turn
+ * is over. A Redis hiccup here must cost the table the number, never the turn —
+ * the same isolation the st-eval / scribe enqueues use on this path.
+ */
+async function resolveProgress(
+  deps: TurnProcessorDeps,
+  campaignId: string,
+  contextTokens: number | null,
+): Promise<SessionProgress | undefined> {
+  try {
+    const cumulativeTokens = await deps.sessionState.totalUsageTokens(campaignId)
+    const candidate = computeProgressFraction({
+      cumulativeTokens,
+      contextTokens: contextTokens ?? 0,
+    })
+    const fraction = await deps.sessionState.raiseProgressFraction(campaignId, candidate)
+    return { fraction }
+  } catch (err) {
+    deps.logger.error({ err, campaignId }, 'failed to resolve session progress; omitting it')
+    return undefined
+  }
 }
 
 /**

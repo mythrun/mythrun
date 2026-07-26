@@ -55,6 +55,7 @@ describe('runStDirector', () => {
       pendingOneShot: 'NONE',
       recentExchanges: 'EX',
       windDown: false,
+      converge: false,
     })
     expect(r.result).toEqual(okOutput)
     expect(r.repairAttempted).toBe(false)
@@ -85,6 +86,7 @@ describe('runStDirector', () => {
       pendingOneShot: 'NONE',
       recentExchanges: 'e',
       windDown: false,
+      converge: false,
     })
 
     expect(r.repairAttempted).toBe(true)
@@ -106,6 +108,7 @@ describe('runStDirector', () => {
       pendingOneShot: 'NONE',
       recentExchanges: 'e',
       windDown: true,
+      converge: false,
     })
     const call = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
     expect(call.prompt).toMatch(/WIND-DOWN MODE IS ACTIVE/i)
@@ -124,6 +127,7 @@ describe('runStDirector', () => {
       pendingOneShot: 'NONE',
       recentExchanges: 'e',
       windDown: false,
+      converge: false,
     })
     const call = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
     // The static prompt prose mentions "wind-down mode is active (below)" in
@@ -131,5 +135,53 @@ describe('runStDirector', () => {
     // instruction marker (the colon-suffixed all-caps banner) which only
     // appears when windDown is true.
     expect(call.prompt).not.toContain('WIND-DOWN MODE IS ACTIVE:')
+  })
+})
+
+// myth-3jna1 — the convergence steer rides the SAME injected-instruction seam
+// as wind-down: a boolean in, a banner appended, the ST authors the direction.
+// The steer is never a code-written direction — that would put a
+// budget-derived, arc-derived sentence into the FT's context with no author.
+describe('runStDirector — convergence steer', () => {
+  beforeEach(() => {
+    mockGenerateText.mockResolvedValue({
+      output: okOutput,
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } as never)
+  })
+
+  const baseInput = {
+    partyRoster: 'P',
+    sdPlaybook: 'p',
+    runningSummary: '',
+    currentStandingDirective: 'NONE',
+    pendingOneShot: 'NONE',
+    recentExchanges: 'e',
+  } as const
+
+  it('injects the convergence instruction only when converge is true', async () => {
+    await runStDirector({ ...baseInput, windDown: false, converge: true })
+    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    expect(call.prompt).toContain('CONVERGENCE MODE IS ACTIVE:')
+  })
+
+  it('omits the convergence instruction when converge is false', async () => {
+    await runStDirector({ ...baseInput, windDown: false, converge: false })
+    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    expect(call.prompt).not.toContain('CONVERGENCE MODE IS ACTIVE:')
+  })
+
+  it('carries NO arc position and NO numbers — the ST is told the mode, not the measurement', async () => {
+    await runStDirector({ ...baseInput, windDown: false, converge: true })
+    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    const banner = /CONVERGENCE MODE IS ACTIVE:[^\n]*/.exec(call.prompt)?.[0] ?? ''
+    expect(banner).not.toMatch(/\d/)
+  })
+
+  it('instructs the ST to phrase the steer as craft, never as the reason for it', async () => {
+    await runStDirector({ ...baseInput, windDown: false, converge: true })
+    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    const banner = /CONVERGENCE MODE IS ACTIVE:[^\n]*/.exec(call.prompt)?.[0] ?? ''
+    expect(banner).toMatch(/never learn/i)
   })
 })

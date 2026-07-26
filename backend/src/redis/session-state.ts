@@ -25,6 +25,7 @@
 import type { Redis } from 'ioredis'
 
 import type { TokenUsage } from '../session/tiers/types.js'
+import { raiseProgressMonotonic } from '../session/session-progress.js'
 
 /**
  * Per-connection presence TTL, seconds. Each `conn:{containerId}:{userId}:{connId}`
@@ -244,9 +245,31 @@ export interface SessionState {
   /** Total session token spend: the `:usage` blob's `input + output` PLUS the
    *  `:usage:st` counter, summed. The §7 budget gate reads this. */
   totalUsageTokens(campaignId: string): Promise<number>
+  /** myth-nu0hm — read the published session-progress fraction (the MONOTONIC
+   *  FLOOR). 0 when unset (a session that has published none yet) or corrupt.
+   *  The ws connect path reads this so a joining client's `session_ready` is
+   *  not blank until the next turn completes. */
+  progressFraction(campaignId: string): Promise<number>
+  /** myth-nu0hm — RAISE-ONLY write of the session-progress fraction, returning
+   *  the effective (post-raise) value to publish.
+   *
+   *  This key IS the monotonic guarantee. The published number is the max of two
+   *  ceilings and only the token term is monotonic by construction — FT context
+   *  fill legitimately FALLS on a terse turn after a combat burst — so the
+   *  max-of-both needs a floor or the bar walks backwards. Storing the fraction
+   *  rather than the raw counters also pins the number across a change to
+   *  SESSION_TOKEN_BUDGET or the FT model's window: re-tuning a constant
+   *  mid-session can raise a live session's progress but never rewind it.
+   *
+   *  GET-then-SET is safe here because the caller holds the per-session turn
+   *  lock (`turn_end` publishes before release) and the only other toucher is a
+   *  READ on the connect path — unlike `reseedSeq`, there is no concurrent
+   *  writer to lose a raise to. Carries the state TTL like the spend keys. */
+  raiseProgressFraction(campaignId: string, fraction: number): Promise<number>
   /** Session-boundary hygiene (§8, called from the `/start` route): DELs the
-   *  spend + summary keys (`:usage`, `:usage:st`, `:summary`) so a fresh session
-   *  starts with a clean budget and no stale running summary. */
+   *  spend + summary keys (`:usage`, `:usage:st`, `:summary`) and the
+   *  myth-nu0hm `:progress` floor, so a fresh session starts with a clean
+   *  budget, no stale running summary, and a progress bar back at empty. */
   resetSessionSpend(campaignId: string): Promise<void>
   /** Bumps the TTL on the durable transport keys (`:seq`, `:state`) so an
    *  active session's state doesn't expire. Called on every interaction. */
@@ -305,6 +328,7 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
   const summaryKey = (campaignId: string): string => `${base(campaignId)}:summary`
   const usageKey = (campaignId: string): string => `${base(campaignId)}:usage`
   const usageStKey = (campaignId: string): string => `${base(campaignId)}:usage:st`
+  const progressKey = (campaignId: string): string => `${base(campaignId)}:progress`
   const endingKey = (campaignId: string): string => `${base(campaignId)}:ending`
   const combatKey = (campaignId: string): string => `${base(campaignId)}:combat`
   const resumedKey = (campaignId: string): string => `${base(campaignId)}:resumed`
@@ -426,10 +450,35 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
     totalUsageTokens: (campaignId) =>
       readTotalUsageTokens(redis, usageKey(campaignId), usageStKey(campaignId)),
 
+    progressFraction: (campaignId) => readProgressFraction(redis, progressKey(campaignId)),
+
+    raiseProgressFraction: async (campaignId, fraction) => {
+      const key = progressKey(campaignId)
+      const stored = await readProgressFraction(redis, key)
+      const raised = raiseProgressMonotonic(fraction, stored)
+      // Skip the write when the floor already covers it — a long quiet stretch
+      // inside one bucket shouldn't rewrite the key every turn. The EXPIRE
+      // still runs so the floor doesn't lapse mid-session on a flat run.
+      if (raised > stored) {
+        await redis.set(key, String(raised), 'EX', STATE_TTL)
+      } else {
+        await redis.expire(key, STATE_TTL)
+      }
+      return raised
+    },
+
     resetSessionSpend: async (campaignId) => {
       // §8 session-boundary hygiene (called from the `/start` route): a fresh
-      // session starts with a clean budget and no stale running summary.
-      await redis.del(usageKey(campaignId), usageStKey(campaignId), summaryKey(campaignId))
+      // session starts with a clean budget, no stale running summary, and (as
+      // of myth-nu0hm) a progress bar back at empty. Without the `:progress`
+      // DEL the campaign's NEXT session would open pinned at the previous
+      // session's fraction — the monotonic floor never falls on its own.
+      await redis.del(
+        usageKey(campaignId),
+        usageStKey(campaignId),
+        summaryKey(campaignId),
+        progressKey(campaignId),
+      )
     },
 
     refreshTtls: async (campaignId) => {
@@ -633,6 +682,21 @@ async function readTotalUsageTokens(
   const turnUsage = parseJson<TokenUsage>(rawUsage, { input: 0, output: 0 })
   const stTokens = rawSt === null || rawSt === undefined ? 0 : Number(rawSt)
   return turnUsage.input + turnUsage.output + (Number.isFinite(stTokens) ? stTokens : 0)
+}
+
+/** myth-nu0hm — read the `:progress` floor. A missing key (never published, or
+ *  the TTL reaped it) and a corrupt / out-of-range value both read as 0: the
+ *  floor is a display guarantee, and losing it degrades to recomputing from the
+ *  cumulative counters, which is nearly right. Saturating instead would pin a
+ *  live session at 100% off one bad byte. */
+async function readProgressFraction(redis: Redis, key: string): Promise<number> {
+  // `get` is typed `string | null` (unlike the `mget` readers above, whose
+  // element access can also be undefined) — so null is the whole miss case.
+  const raw = await redis.get(key)
+  if (raw === null) return 0
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0
+  return Math.min(parsed, 1)
 }
 
 /** Read the raw `:state` blob for the checkpoint envelope without

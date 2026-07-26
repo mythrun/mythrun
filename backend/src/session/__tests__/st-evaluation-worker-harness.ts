@@ -8,6 +8,10 @@
 import type { LanguageModelUsage } from '../../llm/ai.js'
 import type { StGateOutput } from '../../llm/st-gate.js'
 import type { StDirectorInput, StDirectorOutput } from '../../llm/st-director.js'
+import type {
+  StNarrativeProgressInput,
+  StNarrativeProgressOutput,
+} from '../../llm/st-narrative-progress.js'
 import type { StDirectorResult } from '../../llm/schemas/st-director.js'
 import type { SessionMessage } from '../../repo/types.js'
 import { vi } from 'vitest'
@@ -61,6 +65,17 @@ export function defaultDirectorResult(overrides: Partial<StDirectorResult> = {})
   }
 }
 
+/** myth-3jna1 — a narrative-progress probe result. `basis` defaults to
+ *  innocuous prose; the leak matrix overrides it with the secret verbatim to
+ *  prove code never forwards it. */
+export function progress(
+  value: number,
+  tokens = 40,
+  basis = 'the opening goal landed; the reveal has not',
+): StNarrativeProgressOutput {
+  return { result: { basis, progress: value }, usage: usage(tokens) }
+}
+
 /** Recording fakes + knobs. Defaults: an active matching session, policy NOT
  *  tripped (turnsSinceSt low, usage well under wind-down), gate fires
  *  (needed:true), director returns a full intervene+set result, watermark
@@ -77,6 +92,14 @@ export interface Knobs {
   gateThrows: boolean
   director: StDirectorOutput
   directorThrows: boolean
+  /** The prep's playbook, as `sessionPreps.getBy` returns it. Overridden by the
+   *  leak matrix to carry a sentinel secret. */
+  sdPlaybook: string
+  /** myth-3jna1 — the narrative-progress probe result. Default 0.9 (well ahead
+   *  of any in-window mechanical fraction), so a test that only raises
+   *  `totalUsed` gets the probe WITHOUT accidentally arming the steer. */
+  narrativeProgress: StNarrativeProgressOutput
+  progressThrows: boolean
   /** session_messages rows the codec maps into the FT-context history (default
    *  empty). Drives formatExchanges through a non-empty slice. */
   rows: readonly SessionMessage[]
@@ -99,6 +122,7 @@ export interface Recorders {
   gateCalls: number
   gateInputs: { recentExchanges: string }[]
   directorInputs: StDirectorInput[]
+  progressInputs: StNarrativeProgressInput[]
 }
 
 export function makeHarness(overrides: Partial<Knobs> = {}): {
@@ -122,6 +146,9 @@ export function makeHarness(overrides: Partial<Knobs> = {}): {
       repairAttempted: false,
     },
     directorThrows: false,
+    sdPlaybook: 'PLAYBOOK SECRETS',
+    narrativeProgress: progress(0.9),
+    progressThrows: false,
     rows: [],
     throwOneShotWrite: false,
     throwStandingWrite: false,
@@ -142,6 +169,7 @@ export function makeHarness(overrides: Partial<Knobs> = {}): {
     gateCalls: 0,
     gateInputs: [],
     directorInputs: [],
+    progressInputs: [],
   }
 
   // respondedSeq is asked twice: at start (snapshot) then at end (re-arm check).
@@ -150,7 +178,7 @@ export function makeHarness(overrides: Partial<Knobs> = {}): {
   const deps: StEvalProcessorDeps = {
     repo: {
       sessions: { getActiveByCampaign: () => Promise.resolve(knobs.session) },
-      sessionPreps: { getBy: () => Promise.resolve({ sdPlaybook: 'PLAYBOOK SECRETS' }) },
+      sessionPreps: { getBy: () => Promise.resolve({ sdPlaybook: knobs.sdPlaybook }) },
       sessionMessages: {
         listFtContextRows: (): Promise<SessionMessage[]> => Promise.resolve([...knobs.rows]),
       },
@@ -212,6 +240,11 @@ export function makeHarness(overrides: Partial<Knobs> = {}): {
       rec.gateInputs.push({ recentExchanges: input.recentExchanges })
       if (knobs.gateThrows) return Promise.reject(new Error('gate boom'))
       return Promise.resolve(knobs.gate)
+    },
+    runNarrativeProgress: (input: StNarrativeProgressInput) => {
+      rec.progressInputs.push(input)
+      if (knobs.progressThrows) return Promise.reject(new Error('probe boom'))
+      return Promise.resolve(knobs.narrativeProgress)
     },
     runDirector: (input: StDirectorInput) => {
       rec.directorInputs.push(input)

@@ -342,6 +342,16 @@ export class SessionController {
     }
   }
 
+  /** myth-nu0hm — the FT context fill this turn (the final tool-loop step's
+   *  input tokens), for the mechanical session-progress fraction. `null` before
+   *  the render, and on a render whose usage never resolved. NOT accumulated:
+   *  the context term is a LEVEL, not a total — it is how full the window got
+   *  on the latest turn, and it legitimately falls when a turn is terse. The
+   *  monotonic guarantee is applied downstream, over the published fraction. */
+  contextTokens(): number | null {
+    return this.assistant?.contextTokens ?? null
+  }
+
   /** Flush the small in-memory turn state back to Redis: {usage} only (MYT-69
    *  narrowed signature). The running summary is the ST job's artifact now — a
    *  blind summary SET here would clobber the ST's background write. The

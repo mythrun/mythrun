@@ -5,9 +5,11 @@ import { Stack, Text, Button, Divider } from '@mythrun/ui'
 // table calls it a night, both in the brand's quiet paper register (no "Session
 // Complete!" fanfare):
 //
-//   • EndSessionControl — a persistent, low-emphasis "End session" that lives in
-//     the between-turns chrome (never competing with Send or the fiction). It is
-//     a `ghost` control that expands to a one-beat inline confirm — no modal.
+//   • EndSessionControl — a low-emphasis "End session" in the between-turns chrome
+//     (never competing with Send or the fiction). It is a `ghost` control that
+//     expands to a one-beat inline confirm — no modal. myth-atxhx: it is no longer
+//     PERSISTENT. The shell mounts it only once the session is genuinely near its
+//     end; the gate lives there (this file stays presentational).
 //   • WindDownOffer — a dismissible offer hung off the long rest the engine
 //     already detects: "A good place to stop." after a night's rest is the most
 //     natural session boundary in the genre.
@@ -27,14 +29,18 @@ export interface EndSessionLabels {
   readonly confirm: string
   /** The dismiss action ("Keep playing"). */
   readonly cancel: string
-  /** The credit disclosure shown AT the confirm (myth-xxyo9) — the cost statement
-   *  belongs before the decision, not on the post-end receipt. The credit is
-   *  debited at session START (POST /start), so this reads as record, not a fresh
-   *  charge ("This session used one credit."). */
-  readonly credit: string
+  /** The CONSEQUENCE disclosure shown AT the confirm (myth-xxyo9, rewritten by
+   *  myth-atxhx). It leads with irreversibility, not cost: because a session is a
+   *  play unit rather than a sitting — leave and rejoin any time — a player can
+   *  reasonably read an end as banking the remainder for later. It is not. The
+   *  session cannot be resumed, and the credit was debited at session START, so
+   *  the cost half is record. The old line disclosed only the cost, in a past
+   *  tense that read as a RECEIPT: the most reassuring possible framing for the
+   *  most destructive available action. */
+  readonly disclosure: string
 }
 
-/** A persistent, low-emphasis end-session control. Resting: a quiet ghost button.
+/** A low-emphasis end-session control. Resting: a quiet ghost button.
  *  Pressed: a one-beat inline confirm — no modal. myth-xxyo9: BOTH confirm
  *  affordances are bordered `secondary` buttons ("two square outline buttons side
  *  by side is fully in-register" — bare mono text next to a bordered button reads
@@ -75,14 +81,16 @@ export function EndSessionControl({
   return (
     <Stack gap={1} align="end" data-testid="end-session-confirm">
       <Stack direction="row" gap={2} align="start" justify="end" wrap>
-        {/* myth-88lmb: the credit line sits under the QUESTION, not under the
+        {/* myth-88lmb: the disclosure sits under the QUESTION, not under the
             buttons — right-aligned beneath "End session" it parsed as a
             consequence of confirming ("ending will cost a credit") rather than
-            the statement of record its past tense means. */}
+            the statement of record it is. myth-atxhx: it now leads with what
+            ending forecloses (the session can't be resumed), because that is the
+            fact a player is most likely to assume the other way. */}
         <Stack gap={1} align="end">
           <Text role="meta">{labels.prompt}</Text>
-          <Text role="meta" data-testid="end-session-credit">
-            {labels.credit}
+          <Text role="meta" data-testid="end-session-disclosure">
+            {labels.disclosure}
           </Text>
         </Stack>
         <Button

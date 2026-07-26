@@ -949,14 +949,31 @@ export class SonnetFastThinker implements FastThinker {
 
     const totalUsage = await stream.totalUsage
     const usage = mapUsage(totalUsage)
+    // myth-nu0hm — the context-fill signal: the FINAL step's input tokens (the
+    // biggest prompt this turn), which ai.ts exposes separately from totalUsage
+    // for exactly this. Best-effort: this runs AFTER the turn's prose has been
+    // streamed and assembled, so a usage hiccup must degrade the progress
+    // number, never cost the table a rendered turn. `stepUsage` rejects on a
+    // zero-step failure, and the reject arm is pre-handled in ai.ts — awaiting
+    // it unguarded here would resurrect it as a throw on an otherwise-good turn.
+    const contextTokens = await stream.stepUsage.then(
+      (u) => u.inputTokens,
+      () => undefined,
+    )
     // myth-ph544: normalize a leaked "<PC name>:" prefix out of the durable turn
     // so the players' input format never enters the persisted transcript / the
     // FT's own context next turn.
     const parts = stripPcPrefixFromParts(assembler.finalize(this.logger), ctx.participants)
     const worldDelta = deltaGuard.parse(this.logger)
-    return worldDelta === undefined
-      ? { role: 'assistant', parts, usage }
-      : { role: 'assistant', parts, usage, worldDelta }
+    // `exactOptionalPropertyTypes`: both optionals are conditionally spread
+    // rather than assigned `undefined`.
+    return {
+      role: 'assistant',
+      parts,
+      usage,
+      ...(contextTokens !== undefined ? { contextTokens } : {}),
+      ...(worldDelta !== undefined ? { worldDelta } : {}),
+    }
   }
 
   private async emitFrameForResult(

@@ -115,12 +115,21 @@ function makeSession(
     thinking: false,
     typingUserIds: [],
     ended: false,
+    // myth-atxhx: NO progress signal by default — the honest pre-first-turn state,
+    // and the one under which the end affordances must stay absent. Tests that
+    // exercise ending pass NEAR_END explicitly.
+    progress: null,
     sendMessage: vi.fn(),
     summonDm: vi.fn(),
     endSession: vi.fn(),
     ...overrides,
   }
 }
+
+// myth-atxhx: the end affordances exist only near the end of a session, so every
+// test that exercises ending passes this explicitly (the gate itself is pinned in
+// session-progress.test.tsx).
+const NEAR_END = 0.85
 
 /** A LIVE long-rest ledger frame (no seq) — the wind-down trigger (myth-lhp99). */
 const LONG_REST: SessionView['items'][number] = {
@@ -337,9 +346,9 @@ describe('SessionShell — the no-character surface (myth-mnik3)', () => {
 })
 
 describe('SessionShell — session lifecycle + composer gating (myth-lhp99 / myth-dd63v)', () => {
-  it('the persistent end-session control confirms (one beat) then calls endSession', () => {
+  it('the end-session control confirms (one beat) then calls endSession', () => {
     const endSession = vi.fn()
-    renderShellSession(makeSession([DM_PROSE], undefined, { endSession }))
+    renderShellSession(makeSession([DM_PROSE], undefined, { endSession, progress: NEAR_END }))
     // A quiet control is always present; it opens an inline confirm, not a modal.
     fireEvent.click(screen.getByTestId('end-session-open'))
     expect(endSession).not.toHaveBeenCalled() // no fire until confirmed
@@ -354,15 +363,16 @@ describe('SessionShell — session lifecycle + composer gating (myth-lhp99 / myt
     expect(screen.getByTestId('session-input-busy').textContent).toBe(i18n.t('play.input.dmBusy'))
   })
 
-  it('myth-xxyo9: the inline confirm borders BOTH affordances and discloses the credit AT the decision', () => {
-    renderShellSession(makeSession([DM_PROSE]))
+  it('myth-xxyo9: the inline confirm borders BOTH affordances and discloses the consequence AT the decision', () => {
+    renderShellSession(makeSession([DM_PROSE], undefined, { progress: NEAR_END }))
     fireEvent.click(screen.getByTestId('end-session-open'))
     // "Keep playing" is a real bordered button beside "End session" — two square
     // outline buttons, never a bare mono label next to a bordered one.
     expect(screen.getByTestId('end-session-cancel').className).toContain('border-border-strong')
     expect(screen.getByTestId('end-session-do').className).toContain('border-border-strong')
-    // The cost statement sits IN the confirm state, before commitment.
-    expect(screen.getByTestId('end-session-credit').textContent).toBe(i18n.t('play.end.credit'))
+    // myth-atxhx: the disclosure sits IN the confirm state, before commitment, and
+    // it discloses IRREVERSIBILITY — not just the (already-spent) cost.
+    expect(screen.getByTestId('end-session-disclosure').textContent).toBe(i18n.t('play.end.disclosure'))
   })
 
   it('myth-0q8jm: with a check unrolled the caption says the game waits on the PLAYER, never "the DM is writing"', () => {
@@ -418,17 +428,17 @@ describe('SessionShell — session lifecycle + composer gating (myth-lhp99 / myt
 
   it('offers the wind-down on a live long rest; Rest here ends the session', () => {
     const endSession = vi.fn()
-    renderShellSession(makeSession([DM_PROSE, LONG_REST], undefined, { endSession }))
+    renderShellSession(makeSession([DM_PROSE, LONG_REST], undefined, { endSession, progress: NEAR_END }))
     expect(screen.getByTestId('wind-down-offer')).toBeDefined()
     fireEvent.click(screen.getByTestId('wind-down-rest'))
     expect(endSession).toHaveBeenCalledTimes(1)
   })
 
   it('a live short rest does NOT offer the wind-down; Keep playing dismisses a long one', () => {
-    renderShellSession(makeSession([DM_PROSE, SHORT_REST]))
+    renderShellSession(makeSession([DM_PROSE, SHORT_REST], undefined, { progress: NEAR_END }))
     expect(screen.queryByTestId('wind-down-offer')).toBeNull()
     cleanup()
-    renderShellSession(makeSession([DM_PROSE, LONG_REST]))
+    renderShellSession(makeSession([DM_PROSE, LONG_REST], undefined, { progress: NEAR_END }))
     fireEvent.click(screen.getByTestId('wind-down-keep'))
     expect(screen.queryByTestId('wind-down-offer')).toBeNull()
   })

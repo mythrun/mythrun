@@ -7,6 +7,7 @@ import type { ConnectionState } from '../realtime/connection.ts'
 import type { TranscriptItem } from './transcript-types.ts'
 import { emptyTranscript } from './transcript-types.ts'
 import { addPending, reduceFrameReconciling, unconfirmedPending } from './optimistic.ts'
+import { frameProgressFraction } from './session-progress.ts'
 
 // useSession (MYT-92 A6): the play view-model over the shipped WS transport
 // (realtime/ws-session-client.ts, MYT-85). The transport is a dumb typed pipe with
@@ -43,42 +44,63 @@ export interface SessionPresence {
   readonly typingUserIds: readonly string[]
   /** True once a `session_end` frame has arrived. */
   readonly ended: boolean
+  /** The mechanical session-progress fraction the wire last carried (myth-nu0hm),
+   *  or null while none has arrived. Held raw; the surface bands it and never
+   *  renders the number. */
+  readonly progressFraction: number | null
 }
 
 export const emptyPresence: SessionPresence = {
   thinkingTurnId: null,
   typingUserIds: [],
   ended: false,
+  progressFraction: null,
 }
 
 /** Fold ONE frame into the out-of-band presence state. Pure (no React) so it
  *  unit-tests directly. The transcript-content frames all fall through the default
  *  arm (the reducer owns them); only the control/presence frames move state here. */
 export function foldOutOfBand(state: SessionPresence, frame: ServerFrame): SessionPresence {
+  // The progress fraction rides three frames that already do other work here
+  // (`turn_end` clears the thinking indicator, `session_reconnect` resets a stuck
+  // one, `session_ready` is otherwise inert), so it folds FIRST and every arm
+  // below builds on the result. A frame carrying no fraction — the overwhelming
+  // majority — leaves `base` referentially identical, so the stability the arms
+  // below promise is unchanged. Absence is "no statement", never a reset: the
+  // corrected-turn whole-turn replace rides `session_reconnect` with no progress,
+  // and must not blank the readout. The server owns monotonicity + coarseness;
+  // re-deriving either here would just give the surface a second opinion about
+  // the same number.
+  const fraction = frameProgressFraction(frame)
+  const base =
+    fraction === null || fraction === state.progressFraction
+      ? state
+      : { ...state, progressFraction: fraction }
+
   switch (frame.type) {
     case 'dm_thinking':
-      return { ...state, thinkingTurnId: frame.turnId }
+      return { ...base, thinkingTurnId: frame.turnId }
     case 'text_delta':
     case 'turn_end':
     case 'turn_error':
       // The first live signal for the thinking turn clears the indicator.
-      return state.thinkingTurnId === frame.turnId ? { ...state, thinkingTurnId: null } : state
+      return base.thinkingTurnId === frame.turnId ? { ...base, thinkingTurnId: null } : base
     case 'typing_start':
-      return state.typingUserIds.includes(frame.userId)
-        ? state
-        : { ...state, typingUserIds: [...state.typingUserIds, frame.userId] }
+      return base.typingUserIds.includes(frame.userId)
+        ? base
+        : { ...base, typingUserIds: [...base.typingUserIds, frame.userId] }
     case 'typing_stop':
-      return { ...state, typingUserIds: state.typingUserIds.filter((id) => id !== frame.userId) }
+      return { ...base, typingUserIds: base.typingUserIds.filter((id) => id !== frame.userId) }
     case 'session_end':
-      return { ...state, ended: true }
+      return { ...base, ended: true }
     case 'session_reconnect':
       // A stuck indicator must not survive a reconnect (spec §2): reset it. A turn
       // genuinely still running re-arms it with a fresh live `dm_thinking`. The
       // batch carries no presence frames (they are not persisted), so there is
       // nothing else to fold here.
-      return state.thinkingTurnId === null ? state : { ...state, thinkingTurnId: null }
+      return base.thinkingTurnId === null ? base : { ...base, thinkingTurnId: null }
     default:
-      return state
+      return base
   }
 }
 
@@ -91,6 +113,10 @@ export interface SessionView {
   readonly thinking: boolean
   readonly typingUserIds: readonly string[]
   readonly ended: boolean
+  /** The mechanical session-progress fraction (0..1), or null while the wire has
+   *  carried none. The surface bands it (`progressBand`) and gates the voluntary
+   *  end control on it (`canOfferEnd`); it is never rendered as a number. */
+  readonly progress: number | null
   /** Optimistically add the message, then send it (a failed send stays pending). */
   sendMessage(text: string): void
   /** Send an `@dm`-token-bearing message (the SessionInput composes the token). */
@@ -205,6 +231,7 @@ export function useSession(ctx: ApiContext, params: SessionParams, deps: Session
     thinking: presence.thinkingTurnId !== null,
     typingUserIds: presence.typingUserIds,
     ended: presence.ended,
+    progress: presence.progressFraction,
     sendMessage,
     summonDm: sendMessage,
     endSession,

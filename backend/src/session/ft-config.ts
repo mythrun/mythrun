@@ -20,6 +20,26 @@ export const SKILL_CHECK_TIMEOUT_MS = 30_000
 export const FT_CLOSE_INSTRUCTION =
   '[System: you have reached the tool-call limit for this turn. Wrap up your narration in prose now. Do not call any tools.]'
 
+/** myth-nu0hm §context-fill — the FT model's context window, as reported by the
+ *  Anthropic Models API for FT_MODEL (`claude-sonnet-4-6`: max_input_tokens
+ *  1_000_000, max_tokens 128_000). Verified against the live endpoint rather
+ *  than assumed; re-check it when FT_MODEL moves, because the two numbers are
+ *  NOT the same across the model line (Haiku 4.5 is 200K).
+ *
+ *  FT_USABLE_CONTEXT_TOKENS is the number the session-progress signal divides
+ *  by, and it is deliberately BELOW the window: a session has to end before the
+ *  window is actually full, not when it is. The reserve covers what the ending
+ *  itself still has to fit — one more whole FT turn (the farewell), its up-to-
+ *  FT_MAX_TOOL_STEPS tool round-trips, and its output, which the model line caps
+ *  at 128K. 150K (15%) clears that with margin. Running to the real ceiling
+ *  instead would trade a graceful send-off for a provider 400 mid-turn.
+ *
+ *  NOTE the FT holds the WHOLE transcript every turn with no compaction, so
+ *  this ceiling is a real session-length bound, not a theoretical one. */
+export const FT_CONTEXT_WINDOW_TOKENS = 1_000_000
+export const FT_CONTEXT_HEADROOM_TOKENS = 150_000
+export const FT_USABLE_CONTEXT_TOKENS = FT_CONTEXT_WINDOW_TOKENS - FT_CONTEXT_HEADROOM_TOKENS
+
 /** §5 fail-soft: the resolver's fallback DC table when Haiku fails/aborts.
  *  The one place code picks a value Principle #5 normally delegates —
  *  moderate band so the fallback neither rewards nor punishes. */

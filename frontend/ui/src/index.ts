@@ -29,6 +29,10 @@ export { DmCorrection } from './components/DmCorrection/DmCorrection.tsx'
 export { ThinkingIndicator } from './components/ThinkingIndicator/ThinkingIndicator.tsx'
 export { SessionStartBeat } from './components/SessionStartBeat/SessionStartBeat.tsx'
 export { SessionPreparing } from './components/SessionPreparing/SessionPreparing.tsx'
+// SessionProgressLine (myth-atxhx) — the quiet session-position line in the play
+// surface's between-turns chrome. A WORD, never a meter: the signal behind it is
+// cost-derived, so a bar or a percentage would read as money spent over the fiction.
+export { SessionProgressLine } from './components/SessionProgressLine/SessionProgressLine.tsx'
 // WhisperLedger (ux-run2 myth-i2pdo) — the shared long-wait whisper column: the
 // current flavor line over a faint newest-first ledger of past lines. Composed
 // by WorldGenLoading + SessionPreparing; exported for stories/specimens.

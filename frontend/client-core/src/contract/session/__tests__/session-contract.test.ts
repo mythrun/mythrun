@@ -11,6 +11,7 @@ import type {
 } from '../../../session/roll-reveal.ts'
 import type { ReactNode } from 'react'
 import type { TableTalkView } from '../../../session/transcript-presentation.ts'
+import type { SessionProgressBand as SourceSessionProgressBand } from '../../../session/session-progress.ts'
 import * as sessionBarrel from '../index.ts'
 import type {
   // Re-exported view-model shape (from session/transcript-types.ts)
@@ -31,6 +32,9 @@ import type {
   RollCardProps,
   RollCardLabels,
   DieSpinProps,
+  // myth-atxhx session-position readout
+  SessionProgressBand,
+  SessionProgressLineProps,
 } from '../index.ts'
 
 // Type-level contract for the MYT-92 live-play surface. The runtime barrel stays
@@ -61,6 +65,13 @@ describe('re-exported view-model shape', () => {
     expectTypeOf<RollPhase>().toEqualTypeOf<SourceRollPhase>()
     expectTypeOf<RollRevealView>().toEqualTypeOf<SourceRollRevealView>()
     expectTypeOf<CardItem>().toEqualTypeOf<SourceCardItem>()
+  })
+
+  it('SessionProgressBand re-exports the four coarse words unchanged (myth-atxhx)', () => {
+    // The band vocabulary is the ONLY session-progress surface the UI sees — the
+    // fraction itself never crosses the contract, so no percentage can be rendered.
+    expectTypeOf<SessionProgressBand>().toEqualTypeOf<SourceSessionProgressBand>()
+    expectTypeOf<SessionProgressBand>().toEqualTypeOf<'early' | 'middle' | 'late' | 'close'>()
   })
 })
 
@@ -183,6 +194,16 @@ describe('prop contracts (exact — the U tasks build to these)', () => {
       typingNames: readonly string[]
       thinkingLabel: string
       typingLabel: string
+    }>()
+  })
+
+  it('SessionProgressLineProps — a resolved WORD + its band; no fraction, no numeric variant (myth-atxhx)', () => {
+    // The pin that matters: there is no `fraction` / `percent` / `value` prop. The
+    // component cannot render the cost-derived number even by accident.
+    expectTypeOf<SessionProgressLineProps>().toEqualTypeOf<{
+      label: string
+      band: SessionProgressBand
+      'data-testid'?: string
     }>()
   })
 

@@ -96,6 +96,10 @@ const DM_PROSE: SessionView['items'][number] = {
   streaming: false,
 }
 
+/** A near-end session-progress fraction — the band at which the voluntary end
+ *  affordances exist at all (myth-atxhx). */
+const NEAR_END = 0.85
+
 function makeSession(
   items: SessionView['items'],
   overrides: Partial<SessionView> = {},
@@ -106,6 +110,9 @@ function makeSession(
     thinking: false,
     typingUserIds: [],
     ended: false,
+    // myth-atxhx: no progress signal by default; the end affordances are gated on
+    // one, so the end tests below pass NEAR_END explicitly.
+    progress: null,
     sendMessage: vi.fn(),
     summonDm: vi.fn(),
     endSession: vi.fn(),
@@ -234,7 +241,7 @@ describe('SessionShell — ux-run3 play polish', () => {
 
   it('myth-88lmb: confirming the end sweeps the transition — one farewell signal, swept confirm, inert composer', () => {
     const endSession = vi.fn()
-    renderShell(makeSession([DM_PROSE], { endSession, thinking: true }))
+    renderShell(makeSession([DM_PROSE], { endSession, thinking: true, progress: NEAR_END }))
     fireEvent.click(screen.getByTestId('end-session-open'))
     fireEvent.click(screen.getByTestId('end-session-do'))
     expect(endSession).toHaveBeenCalledTimes(1)
@@ -253,14 +260,14 @@ describe('SessionShell — ux-run3 play polish', () => {
     expect(screen.getByTestId('session-input-busy').textContent).toBe('')
   })
 
-  it('myth-88lmb: the credit disclosure sits under the QUESTION line, before the buttons', () => {
-    renderShell(makeSession([DM_PROSE]))
+  it('myth-88lmb: the consequence disclosure sits under the QUESTION line, before the buttons', () => {
+    renderShell(makeSession([DM_PROSE], { progress: NEAR_END }))
     fireEvent.click(screen.getByTestId('end-session-open'))
-    const credit = screen.getByTestId('end-session-credit')
+    const disclosure = screen.getByTestId('end-session-disclosure')
     const cancel = screen.getByTestId('end-session-cancel')
-    // The credit line shares a column with the prompt and PRECEDES the buttons in
+    // The disclosure shares a column with the prompt and PRECEDES the buttons in
     // document order (a fast reader must not parse it as a consequence of confirming).
-    expect(credit.compareDocumentPosition(cancel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(credit.parentElement?.textContent).toContain(i18n.t('play.end.prompt'))
+    expect(disclosure.compareDocumentPosition(cancel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(disclosure.parentElement?.textContent).toContain(i18n.t('play.end.prompt'))
   })
 })

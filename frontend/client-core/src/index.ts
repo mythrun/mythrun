@@ -128,6 +128,12 @@ export { addPending, reduceFrameReconciling, unconfirmedPending } from './sessio
 // confirm-or-resend; thinking clears on turnId-matched delta/end/error).
 export { useSession } from './session/use-session.ts'
 export type { SessionView, SessionParams, SessionDeps } from './session/use-session.ts'
+// myth-atxhx session progress: the coarse BAND the play surface renders (the
+// cost-derived fraction never reaches the screen) + the single threshold that
+// gates the voluntary end control. Withholding is the default: no signal, no
+// band, no end control.
+export { progressBand, canOfferEnd, frameProgressFraction, END_CONTROL_FRACTION } from './session/session-progress.ts'
+export type { SessionProgressBand } from './session/session-progress.ts'
 // MYT-93 roll-reveal brain: the presentation-only dice/skill-check reveal
 // reducer + phase/gate selectors (client-core computes the RollRevealView the
 // web route threads into MessageStream; no UI-side runtime import — R1).

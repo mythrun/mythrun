@@ -1,8 +1,17 @@
 // backend/src/session/st-evaluation-worker.ts
 //
-// MYT-69 — the SlowThinker pipeline, OFF the hot path. policy → gate → evaluate
-// → write, all background. NOTHING here may delay or fail a player-visible turn
-// (the producer is the turn worker's post-turn finally phase, own try/catch).
+// MYT-69 — the SlowThinker pipeline, OFF the hot path. policy → converge probe
+// → gate → evaluate → write, all background. NOTHING here may delay or fail a
+// player-visible turn (the producer is the turn worker's post-turn finally
+// phase, own try/catch).
+//
+// myth-3jna1 added the converge probe: inside the [CONVERGE_MECHANICAL_FLOOR,
+// WIND_DOWN_FRACTION) window it asks (Haiku) how far through the prep's arc the
+// table actually is, and when the story is behind the spend it forces the
+// evaluation with `converge:true` so the ST starts aiming the session at a
+// resting point. Three stages, in order: converge (0.75) → wind-down (0.9) →
+// farewell (1.0, the turn worker's auto-end). The narrative-progress number is
+// SECRET-SIDE and never leaves this pipeline — see st-converge-probe.ts.
 //
 // Defines its OWN narrow repo interface (sd_playbook read + the codec window +
 // the roster read) — NOT a widening of TurnWorkerRepo, whose sessionPreps
@@ -17,7 +26,7 @@ import { makeSessionState } from '../redis/session-state.js'
 import { makeTriggerState } from './trigger-state.js'
 import { runStGate } from '../llm/st-gate.js'
 import { runStDirector } from '../llm/st-director.js'
-import type { LanguageModelUsage } from '../llm/ai.js'
+import { runStNarrativeProgress } from '../llm/st-narrative-progress.js'
 import { rowsToConversation } from './transcript-codec.js'
 import {
   ST_EVAL_FLOOR_TURNS,
@@ -27,6 +36,9 @@ import {
   SESSION_TOKEN_BUDGET,
   WIND_DOWN_FRACTION,
 } from './st-config.js'
+import { mechanicalProgress, shouldProbeNarrativeProgress } from './converge-policy.js'
+import { NO_CONVERGE, probeConvergence } from './st-converge-probe.js'
+import { usageTokens } from './st-usage.js'
 import {
   enqueueStEval,
   stEvalDedupId,
@@ -105,12 +117,12 @@ export interface StEvalProcessorDeps {
   readonly triggerState: StEvalTriggerState
   runGate: typeof runStGate
   runDirector: typeof runStDirector
+  /** myth-3jna1 — the narrative-progress judgment (Haiku). SECRET-SIDE: it is
+   *  fed the playbook and its result is consumed by CODE only. */
+  runNarrativeProgress: typeof runStNarrativeProgress
   reArm(campaignId: string, sessionId: string): Promise<void>
   readonly logger: MinimalLogger
 }
-
-const usageTokens = (u: LanguageModelUsage): number =>
-  u.totalTokens ?? (u.inputTokens ?? 0) + (u.outputTokens ?? 0)
 
 function formatExchanges(history: readonly ConversationMessage[], window: number): string {
   const slice = history.slice(-window)
@@ -180,7 +192,27 @@ export async function processStEvalJob(
   const floorForces = turnsSinceSt >= ST_EVAL_FLOOR_TURNS
 
   let usageToWrite = 0
-  let shouldEvaluate = floorForces || windDown
+
+  // 2b. myth-3jna1 — the CONVERGENCE probe, inside the [floor, wind-down)
+  // window only. Its verdict FORCES the evaluation on the same arm as
+  // wind-down: a steer that waits for the gate (or for the 5-turn floor) can
+  // arrive with no session left to land in, which is the whole defect. The
+  // window is a handful of turns at the tail, so the forced-Opus cost profile
+  // matches the wind-down arm's, which already accepts it.
+  const mechanical = mechanicalProgress(totalUsed)
+  const probe = shouldProbeNarrativeProgress(mechanical, windDown)
+    ? await probeConvergence(deps, campaignId, mechanical, {
+        sdPlaybook,
+        runningSummary: summary,
+        // The tighter window, like the gate: arc position is judged from the
+        // running summary (which carries the whole session) plus a look at
+        // where the table is standing right now.
+        recentExchanges: formatExchanges(history, ST_GATE_EXCHANGE_WINDOW),
+      })
+    : NO_CONVERGE
+  usageToWrite += probe.tokens
+
+  let shouldEvaluate = floorForces || windDown || probe.converge
 
   // 3. HAIKU GATE (only when policy didn't already force the evaluation).
   if (!shouldEvaluate) {
@@ -230,6 +262,11 @@ export async function processStEvalJob(
       pendingOneShot: pending,
       recentExchanges: formatExchanges(history, ST_EVAL_EXCHANGE_WINDOW),
       windDown,
+      // myth-3jna1 — the MODE, never the measurement. The narrative-progress
+      // fraction stays on the code side of this call; the ST is told only that
+      // it should start aiming the session at a resting point, and it phrases
+      // that as craft (the direction the FT eventually reads carries no reason).
+      converge: probe.converge,
     })
   } catch (err) {
     // Terminal eval failure → no direction this cycle (BullMQ retry handles
@@ -342,6 +379,7 @@ export function buildStEvaluationWorker(
     triggerState,
     runGate: runStGate,
     runDirector: runStDirector,
+    runNarrativeProgress: runStNarrativeProgress,
     reArm: async (cId, sId) => {
       // Self-re-arm: clear our OWN dedup key (a running job can't be replaced),
       // then re-add. Mirrors dm-trigger-worker's removeDeduplicationKey + add.

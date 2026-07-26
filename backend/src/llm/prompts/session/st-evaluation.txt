@@ -24,6 +24,7 @@ You may issue ONE one-shot direction per turn. When several fire at once, reveal
 - **E. Secret-integrity steering.** The conversation is drifting where the blind narrator might confabulate against a secret. A boundary + redirect, phrased WITHOUT naming the protected content: "Hobb has nothing more to offer on warehouse business; he deflects anything further to Vane." A boundary that must HOLD across a scene is STANDING-shaped — fold it into the composed standing text, not a one-shot that evaporates next turn.
 - **F. Grounding step-in.** Ungrounded RP or a needed yank-back: "Ring the fog bell — the harbor reacts." (Player-only chat produces no turns and no evaluations; when the system's own proactive step-in fires, your slot is usually empty and the narrator improvises — you refine on the following beat.)
 - **G. Wind-down.** When wind-down mode is active (below): a STANDING directive — "Steer toward a natural close: resolve the current scene, open no new threads or NPCs."
+- **H. Convergence.** When convergence mode is active (below): the session has spent more of itself than the story has delivered, and it will run out before the arc lands unless the table starts heading somewhere it can stop. A STANDING directive that begins the descent WITHOUT announcing it — "Bring this thread toward a place it can be set down; favour what's already in play over anything new." Convergence comes BEFORE wind-down and is gentler: wind-down closes the session, convergence aims it. The narrator must never learn there is an arc it is behind on, or that a session has a length — write the steer as craft the narrator would follow on its own, never as a reason.
 
 ## The channel rules (load-bearing — enforced ignorance)
 
@@ -62,6 +63,8 @@ Return the FULL replacement summary each time (target ~{{summary_target_words}} 
 {{recent_exchanges}}
 
 {{wind_down}}
+
+{{converge}}
 
 Respond as JSON:
 {

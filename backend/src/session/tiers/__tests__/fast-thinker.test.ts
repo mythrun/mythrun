@@ -506,6 +506,11 @@ describe('SonnetFastThinker.render', () => {
     const msg = await ft.render(makeCtx(), emit)
 
     expect(msg.usage).toEqual({ input: 900, output: 333 })
+    // myth-nu0hm — contextTokens is the FINAL STEP's input (50), NOT
+    // totalUsage's 900. totalUsage sums the prompt across every step, so a
+    // multi-step turn multi-counts the re-sent transcript; billing wants the
+    // sum, context-fill wants the last (largest) single prompt.
+    expect(msg.contextTokens).toBe(50)
   })
 
   it('10b. usage: missing token counts default to 0', async () => {
@@ -519,6 +524,29 @@ describe('SonnetFastThinker.render', () => {
     const msg = await ft.render(makeCtx(), emit)
 
     expect(msg.usage).toEqual({ input: 0, output: 0 })
+    // A usage object with no inputTokens yields no context reading at all —
+    // ABSENT, not 0. Absent means "no statement" downstream (the fraction falls
+    // back to the token term); a literal 0 would claim an empty window.
+    expect(msg.contextTokens).toBeUndefined()
+  })
+
+  it('10c. myth-nu0hm: a REJECTING step-usage costs the fraction, never the turn', async () => {
+    // stepUsage is read AFTER the prose has streamed and assembled. If it
+    // rejects, the turn is already good — degrade the progress number rather
+    // than throwing away a rendered turn. (ai.ts pre-handles the rejection, so
+    // awaiting it unguarded here would resurrect it as a throw.)
+    mockResult([{ type: 'text-delta', id: '1', text: 'the lamplighter turns' }], {
+      usage: Promise.reject(new Error('usage unavailable')),
+      totalUsage: Promise.resolve(makeUsage(900, 333)),
+    })
+    const ft = new SonnetFastThinker({ tools: {} })
+    const { emit } = makeEmitter()
+
+    const msg = await ft.render(makeCtx(), emit)
+
+    expect(msg.contextTokens).toBeUndefined()
+    expect(msg.usage).toEqual({ input: 900, output: 333 })
+    expect(msg.parts).toHaveLength(1)
   })
 
   it('11. advantage check: a non-null roll2 maps through to the frame (not nulled)', async () => {

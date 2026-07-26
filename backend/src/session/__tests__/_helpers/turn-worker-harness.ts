@@ -15,6 +15,7 @@ import type {
 import type { SessionMessage } from '../../../repo/types.js'
 import type { SessionLock, SessionLockHandle } from '../../session-lock.js'
 import type { TurnPublisher } from '../../turn-publisher.js'
+import type { SessionProgress } from '../../../contract/session-events.js'
 import { FAREWELL_DIRECTION, type TurnJobPayload } from '../../turn-queue.js'
 import type { TerminalFailureJob, TurnProcessorDeps, TurnWorkerRepo } from '../../turn-worker.js'
 
@@ -51,10 +52,14 @@ export interface PublisherCalls {
     participants: readonly unknown[]
     mode: string
   }[]
+  /** myth-nu0hm — the `progress` argument of each turnEnd call. `undefined`
+   *  entries are meaningful (the fraction was omitted), so this records EVERY
+   *  call, not just the ones that carried one. */
+  readonly turnEndProgress: (SessionProgress | undefined)[]
 }
 
 export function newCalls(): PublisherCalls {
-  return { order: [], turnErrorArgs: [], turnReplaceArgs: [] }
+  return { order: [], turnErrorArgs: [], turnReplaceArgs: [], turnEndProgress: [] }
 }
 
 export function recordingPublisher(calls: PublisherCalls): TurnPublisher {
@@ -67,8 +72,9 @@ export function recordingPublisher(calls: PublisherCalls): TurnPublisher {
       calls.order.push('text_delta')
       return Promise.resolve()
     }),
-    turnEnd: vi.fn((): Promise<void> => {
+    turnEnd: vi.fn((_campaignId: string, _turnId: string, progress?: SessionProgress): Promise<void> => {
       calls.order.push('turn_end')
+      calls.turnEndProgress.push(progress)
       return Promise.resolve()
     }),
     // myth-aiiao — the corrected-turn whole-turn-replace publish.

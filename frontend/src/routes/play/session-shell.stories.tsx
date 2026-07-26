@@ -110,6 +110,9 @@ function makeSession(): SessionView {
     thinking: false,
     typingUserIds: [],
     ended: false,
+    // myth-atxhx: a near-end session, so the story shows the position line AND the
+    // end control it gates (the specimen worth looking at).
+    progress: 0.85,
     sendMessage: () => undefined,
     summonDm: () => undefined,
     endSession: () => undefined,

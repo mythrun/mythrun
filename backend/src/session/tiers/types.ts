@@ -277,6 +277,17 @@ export interface AssistantMessage {
   readonly parts: readonly ContentPart[]
   /** totalUsage of the whole tool loop (all steps). */
   readonly usage?: TokenUsage
+  /** myth-nu0hm — the FINAL tool-loop step's INPUT tokens: how full the FT's
+   *  context window actually got this turn, and the input to the mechanical
+   *  session-progress fraction.
+   *
+   *  Deliberately NOT `usage.input`. That is `totalUsage`, the SUM across every
+   *  step, so a 4-step combat turn reports roughly 4x the transcript it actually
+   *  sent — enough to slam a monotonic progress bar to 100% on the first fight
+   *  and latch it there. The last step's prompt is the whole transcript plus
+   *  every tool exchange the turn accumulated, which is both the largest single
+   *  prompt of the turn and the honest fill measure. */
+  readonly contextTokens?: number
   /** MYT-73 §4.2 — the parsed `[[WORLD_DELTA]]` section the FT appended after its
    *  prose (the new named entities/facts introduced this turn, for the working
    *  set). The delimiter-guard strips the raw section from BOTH the live player

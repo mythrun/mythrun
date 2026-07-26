@@ -173,6 +173,30 @@ describe('useSession', () => {
     expect(result.current.typingUserIds).toEqual([])
   })
 
+  it('exposes the session-progress fraction — null until the wire carries one (myth-atxhx)', () => {
+    const t = makeFakeTransport()
+    const { result } = renderHook(() => useSession(ctx, params, { createClient: () => t.client }))
+    // The safe default the surface gates on: no signal yet, so no band and no
+    // end control.
+    expect(result.current.progress).toBeNull()
+    act(() => {
+      t.emit({ type: 'turn_end', turnId: 'T1', progress: { fraction: 0.75 } })
+    })
+    expect(result.current.progress).toBe(0.75)
+  })
+
+  it('un-blanks the readout from the RECONNECT replay, not just the next turn_end', () => {
+    // The join path: a player who leaves and comes back mid-session sees where the
+    // session is immediately, instead of a bandless surface (and no end control)
+    // until a turn happens to complete.
+    const t = makeFakeTransport()
+    const { result } = renderHook(() => useSession(ctx, params, { createClient: () => t.client }))
+    act(() => {
+      t.emit({ ...reconnectFrame([pm(1, 'we press on')]), progress: { fraction: 0.8 } })
+    })
+    expect(result.current.progress).toBe(0.8)
+  })
+
   it('optimistically adds an own message, sends it, and confirms on the echo', () => {
     const t = makeFakeTransport()
     const { result } = renderHook(() => useSession(ctx, params, { createClient: () => t.client }))
@@ -328,16 +352,17 @@ describe('foldOutOfBand', () => {
       thinkingTurnId: 'T',
       typingUserIds: [],
       ended: false,
+      progressFraction: null,
     })
   })
 
   it('clears the matching thinking turn on turn_end', () => {
-    const open = { thinkingTurnId: 'T', typingUserIds: [], ended: false }
+    const open = { thinkingTurnId: 'T', typingUserIds: [], ended: false, progressFraction: null }
     expect(foldOutOfBand(open, { type: 'turn_end', turnId: 'T' }).thinkingTurnId).toBeNull()
   })
 
   it('leaves a non-matching turn signal untouched (referentially stable)', () => {
-    const open = { thinkingTurnId: 'T', typingUserIds: [], ended: false }
+    const open = { thinkingTurnId: 'T', typingUserIds: [], ended: false, progressFraction: null }
     expect(foldOutOfBand(open, { type: 'text_delta', turnId: 'OTHER', text: 'x' })).toBe(open)
   })
 
@@ -354,7 +379,7 @@ describe('foldOutOfBand', () => {
   })
 
   it('removes a user on typing_stop', () => {
-    const typing = { thinkingTurnId: null, typingUserIds: ['p'], ended: false }
+    const typing = { thinkingTurnId: null, typingUserIds: ['p'], ended: false, progressFraction: null }
     expect(foldOutOfBand(typing, { type: 'typing_stop', userId: 'p' }).typingUserIds).toEqual([])
   })
 
@@ -363,7 +388,7 @@ describe('foldOutOfBand', () => {
   })
 
   it('resets a stuck indicator on session_reconnect', () => {
-    const open = { thinkingTurnId: 'T', typingUserIds: [], ended: false }
+    const open = { thinkingTurnId: 'T', typingUserIds: [], ended: false, progressFraction: null }
     expect(foldOutOfBand(open, reconnectFrame([])).thinkingTurnId).toBeNull()
   })
 
@@ -380,5 +405,54 @@ describe('foldOutOfBand', () => {
         characterName: 'C',
       }),
     ).toBe(emptyPresence)
+  })
+
+  // myth-atxhx: the session-progress fraction rides turn_end / session_ready.
+  it('takes the progress fraction off a turn_end WITHOUT disturbing the thinking clear', () => {
+    const open = { thinkingTurnId: 'T', typingUserIds: [], ended: false, progressFraction: null }
+    const next = foldOutOfBand(open, { type: 'turn_end', turnId: 'T', progress: { fraction: 0.45 } })
+    expect(next.progressFraction).toBe(0.45)
+    expect(next.thinkingTurnId).toBeNull()
+  })
+
+  it('takes the progress fraction off a session_ready (otherwise an inert frame)', () => {
+    expect(foldOutOfBand(emptyPresence, { type: 'session_ready', progress: { fraction: 0.7 } }).progressFraction).toBe(
+      0.7,
+    )
+  })
+
+  it('holds the last fraction when a later frame carries none (never resets to blank)', () => {
+    const seen = foldOutOfBand(emptyPresence, { type: 'turn_end', turnId: 'T1', progress: { fraction: 0.8 } })
+    expect(foldOutOfBand(seen, { type: 'turn_end', turnId: 'T2' }).progressFraction).toBe(0.8)
+  })
+
+  it('is referentially stable when the fraction repeats (the coarse 0.05 wire repeats often)', () => {
+    const seen = foldOutOfBand(emptyPresence, { type: 'session_ready', progress: { fraction: 0.5 } })
+    expect(foldOutOfBand(seen, { type: 'turn_end', turnId: 'T', progress: { fraction: 0.5 } })).toBe(seen)
+  })
+
+  it('takes the progress fraction off a session_reconnect WITHOUT disturbing the stuck-indicator reset', () => {
+    // This is the arm a real client actually receives on every connect (the
+    // transport always sends lastSeq=0, so the server never sends session_ready).
+    const open = { thinkingTurnId: 'T', typingUserIds: [], ended: false, progressFraction: null }
+    const next = foldOutOfBand(open, { ...reconnectFrame([]), progress: { fraction: 0.9 } })
+    expect(next.progressFraction).toBe(0.9)
+    expect(next.thinkingTurnId).toBeNull()
+  })
+
+  it('holds the last fraction on a progress-less session_reconnect (the corrected-turn replace)', () => {
+    // turnPublisher.turnReplace rides session_reconnect and publishes no progress.
+    // An audit-corrected retry must not blank the readout back to nothing.
+    const seen = foldOutOfBand(emptyPresence, { type: 'turn_end', turnId: 'T1', progress: { fraction: 0.75 } })
+    expect(foldOutOfBand(seen, reconnectFrame([])).progressFraction).toBe(0.75)
+  })
+
+  it('passes the server fraction through verbatim — the client adds no second opinion', () => {
+    // Monotonicity + 0.05 coarseness are the server's job (myth-nu0hm). A client
+    // that re-derived either would eventually disagree with the wire.
+    const first = foldOutOfBand(emptyPresence, { type: 'turn_end', turnId: 'T1', progress: { fraction: 0.6 } })
+    expect(foldOutOfBand(first, { type: 'turn_end', turnId: 'T2', progress: { fraction: 0.55 } }).progressFraction).toBe(
+      0.55,
+    )
   })
 })

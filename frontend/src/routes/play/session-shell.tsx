@@ -9,6 +9,8 @@ import {
   useInvalidateBalance,
   useKnowledgeCache,
   useSessionSheet,
+  canOfferEnd,
+  progressBand,
   type ApiContext,
   type KnowledgeCache,
   type KnowledgeCacheDeps,
@@ -19,7 +21,7 @@ import {
 } from '@mythrun/client-core'
 import { snapshotToGraph } from '@mythrun/client-core/worldgen'
 import type { RollCardLabels } from '@mythrun/client-core/contract'
-import { MessageStream, ThinkingIndicator, SessionInput } from '@mythrun/ui'
+import { MessageStream, ThinkingIndicator, SessionInput, SessionProgressLine, Stack } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { SessionCompleteNotice, NoCharacterNotice } from './notices.tsx'
@@ -57,6 +59,9 @@ import {
 //     display names via the campaign roster (unknown ids omitted).
 //   • the SESSION END → recap landing — a `session_end` shows the brief "complete"
 //     transition and navigates to the recap route (the recap READ is a filed bead).
+//   • the SESSION-POSITION chrome (myth-atxhx) — the wire's mechanical progress
+//     fraction, banded into one quiet line, and the same signal GATING the two
+//     voluntary end affordances (see the derivation comment below).
 //
 // Layout: a full-height flex row — the transcript column (flex-1, min-w-0) beside the
 // MYT-94 knowledge sidebar (`KnowledgePanel`: a collapsible ~30% desktop rail, the
@@ -130,7 +135,7 @@ export function SessionShell({
   // The view-model exposes send/summon as METHODS (not arrow props), so call them on
   // `session` rather than destructuring a bare unbound reference (@typescript-eslint/
   // unbound-method). The data fields are plain values — safe to destructure.
-  const { items, connection, thinking, typingUserIds, ended } = session
+  const { items, connection, thinking, typingUserIds, ended, progress } = session
 
   // The dice-moment reveal (MYT-93, spec §5). PRESENTATION ONLY — the roll arrived
   // whole in the skill_check/dice_roll frame; this layer just delays the DISPLAY and
@@ -172,12 +177,32 @@ export function SessionShell({
     session.endSession()
   }
 
+  // myth-atxhx: WHERE THE SESSION IS, and what that permits.
+  //
+  // A Mythrun session is a play UNIT, not a sitting: leaving is free and rejoining
+  // is the normal case, and the credit is debited at session START — so ending
+  // early refunds nothing and destroys what the player already paid for. That makes
+  // an always-available end control a footgun, and it is now GATED on the mechanical
+  // progress signal (client-core owns both derivations; the shell only reads them):
+  //   • the band drives one quiet line of chrome (never the raw fraction — it is
+  //     cost-derived, and a rendered percentage reads as money spent);
+  //   • `canOfferEnd` mounts the end control only near the end, where "end here, on
+  //     this beat" becomes craft: the player chooses the landing instead of letting
+  //     the budget cliff pick a random mid-scene moment.
+  // With NO signal (a pre-first-turn join, an older frame) both are absent — the
+  // safe default for a control that cannot be undone.
+  const band = progressBand(progress)
+  const endAvailable = canOfferEnd(progress)
+
   // myth-lhp99: the wind-down offer keys off the STRUCTURED long-rest signal (a
   // live `ledger_update` with restType==='long'), never the summary prose. It shows
   // once per detected rest until the player dismisses it ("Keep playing") or ends.
+  // myth-atxhx: it carries the SAME gate as the end control — it ends the session
+  // too, so a long rest at 15% would otherwise be an invitation to destroy a paid
+  // session at the one moment it feels most natural to accept.
   const longRestTurn = useMemo(() => latestLiveLongRestTurn(items), [items])
   const [dismissedRestTurn, setDismissedRestTurn] = useState<string | null>(null)
-  const showWindDown = longRestTurn !== null && longRestTurn !== dismissedRestTurn && !ending
+  const showWindDown = longRestTurn !== null && longRestTurn !== dismissedRestTurn && !ending && endAvailable
 
   // myth-dd63v / myth-0q8jm: the composer is subordinated whenever SENDING is not
   // the expected next action, and the caption names the BLOCKING PARTY — the one
@@ -193,7 +218,7 @@ export function SessionShell({
     prompt: t('play.end.prompt'),
     confirm: t('play.end.confirm'),
     cancel: t('play.end.cancel'),
-    credit: t('play.end.credit'),
+    disclosure: t('play.end.disclosure'),
   }
   const windDownLabels: WindDownLabels = {
     prompt: t('play.windDown.prompt'),
@@ -276,17 +301,23 @@ export function SessionShell({
       {/* The transcript column — flex-1, min-w-0 so long prose never spills the row. */}
       {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- transcript column min-h-0/min-w-0 flex-scroll root; not expressible via @mythrun/ui Stack props */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-2)] p-[var(--space-4)]">
-        {/* The persistent end-session control (myth-lhp99 / myth-xxyo9) — true
-            fixed chrome: the column is viewport-bounded, so this row never scrolls
-            away and stays reachable from the live edge. The px inset matches the
-            stream's own padding, so the control shares the transcript grid line.
-            myth-88lmb: the moment the confirm lands (`ending`) the whole control
-            is SWEPT — a stale question with one dead button must not keep asking;
-            the ONE end-transition signal lives at the live edge below. */}
-        {!ending && (
+        {/* The between-turns chrome row (myth-lhp99 / myth-xxyo9 / myth-atxhx) —
+            true fixed chrome: the column is viewport-bounded, so this row never
+            scrolls away and stays reachable from the live edge. The px inset
+            matches the stream's own padding, so it shares the transcript grid
+            line. It carries the quiet session-position line on the left and, ONLY
+            near the end, the end control on the right; with neither the row is
+            absent entirely rather than sitting empty.
+            myth-88lmb: the moment the confirm lands (`ending`) the whole row is
+            SWEPT — a stale question with one dead button must not keep asking; the
+            ONE end-transition signal lives at the live edge below. */}
+        {!ending && (band !== null || endAvailable) && (
           // eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- grid-line inset wrapper (matches the stream's px)
           <div className="px-[var(--space-4)]">
-            <EndSessionControl labels={endLabels} onEnd={endSession} />
+            <Stack direction="row" gap={3} align="center" justify="between" wrap>
+              {band !== null && <SessionProgressLine band={band} label={t(`play.progress.${band}`)} />}
+              {endAvailable && <EndSessionControl labels={endLabels} onEnd={endSession} />}
+            </Stack>
           </div>
         )}
         {/* The scroll slot — MessageStream is `h-full`, so it fills this flex-1

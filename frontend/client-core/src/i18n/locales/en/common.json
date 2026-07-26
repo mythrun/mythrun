@@ -625,7 +625,7 @@
       "closing": "The DM is closing the session…",
       "confirm": "End session",
       "control": "End session",
-      "credit": "This session used one credit.",
+      "disclosure": "This session can't be resumed once it ends. The credit is already spent.",
       "prompt": "End the session?"
     },
     "error": {
@@ -707,6 +707,12 @@
       "label": "The DM is preparing the next session…",
       "safeToLeave": "Safe to leave. The table will be set when you return.",
       "settlingLabel": "Your character is settling into the world…"
+    },
+    "progress": {
+      "close": "The last stretch",
+      "early": "Early in the session",
+      "late": "Nearing the end",
+      "middle": "Midway through the session"
     },
     "purchase": {
       "notOwner": {

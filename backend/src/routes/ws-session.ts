@@ -78,6 +78,7 @@ import {
   type ClientFrame,
   type ParticipantSummary,
   type ServerFrame,
+  type SessionProgress,
 } from '../contract/session-events.js'
 
 /** The raw inbound-message payload `ws` hands the 'message' listener. `ws`
@@ -433,7 +434,33 @@ async function handleConnection(
       if (!alreadyPresent) {
         await hub.publish(campaignId, { type: 'player_joined', userId, displayName, characterName })
       }
-      socket.send(JSON.stringify({ type: 'session_ready' }))
+      // myth-nu0hm — carry the session-progress floor on the first frame so a
+      // joining client renders the real fraction immediately instead of sitting
+      // at empty until the next turn completes. Read-only (the floor is raised
+      // by the turn worker alone) and OMITTED on 0 / on any read failure, since
+      // an absent field means "no statement" and a fresh session has nothing to
+      // say yet. Own guard: session_ready is the frame that opens the socket —
+      // a progress hiccup must never cost the player their connection.
+      //
+      // ⚠️ IF YOUR BREAKPOINT HERE NEVER HITS, THAT IS EXPECTED: this whole
+      // `else` arm is UNREACHABLE for the shipped web client. `useSession`
+      // connects with `{ seedLastSeq: 0 }` (client-core session/use-session.ts),
+      // `buildWsUrl` only omits the param when the seq is `null` (`0 !== null`),
+      // so the upgrade URL always carries `lastSeq=0`; `parseLastSeq` below
+      // accepts 0 as a valid seq, and `handleConnect` takes the RECONNECT branch
+      // instead. Only a client that never seeds — the ws-transport smoke script,
+      // curl — lands here. The progress carrier that reaches real players is the
+      // one on `session_reconnect` in buildReconnectFrame; keep the two in sync.
+      let progress: SessionProgress | undefined
+      try {
+        const fraction = await sessionState.progressFraction(campaignId)
+        if (fraction > 0) progress = { fraction }
+      } catch (err) {
+        ctx.app.log.error({ err, campaignId }, 'failed to read session progress for session_ready')
+      }
+      socket.send(
+        JSON.stringify({ type: 'session_ready', ...(progress !== undefined ? { progress } : {}) }),
+      )
     }
 
     startHeartbeat(ctx, socket, campaignId, userId, connId)
@@ -487,7 +514,15 @@ async function handleConnection(
  *  or non-integer (NaN / float / out-of-range) is a fresh connect → null, and
  *  the connect path sends session_ready unchanged. Structural validation at
  *  the transport boundary (ZFC structural exception), mirroring
- *  parseClientFrame's drop-on-malformed posture. */
+ *  parseClientFrame's drop-on-malformed posture.
+ *
+ *  NOTE (myth-nu0hm) — ZERO IS A VALID SEQ, and that has a bigger consequence
+ *  than it looks: the shipped web client seeds `lastSeqForUrl` with 0, so every
+ *  real connection (first join included) arrives as `lastSeq=0` and takes the
+ *  RECONNECT branch. `session_ready` is effectively dead code in production —
+ *  only a never-seeding client (the ws-transport smoke, curl) reaches it. Any
+ *  per-connect payload must therefore ride `session_reconnect` to reach players;
+ *  putting it only on `session_ready` looks correct and silently ships nothing. */
 function parseLastSeq(raw: string | undefined): number | null {
   if (raw === undefined || raw === '') return null
   const n = Number(raw)
@@ -522,12 +557,21 @@ async function buildReconnectFrame(
   lastSeq: number,
 ): Promise<Extract<ServerFrame, { type: 'session_reconnect' }>> {
   const { repo, sessionState } = ctx.deps
-  const [rows, participantRows, members, characters, state] = await Promise.all([
+  // myth-nu0hm — the session-progress floor joins the existing parallel fan-out
+  // (no added round-trip depth on the connect path). This is the arm that
+  // actually reaches players: the shipped client always sends `lastSeq=0`, so
+  // every real join lands here rather than on `session_ready`. Fail-soft to 0 so
+  // a progress hiccup can never cost a reconnecting player their replay.
+  const [rows, participantRows, members, characters, state, progressFraction] = await Promise.all([
     repo.sessionMessages.listAfterSeq(sessionId, lastSeq),
     repo.sessionParticipants.list(sessionId),
     repo.campaigns.listMembers(campaignId),
     repo.characters.listForCampaign(campaignId),
     sessionState.getState(campaignId),
+    sessionState.progressFraction(campaignId).catch((err: unknown) => {
+      ctx.app.log.error({ err, campaignId }, 'failed to read session progress for session_reconnect')
+      return 0
+    }),
   ])
 
   // userId -> displayName / characterName. Campaign-wide, built once.
@@ -569,6 +613,9 @@ async function buildReconnectFrame(
     messages,
     participants,
     mode,
+    // Omitted at 0 (a session that has published no progress yet) — absence is
+    // "no statement", a 0 would be a claim.
+    ...(progressFraction > 0 ? { progress: { fraction: progressFraction } } : {}),
   }
 }
 
