@@ -74,8 +74,11 @@ export const ST_EVAL_TIMEOUT_MS = 120_000
 export const ST_GATE_TIMEOUT_MS = 30_000
 
 /** reasoning + direction + a FULL summary rewrite is long; the SDK default
- *  truncates (§4). */
-export const ST_EVAL_MAX_OUTPUT_TOKENS = 4_000
+ *  truncates (§4). Raised 4_000 -> 16_000 for the Opus 5 bump — adaptive
+ *  thinking is on by default and shares this ceiling with the rewrite, and the
+ *  director's evaluation is the call where deep thinking is most wanted and
+ *  most expensive in tokens. ST_EVAL_TIMEOUT_MS remains the wall-clock guard. */
+export const ST_EVAL_MAX_OUTPUT_TOKENS = 16_000
 
 /** The rewrite-semantics target (the prompt instructs this; not enforced in
  *  code — a hard max on prose is forbidden, feedback_no_max_on_llm_prose_fields). */

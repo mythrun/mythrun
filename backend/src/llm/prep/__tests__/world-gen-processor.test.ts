@@ -555,7 +555,7 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     wrapperErr.diagnostic = {
       callSite: 'concept-intake/generator',
       schemaName: 'ConceptIntakeSchema',
-      modelId: 'claude-sonnet-4-6',
+      modelId: 'claude-sonnet-5',
       repairStrategy: 'sonnet',
       repairAttempted: true,
       repairOutcome: 'sonnet_failed',
@@ -1001,7 +1001,7 @@ describe('sanitizeError', () => {
     ;(err as { diagnostic?: unknown }).diagnostic = {
       callSite: 'paint-job-validator/judge',
       schemaName: 'PaintJobJudgeSchema',
-      modelId: 'claude-sonnet-4-6',
+      modelId: 'claude-sonnet-5',
       repairStrategy: 'sonnet',
       repairAttempted: true,
       repairOutcome: 'sonnet_failed',
@@ -1032,7 +1032,7 @@ describe('sanitizeError', () => {
     ;(err as { diagnostic?: unknown }).diagnostic = {
       callSite: 'huge/snippet',
       schemaName: 'BigSchema',
-      modelId: 'claude-sonnet-4-6',
+      modelId: 'claude-sonnet-5',
       repairStrategy: 'sonnet',
       repairAttempted: true,
       repairOutcome: 'sonnet_failed',

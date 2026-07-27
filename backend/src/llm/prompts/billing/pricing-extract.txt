@@ -2,7 +2,7 @@ You are extracting the API pricing table from an Anthropic documentation page. T
 
 Rules for extraction:
 
-1. Extract one entry per Claude model that has pricing rates listed on the page (e.g., "Claude Opus 4.7", "Claude Sonnet 4.6", "Claude Haiku 4.5"). Use the exact display name as it appears on the page (the human-readable name, not the SDK slug).
+1. Extract one entry per Claude model that has pricing rates listed on the page (e.g., "Claude Opus 5", "Claude Sonnet 5", "Claude Haiku 4.5"). Use the exact display name as it appears on the page (the human-readable name, not the SDK slug).
 
 2. Each entry must have four numeric rates, all in USD per million tokens (USD/MTok):
    - inputPerMTok: the base prompt token rate.

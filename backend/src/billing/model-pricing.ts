@@ -19,9 +19,21 @@
 //
 // Spec: docs/superpowers/specs/2026-05-08-myt-43-billing-metering-design.md §5
 
+// Keys track the models we actually call (llm/models.ts). Superseded models are
+// removed rather than kept: a stale key is silently dead weight, and the
+// `Model` type is what forces every call site to be revisited on a bump.
+// Historical spend is unaffected — costs are computed at call time and stored
+// as USD, so nothing re-prices an old row through this table.
+//
+// NOTE (2026-07-26): Claude Sonnet 5 carries introductory pricing of $2/$10 per
+// MTok through 2026-08-31, after which it reverts to the $3/$15 recorded here.
+// We hold the sticker rate deliberately — it is the durable number, and
+// over-stating cost is the safe direction for cost-cap signaling. Expect the
+// daily drift check to flag Sonnet input/output until 2026-09-01; that alarm is
+// the known introductory discount, not a real drift.
 export const MODEL_PRICING = {
-  'claude-opus-4-7': { input: 5.0, output: 25.0, cacheWrite: 6.25, cacheRead: 0.5 },
-  'claude-sonnet-4-6': { input: 3.0, output: 15.0, cacheWrite: 3.75, cacheRead: 0.3 },
+  'claude-opus-5': { input: 5.0, output: 25.0, cacheWrite: 6.25, cacheRead: 0.5 },
+  'claude-sonnet-5': { input: 3.0, output: 15.0, cacheWrite: 3.75, cacheRead: 0.3 },
   'claude-haiku-4-5-20251001': { input: 1.0, output: 5.0, cacheWrite: 1.25, cacheRead: 0.1 },
 } as const
 
@@ -29,8 +41,8 @@ export const MODEL_PRICING = {
  *  Used by the daily price-check; the docs page lists models by display
  *  name only, not by SDK slug. */
 export const MODEL_DISPLAY_NAMES: Record<string, keyof typeof MODEL_PRICING> = {
-  'Claude Opus 4.7': 'claude-opus-4-7',
-  'Claude Sonnet 4.6': 'claude-sonnet-4-6',
+  'Claude Opus 5': 'claude-opus-5',
+  'Claude Sonnet 5': 'claude-sonnet-5',
   'Claude Haiku 4.5': 'claude-haiku-4-5-20251001',
 }
 

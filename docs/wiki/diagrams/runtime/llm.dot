@@ -35,7 +35,7 @@ digraph llm {
     sdk_anth  [label="@ai-sdk/anthropic\nreads ANTHROPIC_API_KEY"];
   }
 
-  anthropic [label="Anthropic API\nclaude-haiku-4-5\nclaude-sonnet-4-6\nclaude-opus-4-7", color="ember", fontcolor="ember"];
+  anthropic [label="Anthropic API\nclaude-haiku-4-5\nclaude-sonnet-5\nclaude-opus-5", color="ember", fontcolor="ember"];
 
   // Caller path
   caller    -> profanity   [label="classifyProfanity(text)"];

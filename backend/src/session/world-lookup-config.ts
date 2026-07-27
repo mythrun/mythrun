@@ -53,6 +53,9 @@ export const ST_LOOKUP_VET_MODEL = OPUS
  *  terminal-fail the turn. 45s leaves the gate (~30s) + resolver + two Sonnet
  *  passes room. NOT the 120s async ST_EVAL_TIMEOUT_MS. */
 export const ST_LOOKUP_VET_TIMEOUT_MS = 45_000
-/** A relay/invention is 1–3 sentences; pin modestly so a runaway can't eat the
- *  turn budget. */
-export const ST_LOOKUP_VET_MAX_OUTPUT_TOKENS = 1_200
+/** A relay/invention is 1–3 sentences. Raised 1_200 -> 6_000 for the Opus 5
+ *  bump: thinking is on by default on the 5 line and shares this ceiling with
+ *  the visible output, so a cap sized for the sentences alone would truncate.
+ *  The runaway guard this comment used to lean on is wall-clock, not tokens —
+ *  ST_LOOKUP_VET_TIMEOUT_MS still fires well inside the FT turn budget. */
+export const ST_LOOKUP_VET_MAX_OUTPUT_TOKENS = 6_000

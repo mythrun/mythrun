@@ -3,8 +3,8 @@ import { MODEL_DISPLAY_NAMES, MODEL_PRICING, computeCostUsd } from '../model-pri
 
 describe('MODEL_PRICING', () => {
   it('contains the three Mythrun-known model slugs', () => {
-    expect(MODEL_PRICING).toHaveProperty('claude-opus-4-7')
-    expect(MODEL_PRICING).toHaveProperty('claude-sonnet-4-6')
+    expect(MODEL_PRICING).toHaveProperty('claude-opus-5')
+    expect(MODEL_PRICING).toHaveProperty('claude-sonnet-5')
     expect(MODEL_PRICING).toHaveProperty('claude-haiku-4-5-20251001')
   })
 
@@ -50,7 +50,7 @@ describe('computeCostUsd', () => {
   })
 
   it('sonnet 100K cacheWrite + 1M cacheRead: 0.375 + 0.30 = 0.675', () => {
-    const cost = computeCostUsd('claude-sonnet-4-6', {
+    const cost = computeCostUsd('claude-sonnet-5', {
       inputTokens: 0,
       outputTokens: 0,
       cacheWriteTokens: 100_000,
@@ -60,7 +60,7 @@ describe('computeCostUsd', () => {
   })
 
   it('opus mixed: weighted sum of contributions', () => {
-    const cost = computeCostUsd('claude-opus-4-7', {
+    const cost = computeCostUsd('claude-opus-5', {
       inputTokens: 10_000,
       outputTokens: 5_000,
       cacheWriteTokens: 2_000,
@@ -81,7 +81,7 @@ describe('computeCostUsd', () => {
 
   it('throws when 1-hour cache tokens are passed in', () => {
     expect(() =>
-      computeCostUsd('claude-sonnet-4-6', {
+      computeCostUsd('claude-sonnet-5', {
         inputTokens: 100,
         outputTokens: 100,
         cacheWrite1hTokens: 1,

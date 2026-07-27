@@ -129,7 +129,6 @@ describe('streamSynthesizeConcept', () => {
     expect(call).toMatchObject({
       callSite: 'synthesize-concept-stream',
       schemaName: 'SynthesizerOutput',
-      temperature: 0.9,
       abortSignal: ac.signal,
     })
     expect(call?.timeoutMs).toBeGreaterThan(0)
@@ -180,7 +179,6 @@ describe('streamSynthesizeFromConcept', () => {
       // paths apart without a second schema.
       callSite: 'synthesize-freeform-stream',
       schemaName: 'SynthesizerOutput',
-      temperature: 0.9,
       abortSignal: ac.signal,
     })
     expect(call?.prompt).toContain('UNIQUE_PLAYER_CONCEPT_Z')

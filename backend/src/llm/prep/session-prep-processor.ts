@@ -29,7 +29,7 @@
 // session attempt can succeed. We intentionally do NOT call
 // `repo.campaigns.setFailed`.
 //
-// Cost: priced on Opus rates via `computeCostUsd('claude-opus-4-7', …)`,
+// Cost: priced on Opus rates via `computeCostUsd(OPUS_ID, …)`,
 // mirroring paint-job-validator.ts. The stage runs entirely on Opus
 // (session-prep.ts uses the OPUS model constant), so a single-tier price is
 // correct here.
@@ -45,6 +45,7 @@ import { runSecretTripwire } from '../secret-tripwire.js'
 import { buildPriorSessionContext } from './prior-session-context.js'
 import { createRepo } from '../../repo/index.js'
 import { computeCostUsd } from '../../billing/model-pricing.js'
+import { OPUS_ID } from '../models.js'
 import type { SessionHandoff } from '../schemas/post-session-analysis.js'
 
 // Caps the prep's prior-summary fan-in (and the handoff lookback window). The
@@ -181,7 +182,7 @@ export async function processSessionPrepJob(
     // undefined arms never fire in practice — exclude them from branch coverage.
     /* c8 ignore start */
     const costUsd =
-      computeCostUsd('claude-opus-4-7', {
+      computeCostUsd(OPUS_ID, {
         inputTokens: result.usage.inputTokens ?? 0,
         outputTokens: result.usage.outputTokens ?? 0,
       }) +

@@ -363,7 +363,6 @@ export async function runEntityRelationshipsStage(
     model: SONNET,
     schema: EntityRelationshipsSchema,
     prompt,
-    temperature: 0.4,
     maxRetries: 0,
     callSite: 'entity-relationships',
     schemaName: 'EntityRelationshipsSchema',

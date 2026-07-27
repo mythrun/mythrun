@@ -130,7 +130,6 @@ export async function runCharacterConceptStage(
     schemaName: 'CharacterConceptOutputSchema',
     callSite: 'character-concept',
     prompt,
-    temperature: 0.7,
     maxRetries: 3,
   })
 

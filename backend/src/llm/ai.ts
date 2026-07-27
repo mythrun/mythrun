@@ -132,7 +132,6 @@ export interface GenerateObjectOpts<T> {
   readonly prompt: string
   readonly callSite: string
   readonly system?: string
-  readonly temperature?: number
   readonly maxRetries?: number
   readonly providerOptions?: unknown
   readonly schemaName?: string
@@ -177,7 +176,6 @@ export interface StreamObjectOpts<T> {
   readonly schema: z.ZodType<T>
   readonly prompt: string
   readonly callSite: string
-  readonly temperature?: number
   readonly maxRetries?: number
   readonly providerOptions?: unknown
   readonly schemaName?: string
@@ -198,7 +196,6 @@ export interface GenerateTextOpts {
   readonly model: LanguageModel
   readonly prompt: string
   readonly system?: string
-  readonly temperature?: number
   readonly maxRetries?: number
   readonly providerOptions?: unknown
   /** myth-4omh: see GenerateObjectOpts.timeoutMs. */
@@ -576,7 +573,6 @@ export async function generateObject<T>(
           ? AbortSignal.any([timeout.signal, opts.abortSignal])
           : timeout.signal,
       ...(opts.system !== undefined ? { system: opts.system } : {}),
-      ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
       ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
       ...(opts.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),
       ...(opts.providerOptions !== undefined
@@ -664,7 +660,6 @@ export function streamObject<T>(
       opts.abortSignal !== undefined
         ? AbortSignal.any([timeout.signal, opts.abortSignal])
         : timeout.signal,
-    ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
     ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
     ...(opts.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),
     ...(opts.providerOptions !== undefined
@@ -751,7 +746,6 @@ export async function generateText(opts: GenerateTextOpts): Promise<GenerateText
       prompt: opts.prompt,
       abortSignal: timeout.signal,
       ...(opts.system !== undefined ? { system: opts.system } : {}),
-      ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
       ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
       ...(opts.providerOptions !== undefined
         ? {

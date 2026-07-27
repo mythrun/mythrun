@@ -103,7 +103,6 @@ export async function generateWorldIntroduction(
     schema: WorldIntroductionSchema,
     schemaName: 'WorldIntroductionSchema',
     prompt,
-    temperature: 0.7,
     maxRetries: 0,
     callSite: 'world-introduction',
     repairStrategy: 'haiku-then-sonnet',

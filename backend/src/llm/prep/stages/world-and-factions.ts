@@ -39,7 +39,7 @@ import { resolve, dirname } from 'node:path'
 // chain on LlmStructuredOutputError from the underlying SDK call.
 import { streamObject } from '../../ai.js'
 import { resolveIncludes } from '../../prompts.js'
-import { OPUS } from '../../models.js'
+import { OPUS, OPUS_ID } from '../../models.js'
 import { computeCostUsd } from '../../../billing/model-pricing.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
 import { runStreamingStage } from '../streaming-extractor.js'
@@ -186,7 +186,6 @@ export async function runWorldAndFactionsStage(
     model: OPUS,
     schema: WorldAndFactionsSchema,
     prompt,
-    temperature: 0.7,
     maxRetries: 0,
     callSite: 'world-and-factions',
     schemaName: 'WorldAndFactionsSchema',
@@ -234,7 +233,7 @@ export async function runWorldAndFactionsStage(
   const opusInputTokens = usage.inputTokens ?? 0
   const opusOutputTokens = usage.outputTokens ?? 0
   /* c8 ignore stop */
-  const opusCostUsd = computeCostUsd('claude-opus-4-7', {
+  const opusCostUsd = computeCostUsd(OPUS_ID, {
     inputTokens: opusInputTokens,
     outputTokens: opusOutputTokens,
   })

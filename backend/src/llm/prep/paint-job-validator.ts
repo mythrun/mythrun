@@ -30,7 +30,7 @@ import { generateObject } from '../ai.js'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve, dirname } from 'node:path'
-import { OPUS, SONNET } from '../models.js'
+import { OPUS, SONNET, OPUS_ID, SONNET_ID } from '../models.js'
 import { computeCostUsd } from '../../billing/model-pricing.js'
 
 const JUDGE_TEMPLATE = readFileSync(
@@ -154,7 +154,6 @@ export async function validateAndGenerateConcept<TDraft>(
       // Function replacer: the draft is LLM output (JSON.stringify does not
       // escape `$`), so a `$&`/`$'` sequence in it must splice in literally.
       prompt: JUDGE_TEMPLATE.replace('{{draft}}', () => JSON.stringify(genResult.output, null, 2)),
-      temperature: 0.1,
       maxRetries: 3,
       callSite: 'paint-job-validator/judge',
       schemaName: 'PaintJobJudgementSchema',
@@ -169,8 +168,8 @@ export async function validateAndGenerateConcept<TDraft>(
         adjacentFranchise: judgeResult.output.adjacentFranchise,
         totalUsage: addUsage(generatorUsage, judgeUsage),
         costUsd:
-          computeCostUsd('claude-opus-4-7', generatorUsage) +
-          computeCostUsd('claude-sonnet-4-6', judgeUsage),
+          computeCostUsd(OPUS_ID, generatorUsage) +
+          computeCostUsd(SONNET_ID, judgeUsage),
       }
     }
   }

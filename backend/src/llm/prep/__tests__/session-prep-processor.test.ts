@@ -115,7 +115,7 @@ const STAGE_USAGE = {
   outputTokenDetails: { textTokens: 9000, reasoningTokens: 0 },
 } as const
 
-// Opus rates from MODEL_PRICING['claude-opus-4-7']: input 5.0, output 25.0
+// Opus rates from MODEL_PRICING['claude-opus-5']: input 5.0, output 25.0
 // per million. (5000*5 + 9000*25) / 1e6 = (25000 + 225000) / 1e6 = 0.25.
 // MYT-101: the opening tripwire (Haiku) usage folded into the stage cost.
 // Haiku rates from MODEL_PRICING: input 1.0, output 5.0 per million.

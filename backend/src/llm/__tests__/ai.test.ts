@@ -88,7 +88,7 @@ describe('generateObject', () => {
     expect(mockGenerateText).toHaveBeenCalledOnce()
   })
 
-  it('forwards temperature, maxRetries, providerOptions, schemaName to the SDK', async () => {
+  it('forwards maxRetries, providerOptions, schemaName to the SDK', async () => {
     mockGenerateText.mockResolvedValueOnce({
       output: { name: 'Bob' },
       usage: makeUsage(),
@@ -99,7 +99,6 @@ describe('generateObject', () => {
       schema: TestSchema,
       prompt: 'pick a name',
       callSite: 'test/forward-opts',
-      temperature: 0.42,
       maxRetries: 2,
       providerOptions: { mythrun: { stage: 'concept_intake' } },
       schemaName: 'TestSchema',
@@ -109,7 +108,6 @@ describe('generateObject', () => {
     expect(callArgs).toMatchObject({
       model: SONNET,
       prompt: 'pick a name',
-      temperature: 0.42,
       maxRetries: 2,
     })
     expect(callArgs.providerOptions).toEqual({ mythrun: { stage: 'concept_intake' } })
@@ -943,7 +941,6 @@ describe('streamObject', () => {
       schema: TestSchema,
       prompt: 'name something',
       callSite: 'test/stream-forward',
-      temperature: 0.8,
       maxRetries: 0,
       providerOptions: { mythrun: { stage: 'world_and_factions' } },
     })
@@ -953,7 +950,6 @@ describe('streamObject', () => {
       model: SONNET,
       schema: TestSchema,
       prompt: 'name something',
-      temperature: 0.8,
       maxRetries: 0,
     })
     expect(callArgs.providerOptions).toEqual({ mythrun: { stage: 'world_and_factions' } })
@@ -981,7 +977,7 @@ describe('generateText (passthrough)', () => {
     expect(result.usage.totalTokens).toBe(25)
   })
 
-  it('forwards temperature/maxRetries/providerOptions through', async () => {
+  it('forwards maxRetries/providerOptions through', async () => {
     mockGenerateText.mockResolvedValueOnce({
       text: 'x',
       usage: makeUsage(),
@@ -990,13 +986,12 @@ describe('generateText (passthrough)', () => {
     await wrapperGenerateText({
       model: SONNET,
       prompt: 'p',
-      temperature: 0.2,
       maxRetries: 5,
       providerOptions: { mythrun: { stage: 'concept_intake' } },
     })
 
     const callArgs = mockGenerateText.mock.calls[0]?.[0] as unknown as Record<string, unknown>
-    expect(callArgs).toMatchObject({ model: SONNET, prompt: 'p', temperature: 0.2, maxRetries: 5 })
+    expect(callArgs).toMatchObject({ model: SONNET, prompt: 'p', maxRetries: 5 })
     expect(callArgs.providerOptions).toEqual({ mythrun: { stage: 'concept_intake' } })
   })
 

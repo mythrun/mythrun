@@ -47,7 +47,6 @@ export async function reviseConcept(
     model: SONNET,
     schema: SynthesizerOutput,
     prompt: buildPrompt(prior, changeNote),
-    temperature: 0.9,
     maxRetries: 3,
     callSite: 'revise-concept',
     schemaName: 'SynthesizerOutput',

@@ -3,7 +3,7 @@
 <!-- source: backend/src/worker/bullmq-config.ts -->
 <!-- source: backend/.env.development.example -->
 <!-- source: backend/package.json -->
-<!-- source-hash: sha256:12aa3d6acc42a06d2fe76a80301e0f0f04202e5353e5eca82f98f05e1e107ade -->
+<!-- source-hash: sha256:439a2678f2d770b5868210049e245307d1ead80303012af32eb25a7af77100a3 -->
 <!-- last-ticket: MYT-72 -->
 
 <h1>LLM client</h1>
@@ -78,8 +78,8 @@
   <code>models.ts</code> exports three constants — <code>HAIKU</code>, <code>SONNET</code>,
   <code>OPUS</code> — each constructed from <code>anthropic(modelId)</code> wrapped by
   <code>wrapLanguageModel</code> with the logging middleware. The IDs are pinned in this file and
-  this file alone: <code>claude-haiku-4-5-20251001</code>, <code>claude-sonnet-4-6</code>,
-  <code>claude-opus-4-7</code>. Every other call site in the codebase imports a tier constant by
+  this file alone: <code>claude-haiku-4-5-20251001</code>, <code>claude-sonnet-5</code>,
+  <code>claude-opus-5</code>. Every other call site in the codebase imports a tier constant by
   name; no file outside <code>models.ts</code> mentions a model ID string.
 </p>
 
@@ -915,12 +915,12 @@
     </tr>
     <tr>
       <td><code>SONNET</code></td>
-      <td><code>claude-sonnet-4-6</code></td>
+      <td><code>claude-sonnet-5</code></td>
       <td>Player-facing prose (Fast Thinker), Scribe extraction.</td>
     </tr>
     <tr>
       <td><code>OPUS</code></td>
-      <td><code>claude-opus-4-7</code></td>
+      <td><code>claude-opus-5</code></td>
       <td>Slow Thinker reasoning, prep-engine generation.</td>
     </tr>
   </tbody>

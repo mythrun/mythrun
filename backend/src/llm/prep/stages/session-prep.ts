@@ -146,7 +146,6 @@ async function runPrepStream(
     model: OPUS,
     schema: sessionPrepSchema,
     prompt,
-    temperature: 0.7,
     maxRetries: 0,
     maxOutputTokens: MAX_OUTPUT_TOKENS,
     timeoutMs: SESSION_PREP_TIMEOUT_MS,

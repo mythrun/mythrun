@@ -112,7 +112,7 @@ describe('validateAndGenerateConcept', () => {
     })
 
     const expectedCost =
-      computeCostUsd('claude-opus-4-7', genUsage) + computeCostUsd('claude-sonnet-4-6', judgeUsage)
+      computeCostUsd('claude-opus-5', genUsage) + computeCostUsd('claude-sonnet-5', judgeUsage)
     expect(result.costUsd).toBeCloseTo(expectedCost, 10)
     // Combined token TOTALS are still surfaced (counts, not prices) for the
     // pipeline_runs input/output token columns.
@@ -159,11 +159,11 @@ describe('validateAndGenerateConcept', () => {
     })
 
     const expectedCost =
-      computeCostUsd('claude-opus-4-7', {
+      computeCostUsd('claude-opus-5', {
         inputTokens: gen1.inputTokens + gen2.inputTokens,
         outputTokens: gen1.outputTokens + gen2.outputTokens,
       }) +
-      computeCostUsd('claude-sonnet-4-6', {
+      computeCostUsd('claude-sonnet-5', {
         inputTokens: judge1.inputTokens + judge2.inputTokens,
         outputTokens: judge1.outputTokens + judge2.outputTokens,
       })

@@ -63,7 +63,6 @@ export async function repairStructuredOutput<T>(args: RepairArgs<T>): Promise<Re
     model: args.model,
     output: Output.object({ schema: args.schema }),
     prompt,
-    temperature: 0,
     maxRetries: 1,
     providerOptions: args.providerOptions as unknown as NonNullable<
       Parameters<typeof generateText>[0]['providerOptions']

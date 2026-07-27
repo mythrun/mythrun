@@ -21,10 +21,19 @@ export const FT_CLOSE_INSTRUCTION =
   '[System: you have reached the tool-call limit for this turn. Wrap up your narration in prose now. Do not call any tools.]'
 
 /** myth-nu0hm §context-fill — the FT model's context window, as reported by the
- *  Anthropic Models API for FT_MODEL (`claude-sonnet-4-6`: max_input_tokens
+ *  Anthropic Models API for FT_MODEL (`claude-sonnet-5`: max_input_tokens
  *  1_000_000, max_tokens 128_000). Verified against the live endpoint rather
  *  than assumed; re-check it when FT_MODEL moves, because the two numbers are
- *  NOT the same across the model line (Haiku 4.5 is 200K).
+ *  NOT the same across the model line (Haiku 4.5 is 200K). Re-verified on the
+ *  2026-07-26 Sonnet 4.6 -> Sonnet 5 bump: both numbers are UNCHANGED.
+ *
+ *  But the window holding steady does NOT mean the session length did. Sonnet 5
+ *  ships a new tokenizer that spends ~35.6% more tokens on the same text
+ *  (measured on 6KB of our own prep prompt: 1175 -> 1593). The window is the
+ *  same size in tokens and therefore ~26% smaller in PROSE. Since the FT holds
+ *  the whole transcript every turn, that is a direct cut to how long a session
+ *  can run before this ceiling bites — the constant did not move, the thing it
+ *  measures did.
  *
  *  FT_USABLE_CONTEXT_TOKENS is the number the session-progress signal divides
  *  by, and it is deliberately BELOW the window: a session has to end before the

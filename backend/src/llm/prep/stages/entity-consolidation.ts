@@ -170,7 +170,6 @@ export async function runEntityConsolidationStage(
     schema: EntityConsolidationSchema,
     schemaName: 'EntityConsolidationSchema',
     prompt,
-    temperature: 0.4,
     maxRetries: 0,
     callSite: 'entity-consolidation',
     repairStrategy: 'haiku-then-sonnet',

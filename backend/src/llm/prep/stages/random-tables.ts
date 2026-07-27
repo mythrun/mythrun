@@ -98,7 +98,6 @@ export async function runRandomTablesStage(
     model: HAIKU,
     schema: RandomTablesSchema,
     prompt,
-    temperature: 0.8,
     maxRetries: 3,
     callSite: 'random-tables',
     schemaName: 'RandomTablesSchema',

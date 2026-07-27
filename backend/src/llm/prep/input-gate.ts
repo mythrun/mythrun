@@ -77,7 +77,6 @@ export async function runInputGate(args: InputGateArgs): Promise<InputGateVerdic
     model: SONNET,
     schema: InputGateSchema,
     prompt,
-    temperature: 0.2,
     maxRetries: 3,
     callSite: 'input-gate',
     schemaName: 'InputGateSchema',

@@ -145,7 +145,6 @@ export async function runCharacterSheetStage(
         schemaName: 'CharacterSheetOutputSchema',
         callSite: 'character-sheet',
         prompt,
-        temperature: 0.5,
         maxRetries: 3,
       })
     } catch (err) {

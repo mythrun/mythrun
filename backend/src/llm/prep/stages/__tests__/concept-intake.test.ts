@@ -89,8 +89,8 @@ describe('runConceptIntakeStage', () => {
     // Opus generator (800 in / 600 out) + Sonnet judge (200 in / 100 out):
     //   (800*5 + 600*25)/1M + (200*3 + 100*15)/1M = 0.019 + 0.0021 = 0.0211
     const expectedCost =
-      computeCostUsd('claude-opus-4-7', { inputTokens: 800, outputTokens: 600 }) +
-      computeCostUsd('claude-sonnet-4-6', { inputTokens: 200, outputTokens: 100 })
+      computeCostUsd('claude-opus-5', { inputTokens: 800, outputTokens: 600 }) +
+      computeCostUsd('claude-sonnet-5', { inputTokens: 200, outputTokens: 100 })
     expect(result.costUsd).toBeCloseTo(expectedCost, 10)
     expect(result.costUsd).toBeCloseTo(0.0211, 10)
     expect(result.inputTokens).toBe(1000)

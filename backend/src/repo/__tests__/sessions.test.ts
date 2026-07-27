@@ -192,7 +192,7 @@ describe('sessions repo (integration)', () => {
     it('first call inserts row with deltas + computed cost (sonnet)', async () => {
       const sessions = createSessionsRepo(pool)
       const { sessionId } = await makeSession()
-      const result = await sessions.recordUsage(sessionId, 'claude-sonnet-4-6', {
+      const result = await sessions.recordUsage(sessionId, 'claude-sonnet-5', {
         inputTokens: 1000,
         outputTokens: 500,
       })
@@ -209,7 +209,7 @@ describe('sessions repo (integration)', () => {
         inputTokens: 1000,
         outputTokens: 100,
       })
-      const result = await sessions.recordUsage(sessionId, 'claude-sonnet-4-6', {
+      const result = await sessions.recordUsage(sessionId, 'claude-sonnet-5', {
         inputTokens: 500,
         outputTokens: 50,
       })
@@ -220,7 +220,7 @@ describe('sessions repo (integration)', () => {
     it('cacheWriteTokens + cacheReadTokens go to separate columns', async () => {
       const sessions = createSessionsRepo(pool)
       const { sessionId } = await makeSession()
-      const result = await sessions.recordUsage(sessionId, 'claude-sonnet-4-6', {
+      const result = await sessions.recordUsage(sessionId, 'claude-sonnet-5', {
         inputTokens: 100,
         outputTokens: 50,
         cacheWriteTokens: 200,

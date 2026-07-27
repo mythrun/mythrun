@@ -22,8 +22,15 @@ export const SCRIBE_RETCON_MODEL = OPUS
 export const SCRIBE_TRIPWIRE_TIMEOUT_MS = 30_000
 /** Wall-clock budget for the Opus retcon-author call. */
 export const SCRIBE_RETCON_TIMEOUT_MS = 45_000
-/** Output-token cap for the retcon-author (a short open correction `Z`). */
-export const SCRIBE_RETCON_MAX_OUTPUT_TOKENS = 1_200
+/** Output-token cap for the retcon-author (a short open correction `Z`).
+ *  Raised 1_200 -> 6_000 for the Opus 5 bump: on the 5 line an omitted
+ *  `thinking` parameter runs ADAPTIVE thinking, and `maxOutputTokens` caps
+ *  thinking + visible output together. A ceiling sized for the correction alone
+ *  would now truncate mid-thought. Raising a ceiling is close to free — we are
+ *  billed for tokens actually produced, and adaptive thinking spends only what
+ *  the task needs — whereas truncation is a terminal turn failure. Wall-clock
+ *  stays bounded by SCRIBE_RETCON_TIMEOUT_MS, which is the real runaway guard. */
+export const SCRIBE_RETCON_MAX_OUTPUT_TOKENS = 6_000
 
 /** Hard cap on the in-session working set (FT deltas + ST injections + retcons).
  *  The Scribe job calls `evictIfOver(campaignId, WORKING_SET_CAP)` after every

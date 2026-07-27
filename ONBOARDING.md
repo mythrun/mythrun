@@ -95,7 +95,7 @@ The first session of real work should start with the **Setup Guide** (`docs/spec
 
 ## Attribution
 
-All commits are authored by Miklos (using his git config). When you contribute via AI pair programming, include a `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>` trailer in the commit message. This is the standard git co-author convention — GitHub will display both avatars on the commit.
+All commits are authored by Miklos (using his git config). When you contribute via AI pair programming, include a `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>` trailer in the commit message. This is the standard git co-author convention — GitHub will display both avatars on the commit.
 
 ## First Session Checklist
 

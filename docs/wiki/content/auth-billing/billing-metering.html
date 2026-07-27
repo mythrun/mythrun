@@ -8,7 +8,7 @@
 <!-- source: backend/src/llm/prompts/billing/pricing-extract.txt -->
 <!-- source: backend/scripts/check-pricing.ts -->
 <!-- source: .github/workflows/llm-price-check.yml -->
-<!-- source-hash: sha256:40b3a56940fe4dc6c0be6e6cbc357ef3f2c628a697beb459383791adade0343c -->
+<!-- source-hash: sha256:e00c2689873be86b694a864fe07848a7932a05a2957b89ef9f606d91e46b1d74 -->
 <!-- last-ticket: MYT-43 -->
 
 <h1>Billing metering</h1>
@@ -287,8 +287,8 @@
   prompts-as-files convention. It instructs Haiku to extract by display name, ignore the 1-hour
   cache write rate, and produce the four required rates per model. The script then maps display
   names back to <code>MODEL_PRICING</code> slugs via the <code>MODEL_DISPLAY_NAMES</code> table
-  (Anthropic's docs page lists models by display name like &ldquo;Claude Opus 4.7&rdquo; — not by
-  slug like <code>claude-opus-4-7</code>).
+  (Anthropic's docs page lists models by display name like &ldquo;Claude Opus 5&rdquo; — not by
+  slug like <code>claude-opus-5</code>).
 </p>
 
 <h2>Operating this piece</h2>

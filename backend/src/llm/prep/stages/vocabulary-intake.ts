@@ -77,7 +77,6 @@ export async function runVocabularyIntakeStage(
     schemaName: 'VocabularyIntakeOutputSchema',
     callSite: 'vocabulary-intake',
     prompt,
-    temperature: 0.7,
     maxRetries: 3,
   })
 

@@ -542,7 +542,14 @@ describe('ws-session route (integration)', () => {
     // No lastSeq at all -> the fresh-connect arm, the one that sends session_ready.
     const ws = await connect(`/ws/session/${sessionId}?ticket=${ticket}`)
     try {
-      const frames = await collectFrames(ws, 1)
+      // Collect TWO frames, not one: the fresh-connect arm emits session_ready
+      // AND player_joined with no guaranteed ordering between them (see the
+      // 'sends session_ready then player_joined' test above, which collects 2
+      // and asserts with toContain for exactly this reason). Collecting 1 and
+      // assuming it is session_ready passes in isolation and fails under
+      // parallel load whenever player_joined wins the race. The reconnect arm
+      // below is genuinely single-framed, so it may keep collectFrames(ws, 1).
+      const frames = await collectFrames(ws, 2)
       const ready = frames.find((f) => f.type === 'session_ready')
       expect(ready).toBeDefined()
       expect(ready).not.toHaveProperty('progress')

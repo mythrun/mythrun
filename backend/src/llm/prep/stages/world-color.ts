@@ -59,7 +59,7 @@ const MIN_RUNGS = 6
 // pathological run without letting a decorative pick fail world-gen.
 const MAX_COLOR_ATTEMPTS = 3
 
-// Anthropic Sonnet 4.6 pricing per https://www.anthropic.com/pricing
+// Anthropic Sonnet 5 pricing per https://www.anthropic.com/pricing
 // (verify quarterly). $3/MTok input, $15/MTok output. Held local to the stage —
 // see concept-intake.ts for why each stage owns its own constants.
 const SONNET_INPUT_PER_MTOK = 3.0
@@ -132,7 +132,6 @@ export async function runWorldColorStage(
       schemaName: 'WorldColorPairSchema',
       callSite: 'world-color',
       prompt: buildPrompt(args, rejected),
-      temperature: 0.8,
       maxRetries: 3,
     })
     inputTokens += result.usage.inputTokens ?? 0

@@ -17,7 +17,7 @@ import { costAccountingMiddleware } from '../cost-middleware.js'
 import { getTotalUsd, _resetDevCostForTests } from '../../billing/dev-cost-tracker.js'
 
 const HAIKU_ID = 'claude-haiku-4-5-20251001'
-const SONNET_ID = 'claude-sonnet-4-6'
+const SONNET_ID = 'claude-sonnet-5'
 
 /** Build a valid LanguageModelV3Usage; `total` input is the sum of its parts,
  *  mirroring how the Anthropic provider populates the field. */

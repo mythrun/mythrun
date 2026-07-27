@@ -77,7 +77,7 @@ const PROMPT_TEMPLATE = resolveIncludes(
   ),
 )
 
-// Anthropic Sonnet 4.6 pricing — $3/MTok input, $15/MTok output. Held
+// Anthropic Sonnet 5 pricing — $3/MTok input, $15/MTok output. Held
 // local to the stage per the pattern from starting-situation.ts.
 const SONNET_INPUT_PER_MTOK = 3.0
 const SONNET_OUTPUT_PER_MTOK = 15.0
@@ -789,7 +789,6 @@ export async function runCoherencePassStage(
     model: SONNET,
     schema: CoherenceOutputSchema,
     prompt,
-    temperature: 0.4,
     maxRetries: 1,
     callSite: 'coherence-pass',
     schemaName: 'CoherenceOutputSchema',
