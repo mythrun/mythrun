@@ -28,8 +28,26 @@ export const ST_EVAL_EXCHANGE_WINDOW = 10
 /** The §3.11 session bound proxy — the total token budget that, at
  *  WIND_DOWN_FRACTION, trips the wind-down policy arm. Plan-time; tuned in the
  *  smoke. The FT-context hard cap (session-end issue) is the real bound; this
- *  is the ST-side signal. */
-export const SESSION_TOKEN_BUDGET = 400_000
+ *  is the ST-side signal.
+ *
+ *  400_000 -> 545_000 on the 2026-07-26 Sonnet 5 bump. This is NOT a decision to
+ *  make sessions longer — it holds them where they already were. Sonnet 5's
+ *  tokenizer spends ~35.6% more tokens on identical text (measured: 1175 -> 1593
+ *  on 6KB of our own prep prompt), and the FT re-sends the whole transcript every
+ *  turn, so the old 400_000 bought ~26% less actual story than it did the day
+ *  before. 400_000 x 1.356 ~= 545_000 restores the prior session in PROSE terms
+ *  rather than in token terms.
+ *
+ *  What this constant actually controls today is narrative pacing, not spend:
+ *  the ST convergence/wind-down arms and the myth-nu0hm progress fraction read
+ *  it, but the hard auto-end that was supposed to enforce it is dead code
+ *  (myth-05p52 — recordUsage has no caller, so budgetSummary always reads zero).
+ *  So raising it makes the DM land later and the progress band climb slower; it
+ *  does not by itself authorise more spend. Sessions that genuinely run long do
+ *  cost more, and note the Sonnet 5 introductory rate ends 2026-08-31 — an
+ *  equal-length session is slightly cheaper than before until then, ~36% dearer
+ *  after. Re-tune here if that step lands badly. */
+export const SESSION_TOKEN_BUDGET = 545_000
 export const WIND_DOWN_FRACTION = 0.9
 
 /** myth-3jna1 — the CONVERGENCE steer, the stage before wind-down. Wind-down
