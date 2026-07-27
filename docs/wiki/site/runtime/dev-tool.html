@@ -37,7 +37,7 @@
   player-facing pipeline stream plus, in dev, a live session-prep prose pane. The tool itself is
   throwaway — not a prototype of the production frontend. The ship gate (<code
     >pnpm dev-tool:check</code
-  >) plus a four-invariant registry test keep coverage honest.
+  >) plus a six-invariant registry test keep coverage honest.
 </p>
 
 <figure class="wiki-diagram">
@@ -836,7 +836,7 @@
 
 <p>
   <code>backend/dev-tool/__tests__/verify-registry.test.ts</code> is the build-time gate against the
-  registry rotting. It enforces four invariants over the workflow-page registry in
+  registry rotting. It enforces six invariants over the workflow-page registry in
   <code>backend/dev-tool/verify-registry.ts</code>:
 </p>
 
@@ -860,11 +860,33 @@
   <li>
     <strong>Route exhaustion</strong> — the union of <code>PANEL_EXERCISES[id]</code> for every
     panel id reachable from any <code>PAGE_REGISTRY</code> entry's <code>panels[]</code>, plus
-    <code>EXEMPT_ROUTES</code>, covers every entry in <code>BACKEND_ROUTES</code>. The exempt list
-    must itself reference real backend routes (so a stale exempt entry that names a removed route
-    fails the test).
+    <code>EXEMPT_ROUTES</code>, covers every entry in <code>BACKEND_ROUTES</code>.
+  </li>
+  <li>
+    <strong>Live exempt list</strong> — <code>EXEMPT_ROUTES</code> must itself reference real
+    backend routes, so a stale exempt entry naming a removed route fails the test rather than
+    quietly excusing nothing.
+  </li>
+  <li>
+    <strong>Inventory sync</strong> — <code>AUTHORING.md</code>'s coverage-inventory table has
+    exactly one row per <code>BACKEND_ROUTES</code> entry, no rows for routes that no longer exist,
+    and each row's exempt-vs-panel verdict agrees with the registry.
   </li>
 </ul>
+
+<aside class="wiki-rationale">
+  <strong>The sixth invariant guards the prose, not the code</strong> — the first five all compare
+  machine-readable structures to each other. The coverage-inventory table in
+  <code>AUTHORING.md</code> is declared to be that registry's human-readable mirror, and the
+  verifier subagent is named as its owner, but for a long time nothing actually checked one against
+  the other. It drifted exactly as you would expect: two routes (<code
+    >PUT /api/campaigns/:campaignId/invites/primary</code
+  >
+  and <code>POST /api/auth/refresh</code>) reached <code>BACKEND_ROUTES</code> and
+  <code>EXEMPT_ROUTES</code> without ever reaching the table. Neither was a coverage hole — both are
+  genuinely exempt — but the table had been silently overstating its own authority, which is the
+  more corrosive failure, because the table is the side a human reads and trusts.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>A test, not a runtime check</strong> — invariants enforced at runtime fail in the browser,
