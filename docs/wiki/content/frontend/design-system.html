@@ -21,7 +21,7 @@
 <!-- source: frontend/.storybook/test-runner.ts -->
 <!-- source: frontend/eslint.config.js -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:ea9142e840f7c618cb037cd697314850f9d85e653c65e1a985912be6c88c9c25 -->
+<!-- source-hash: sha256:718ba0f82bb39c300de2f175e760d38fa9413da3e0c6057d2cd8dab2f8deac2b -->
 <!-- last-ticket: MYT-100 -->
 
 <h1>Design system</h1>
@@ -619,9 +619,17 @@
   <code>SituationRecap</code> / <code>GuidedRail</code> on
   <a href="./character-creation.html">character creation</a>. What folded back into the system was
   three reusable pieces and a set of primitive extensions. <strong><code>WhisperLedger</code></strong>
-  is the long-wait whisper column — the current flavor line over a faint newest-first ledger of the
+  is the long-wait whisper column — the current flavor line over a newest-first ledger of the
   ones already shown — shared by both multi-minute waits, in two sizes: <em>hero</em>, where the
-  whisper is the only content on the screen, and <em>sub</em>, where it sits under a title. Its
+  whisper is the only content on the screen, and <em>sub</em>, where it sits under a title. Age is
+  cued by the settled line's square mark shrinking (5&rarr;2px), not by fading the text: the ledger
+  originally ramped line opacity .80/.60/.40/.25, which is a fade the eye reads well and an
+  accessibility floor it cannot clear — composited on the paper ground that runs 3.49:1 down to
+  1.39:1 against WCAG AA's 4.5:1, and no ink token in the system is dark enough to carry a ramp
+  that deep. Moving the cue onto the mark works because the ledger already encodes age spatially
+  (newest first, oldest clipped by the well), so the mark reinforces a gradient the reader is
+  following anyway; being decorative and <code>aria-hidden</code>, it has no contrast floor of its
+  own, and every line now holds one passing ink. Its
   rotation is a matching <code>useWhisperCycle</code> hook (a shuffled permutation walked to
   exhaustion and reshuffled, never repeating across the boundary, and never advancing at all under
   <code>prefers-reduced-motion</code>). <strong><code>ResizeHandle</code></strong> and
