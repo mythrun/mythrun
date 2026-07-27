@@ -114,6 +114,7 @@ route(s) each panel id covers (the route-exhaustion invariant unions those). The
 | POST /api/campaigns/:campaignId/finalize-character-creation | finalize-character-creation | characters |
 | GET /api/campaigns/:campaignId/members | members | characters |
 | POST /api/campaigns/:campaignId/invites | invites | users |
+| PUT /api/campaigns/:campaignId/invites/primary | (exempt — myth-y5c4q idempotent ensure-primary upsert the web invite panel calls on mount; the dev-tool invites panel drives the general POST mint, and the PUT has no distinct inspectable behavior beyond it) | — |
 | GET /api/campaigns/:campaignId/invites | invites-list | users |
 | DELETE /api/campaigns/:campaignId/invites/:inviteCode | invite-revoke | users |
 | GET /api/invites/:inviteCode/preview | invite-preview | users |
@@ -134,6 +135,7 @@ route(s) each panel id covers (the route-exhaustion invariant unions those). The
 | POST /api/dev/credits/grant | dev-credits-grant | billing |
 | GET /api/dev/credits/me | dev-credits-me | billing |
 | POST /api/dev/campaigns/:campaignId/fire-turn | fire-turn | system |
+| POST /api/auth/refresh | (exempt — MYT-102 bypass-mode session-probe stub; answers 200-null so the SPA's on-load probe never paints a console 404. Not a mutation surface, no panel drives it) | — |
 | GET /api/dev/campaigns/:campaignId/prep-prose | (exempt — live prose SSE in the wire-log drawer, not a JSDOM page panel; E2E via MYT-64) | — |
 | GET /api/dev/api-cost | (exempt — dev/staging API-cost ticker; consumer is the DevCostTicker widget in the main web app, no dev-tool panel) | — |
 | POST /webhooks/stripe | (exempt — Stripe-signed consumer, no human UI possible) | — |

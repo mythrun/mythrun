@@ -15,6 +15,16 @@
 //   4. Route exhaustion — union(PANEL_EXERCISES for every panel
 //      composed across every page) ∪ EXEMPT_ROUTES ⊇ BACKEND_ROUTES.
 //   5. EXEMPT_ROUTES must reference real backend routes.
+//   6. Inventory sync — AUTHORING.md's coverage-inventory table has
+//      exactly one row per BACKEND_ROUTE, no rows for routes that no
+//      longer exist, and each row's exempt-vs-panel verdict agrees with
+//      the registry. AUTHORING.md declares that table the human-readable
+//      mirror of the registry and makes the verifier subagent its owner,
+//      but nothing checked it, so it silently drifted (PUT
+//      /api/campaigns/:campaignId/invites/primary and POST
+//      /api/auth/refresh both landed in BACKEND_ROUTES + EXEMPT_ROUTES
+//      and never reached the table). Invariants 1-5 all guard the
+//      machine-readable side; this one guards the prose side.
 
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
@@ -33,6 +43,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const COMPONENTS_DIR = resolve(here, '../src/components')
 const PAGES_DIR = resolve(here, '../src/pages')
 const MAIN_TS = resolve(here, '../src/main.ts')
+const AUTHORING_MD = resolve(here, '../AUTHORING.md')
 
 function panelModulesWithMount(): string[] {
   // Find every .ts file under src/components (excluding __tests__ +
@@ -89,6 +100,91 @@ function pageIdsImportedByMain(): string[] {
   }
   return ids
 }
+
+interface InventoryRow {
+  readonly panelCell: string
+  readonly isExempt: boolean
+}
+
+function coverageInventoryRows(): Map<string, InventoryRow> {
+  // Rows in the AUTHORING.md coverage table look like
+  //   | GET /api/campaigns/mine | my-campaigns | campaigns |
+  // The route cell always starts with an uppercase HTTP method followed
+  // by a slash-prefixed path, which is what distinguishes a data row from
+  // the header, the `|---|` separator, and the unrelated two-column
+  // skip-eligible table inside the fenced dispatch prompt at end-of-file.
+  const text = readFileSync(AUTHORING_MD, 'utf8')
+  const rows = new Map<string, InventoryRow>()
+  const re = /^\|\s*([A-Z]+ \/\S*)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|$/gm
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    const route = m[1]
+    const panelCell = m[2]
+    if (route === undefined || panelCell === undefined) continue
+    rows.set(route, { panelCell, isExempt: panelCell.startsWith('(exempt') })
+  }
+  return rows
+}
+
+describe('AUTHORING.md coverage inventory', () => {
+  it('has exactly one row per BACKEND_ROUTE, and no rows for retired routes', () => {
+    const rows = coverageInventoryRows()
+    const contract = BACKEND_ROUTES.map((r) => `${r.method} ${r.path}`)
+
+    const missing = contract.filter((r) => !rows.has(r))
+    expect(
+      missing,
+      `in BACKEND_ROUTES but absent from the AUTHORING.md coverage table: ${missing.join(', ')}`,
+    ).toEqual([])
+
+    const known = new Set(contract)
+    const orphans = [...rows.keys()].filter((r) => !known.has(r))
+    expect(
+      orphans,
+      `in the AUTHORING.md coverage table but absent from BACKEND_ROUTES: ${orphans.join(', ')}`,
+    ).toEqual([])
+  })
+
+  it("each row's exempt-vs-panel verdict agrees with the registry", () => {
+    const rows = coverageInventoryRows()
+    const exempt = new Set(EXEMPT_ROUTES.map((r) => `${r.method} ${r.path}`))
+    const drift: string[] = []
+    for (const [route, row] of rows) {
+      if (row.isExempt !== exempt.has(route)) {
+        drift.push(
+          `${route}: EXEMPT_ROUTES says ${String(exempt.has(route))}, table says ${String(row.isExempt)}`,
+        )
+      }
+    }
+    expect(drift, `exempt-marker drift between the table and EXEMPT_ROUTES:\n${drift.join('\n')}`)
+      .toEqual([])
+  })
+
+  it('every non-exempt row names a panel that PANEL_EXERCISES maps to that route', () => {
+    // Substring containment, not an equality check: a Panel cell may carry
+    // a trailing parenthetical rationale (the `combat (MYT-75 T10 — …)`
+    // row), and one route may legitimately be driven by several panels.
+    const rows = coverageInventoryRows()
+    const drift: string[] = []
+    for (const [route, row] of rows) {
+      if (row.isExempt) continue
+      const panels = Object.entries(PANEL_EXERCISES)
+        .filter(([, routes]) => routes.some((r) => `${r.method} ${r.path}` === route))
+        .map(([panelId]) => panelId)
+      if (panels.length === 0) {
+        drift.push(`${route}: table names "${row.panelCell}" but no panel exercises this route`)
+        continue
+      }
+      if (!panels.some((p) => row.panelCell.includes(p))) {
+        drift.push(
+          `${route}: table names "${row.panelCell}" but PANEL_EXERCISES maps it to ${panels.join(', ')}`,
+        )
+      }
+    }
+    expect(drift, `panel-name drift between the table and PANEL_EXERCISES:\n${drift.join('\n')}`)
+      .toEqual([])
+  })
+})
 
 describe('PAGE_REGISTRY invariants', () => {
   it('forward coverage — every panel module is composed by a page or listed in EXEMPT_PANELS', () => {
