@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html" class="active">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Session turn</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>backend/src/session/session-controller.ts</code>, <code>backend/src/session/turn-worker.ts</code>, <code>backend/src/session/session-lock.ts</code>, <code>backend/src/session/turn-publisher.ts</code>, <code>backend/src/session/turn-queue.ts</code>, <code>backend/src/session/transcript-codec.ts</code>, <code>backend/src/session/tiers/types.ts</code>, <code>backend/src/session/tiers/stubs.ts</code>, <code>backend/src/session/tiers/audited-fast-thinker.ts</code>, <code>backend/src/llm/turn-audit.ts</code>, <code>backend/src/llm/schemas/turn-audit.ts</code>, <code>backend/src/llm/prompts/session/turn-audit.txt</code>, <code>backend/src/contract/session-channel.ts</code>, <code>backend/src/routes/dev-fire-turn.ts</code>, <code>docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md</code>, <code>docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md</code></div>
-</div>
-
+        <article>
 <h1>Session turn</h1>
 
 <p class="lead">
@@ -727,7 +722,30 @@
   <code>persistTurn</code> writes, so it is what a reconnecting client replays and — critically —
   what the FT's own next-turn context reconstruction returns. The myth-ph544 lesson (a violation in
   the transcript re-enters the FT's context and teaches it to repeat itself) is closed on the
-  durable record; a viewer who watched attempt 1 live converges on reconnect.
+  durable record.
+</aside>
+
+<p>
+  That left one gap, which myth-aiiao closes: the player who is <em>sitting there</em>. Their screen
+  still held the discarded attempt 1, and reconnecting is not something a table does mid-session, so
+  the corrected turn only reached them if their socket happened to drop. The worker now pushes a
+  <strong>whole-turn replace</strong> on the post-flush path when the audit gate reports a
+  correction: it re-reads the turn's just-persisted rows, maps them through the same
+  <code>rowToReplayFrame</code> the reconnect uses, and publishes one live
+  <code>session_reconnect</code> frame carrying that single turn. The client's transcript reducer
+  already prunes and re-folds per <code>turnId</code> over any reconnect batch, so a frame carrying
+  one turn repairs exactly that turn and leaves the rest of the transcript alone.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Reuse the reconnect frame rather than invent a repair frame</strong> — a new frame kind
+  would need a wire-contract entry, a codec registration, and its own reducer branch, all to
+  describe an operation the reducer already performs. Because the frames are built from the
+  persisted, seq-bearing rows, the client's high-water mark advances exactly as it would on a real
+  reconnect, so nothing downstream can tell the difference. The push is skipped for player-less
+  turns (the gate buffers those and only ever releases the winning render, so live already equals
+  durable), and it runs in its own try/catch after the turn is durable — a failed push logs and
+  leaves the reconnect path as the backstop, which is where this stood before.
 </aside>
 
 <aside class="wiki-rationale">
@@ -991,18 +1009,43 @@
 <aside class="wiki-rationale">
   <strong>The budget-100% auto-end fires here too (MYT-74a / MYT-74b)</strong> — this post-flush
   phase is also where the session can end itself. The Fast-Thinker context bound is the real
-  session-length cap; when cumulative token usage (read from the durable
-  <code>session_usage</code> row via <code>budgetSummary</code>) reaches
-  <code>SESSION_TOKEN_BUDGET</code>, the worker fires <code>endSession</code> — which, as of
-  MYT-74b, only <em>begins</em> the end (claim the <code>ending</code> flag → enqueue a player-less
-  farewell turn); the <a href="./session-reconcile.html">finalize</a> that flips the row and
-  broadcasts <code>session_end</code> runs after the farewell renders. It's the same flow the
-  explicit <code>end_session</code> WS frame runs. It is gated on <code>!isPlayerless</code> like
-  the watermark and the Scribe enqueue (a player-less correction opens no new budget-bearing
-  context, and a farewell <em>is</em> the end — re-triggering it would be meaningless), and it sits
-  in its own try/catch so a failure to enqueue the end never masks the turn outcome — mirroring the
+  session-length cap; when cumulative token usage reaches <code>SESSION_TOKEN_BUDGET</code>, the
+  worker fires <code>endSession</code> — which, as of MYT-74b, only <em>begins</em> the end (claim
+  the <code>ending</code> flag → enqueue a player-less farewell turn); the
+  <a href="./session-reconcile.html">finalize</a> that flips the row and broadcasts
+  <code>session_end</code> runs after the farewell renders. It's the same flow the explicit
+  <code>end_session</code> WS frame runs. It is gated on <code>!isPlayerless</code> like the
+  watermark and the Scribe enqueue (a player-less correction opens no new budget-bearing context,
+  and a farewell <em>is</em> the end — re-triggering it would be meaningless), and it sits in its
+  own try/catch so a failure to enqueue the end never masks the turn outcome — mirroring the
   st-evaluation isolation. Idempotence across turns is free: the SET-NX <code>ending</code> flag
   no-ops a second over-budget turn, so the processor needs no dedup of its own.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    >That auto-end had never fired once, and the fix was to read the same number everyone else reads
+    (myth-05p52)</strong
+  >
+  — until 2026-07-26 the arm above summed <code>repo.sessions.budgetSummary</code>, the durable
+  <code>session_usage</code> row. But <code>recordUsage</code>, the only writer of that table, has
+  no caller in production: the summary was permanently <code>null</code>, the cumulative count
+  permanently zero, and the comparison permanently false. Sessions had
+  <em>no enforced stop at all</em> — they ended when a player chose to end one, or when the FT
+  context finally overflowed and the provider rejected the call mid-turn, which is an error rather
+  than an ending (no farewell, no finalize, no recap, no post-session analysis). The arm now reads
+  <code>sessionState.totalUsageTokens</code>, the same Redis counter the
+  <a href="./slow-thinker.html">Slow Thinker</a>'s wind-down and convergence arms and the progress
+  fraction below already read. Sharing one number was the deciding argument over re-wiring
+  <code>recordUsage</code>: three signals that claim to describe how much budget is gone must not be
+  able to disagree, and one counter is the only way to guarantee that. The Redis counter is
+  genuinely written on every flush, which is why the progress bar stayed honest while this arm was
+  dead. <code>budgetSummary</code> is gone from the worker's repo surface entirely. What did
+  <em>not</em> come back is the durable per-session cost trail: <code>session_usage</code> stays
+  empty, so anything reading it for analytics reads nothing. That is a metering gap, tracked on its
+  own rather than folded into restoring the stop. The tests missed all of this because they mocked
+  <code>budgetSummary</code> and asserted the end fired — green against a read that could never
+  return anything; they now seed the real Redis counter.
 </aside>
 
 <aside class="wiki-rationale">
@@ -1027,6 +1070,72 @@
   for them. This was found live in the MYT-68 E2E smoke; it pairs with the
   <a href="./dm-trigger.html">DM trigger</a> debounce fixes from the same session.
 </aside>
+
+<h2 id="the-session-progress-signal">The session-progress signal</h2>
+
+<p>
+  A session has a ceiling, and until myth-nu0hm nothing told the table it was coming: the evening
+  simply stopped. So <code>turn_end</code> now carries an optional
+  <code>progress: { fraction }</code> — a single number between 0 and 1 that says how much of the
+  session is spent. The worker computes it on the beat that already exists, after persist and flush,
+  from counters the flush just moved: two Redis round-trips against keys this worker is already
+  talking to, entirely off the player-visible latency path (the prose streamed turns ago).
+</p>
+
+<p>
+  The fraction is the <strong>max</strong> of two mechanical ratios, bucketed to steps of 0.05:
+  cumulative session spend over <code>SESSION_TOKEN_BUDGET</code>, and the latest turn's FT input
+  tokens over <code>FT_USABLE_CONTEXT_TOKENS</code>. Max rather than sum or average because the
+  session ends when <em>either</em> ceiling is reached, so the nearer one is the one the table is
+  actually up against. The token term is the budget bound the auto-end above enforces; the context
+  term is the harder one — the <a href="./fast-thinker.html">Fast Thinker</a> re-sends the whole
+  transcript every turn with no compaction, so a long session runs out of window whatever the spend
+  says.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Purely mechanical, and that is the point</strong> — this is the one progress number
+  players see, so it is derived from two token counters over two configured ceilings and nothing
+  else. It carries no plot state, no ST rationale, and no judgment about what is happening in the
+  fiction; nothing in it may ever become a function of the story. The narrative half of "this
+  session should start heading somewhere" lives on the secret side, as the
+  <a href="./slow-thinker.html#the-convergence-steer">Slow Thinker's convergence steer</a>, and the
+  two never meet. It is ZFC-exempt for the same reason dice math is: arithmetic over configured
+  budgets, not classification.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Monotonic, coarse, and floored in Redis</strong> — the context term is
+  <em>not</em> monotonic (a terse turn after a combat burst legitimately reports fewer input tokens
+  than the turn before), so the raw max can fall. A bar that walks backwards destroys trust in the
+  number faster than no bar would: once a table has been told the session is 60% spent, telling them
+  35% next turn is worse than telling them nothing. So the candidate is folded against a per-session
+  <code>:progress</code> floor in Redis and only ever raised. The floor stores the published
+  <em>fraction</em>, not the raw counters, which also means re-tuning
+  <code>SESSION_TOKEN_BUDGET</code> or the FT window mid-session can raise a live bar but never
+  rewind it. The 0.05 bucketing is the other half of the same concern: a combat-heavy turn burns
+  tokens several times faster than a quiet one, and a number that lurches turn-to-turn reads as
+  broken rather than informative.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Context fill reads the final tool step's input, not the turn's total usage</strong> — the
+  FT's total usage sums every step of the tool loop, so a four-step combat turn would report roughly
+  four transcripts' worth of input and slam a monotonic bar to 100%, where it would then latch for
+  the rest of the session. The last step's prompt is the largest single one and is the honest
+  measure of how full the window actually is.
+</aside>
+
+<p>
+  The whole computation is wrapped so that <em>any</em> failure returns nothing and the frame ships
+  without the field — the same isolation the st-evaluation and Scribe enqueues use on this path. A
+  Redis hiccup costs the table the readout; it must never cost them the <code>turn_end</code> that
+  tells the client its turn is over. The converge arm publishes a fraction too, from the token term
+  and the stored floor alone: it did no fresh render, so it has no context-fill reading, and the
+  result is still truthful and still non-decreasing. What reaches the screen is not this number but
+  four coarse bands derived from it — see the <a href="./session-transport.html">transport</a> for
+  the connect-path carriers.
+</p>
 
 <h2 id="cross-process-frame-publishing-and-the-turnid-fence">Cross-process frame publishing and the turnId fence</h2>
 
@@ -1297,8 +1406,12 @@
     </tr>
     <tr>
       <td><code>turn_end</code></td>
-      <td><code>{ type, turnId }</code></td>
-      <td>Turn complete. No seq.</td>
+      <td><code>{ type, turnId, progress? }</code></td>
+      <td>
+        Turn complete. No seq. myth-nu0hm added the optional
+        <a href="#the-session-progress-signal"><code>progress: { fraction }</code></a> — omitted
+        when the computation failed, since this frame's job is telling the client the turn is over.
+      </td>
     </tr>
     <tr>
       <td><code>turn_error</code></td>
@@ -1363,7 +1476,19 @@
     </tr>
     <tr>
       <td><code>session:{campaignId}:usage</code></td>
-      <td>Accumulated token usage <code>{ input, output }</code>.</td>
+      <td>
+        Accumulated token usage <code>{ input, output }</code>. Summed with
+        <code>:usage:st</code> to give the cumulative spend the budget auto-end, the
+        <a href="./slow-thinker.html">Slow Thinker</a>'s policy arms, and the progress fraction all
+        read.
+      </td>
+    </tr>
+    <tr>
+      <td><code>session:{campaignId}:progress</code></td>
+      <td>
+        myth-nu0hm <a href="#the-session-progress-signal">progress</a> floor — the last published
+        fraction, raised only. DEL'd at session start; carries the session-state TTL.
+      </td>
     </tr>
     <tr>
       <td><code>session:{campaignId}:state</code></td>
@@ -1515,7 +1640,29 @@
         <code>emitFor</code>, plus the MYT-70 <code>ledgerUpdate</code> + its
         <code>emitLedgerUpdate</code> seam on the latched emitter, and the myth-d6knq
         <code>dmCorrection</code> + <code>emitCorrection</code> (the live
-        <code>{ type: 'dm_correction', turnId, text }</code> frame — no seq).
+        <code>{ type: 'dm_correction', turnId, text }</code> frame — no seq). myth-nu0hm widened
+        <code>turnEnd</code> with the optional
+        <a href="#the-session-progress-signal">progress</a> argument; myth-aiiao added
+        <code>turnReplace</code>, which publishes one turn's rebuilt replay frames as a live
+        <code>session_reconnect</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/session-progress.ts</code></td>
+      <td>
+        myth-nu0hm <code>computeProgressFraction</code> (max of the two mechanical ratios, bucketed
+        to <code>PROGRESS_STEP</code> = 0.05) and <code>raiseProgressMonotonic</code> (the floor
+        fold). Pure and I/O-free; the <code>:progress</code> key it is folded against belongs to
+        <a href="./session-transport.html">session-state</a>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/replay-frames.ts</code></td>
+      <td>
+        <code>rowToReplayFrame</code> — one persisted row to its replay <code>ServerFrame</code>(s).
+        Lifted out of the <a href="./session-transport.html">transport</a> so the myth-aiiao
+        whole-turn-replace push rebuilds a corrected turn through the exact same mapping a reconnect
+        uses.
       </td>
     </tr>
     <tr>
@@ -1588,6 +1735,8 @@
   <code>backend/src/session/turn-worker.ts</code>, <code>backend/src/session/session-lock.ts</code>,
   <code>backend/src/session/turn-publisher.ts</code>,
   <code>backend/src/session/turn-queue.ts</code>,
+  <code>backend/src/session/session-progress.ts</code>,
+  <code>backend/src/session/replay-frames.ts</code>,
   <code>backend/src/session/transcript-codec.ts</code>,
   <code>backend/src/session/tiers/</code> (including <code>audited-fast-thinker.ts</code>),
   <code>backend/src/llm/turn-audit.ts</code>, <code>backend/src/llm/schemas/turn-audit.ts</code>,
@@ -1602,7 +1751,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-transient-sessioncontroller">The transient SessionController</a></li><li style="padding-left:0"><a href="#the-pg-direct-transcript-one-store-reconstructed-each-turn">The PG-direct transcript: one store, reconstructed each turn</a></li><li style="padding-left:0"><a href="#the-conductor-deterministic-code-never-an-llm">The conductor: deterministic code, never an LLM</a></li><li style="padding-left:0"><a href="#the-tier-seam-and-structural-enforced-ignorance">The tier seam, and structural enforced ignorance</a></li><li style="padding-left:0"><a href="#the-audit-gate">The audit gate: a decorated render seam</a></li><li style="padding-left:0"><a href="#the-distributed-lock">The distributed lock</a></li><li style="padding-left:0"><a href="#the-lock-fenced-worker-the-5-decision-order">The lock-fenced worker: the §5 decision order</a></li><li style="padding-left:0"><a href="#release-drain-and-the-post-turn-re-mature">Release, drain, and the post-turn re-mature</a></li><li style="padding-left:0"><a href="#cross-process-frame-publishing-and-the-turnid-fence">Cross-process frame publishing and the turnId fence</a></li><li style="padding-left:0"><a href="#turn-state-and-the-residual-redis-flush">Turn state and the residual Redis flush</a></li><li style="padding-left:0"><a href="#the-producer-and-the-dev-fire-turn-trigger">The producer and the dev fire-turn trigger</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#fire-a-dm-turn-end-to-end">Fire a DM turn end-to-end locally</a></li><li style="padding-left:12px"><a href="#diagnose-a-turn-that-never-completes">Diagnose a turn that never completes</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#server-frames-added-server-client-only">Server frames added (server → client only)</a></li><li style="padding-left:12px"><a href="#redis-keys-realtime-cluster">Redis keys (realtime cluster)</a></li><li style="padding-left:12px"><a href="#tuning-constants-turn-worker-ts">Tuning constants (turn-worker.ts)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-transient-sessioncontroller">The transient SessionController</a></li><li style="padding-left:0"><a href="#the-pg-direct-transcript-one-store-reconstructed-each-turn">The PG-direct transcript: one store, reconstructed each turn</a></li><li style="padding-left:0"><a href="#the-conductor-deterministic-code-never-an-llm">The conductor: deterministic code, never an LLM</a></li><li style="padding-left:0"><a href="#the-tier-seam-and-structural-enforced-ignorance">The tier seam, and structural enforced ignorance</a></li><li style="padding-left:0"><a href="#the-audit-gate">The audit gate: a decorated render seam</a></li><li style="padding-left:0"><a href="#the-distributed-lock">The distributed lock</a></li><li style="padding-left:0"><a href="#the-lock-fenced-worker-the-5-decision-order">The lock-fenced worker: the §5 decision order</a></li><li style="padding-left:0"><a href="#release-drain-and-the-post-turn-re-mature">Release, drain, and the post-turn re-mature</a></li><li style="padding-left:0"><a href="#the-session-progress-signal">The session-progress signal</a></li><li style="padding-left:0"><a href="#cross-process-frame-publishing-and-the-turnid-fence">Cross-process frame publishing and the turnId fence</a></li><li style="padding-left:0"><a href="#turn-state-and-the-residual-redis-flush">Turn state and the residual Redis flush</a></li><li style="padding-left:0"><a href="#the-producer-and-the-dev-fire-turn-trigger">The producer and the dev fire-turn trigger</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#fire-a-dm-turn-end-to-end">Fire a DM turn end-to-end locally</a></li><li style="padding-left:12px"><a href="#diagnose-a-turn-that-never-completes">Diagnose a turn that never completes</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#server-frames-added-server-client-only">Server frames added (server → client only)</a></li><li style="padding-left:12px"><a href="#redis-keys-realtime-cluster">Redis keys (realtime cluster)</a></li><li style="padding-left:12px"><a href="#tuning-constants-turn-worker-ts">Tuning constants (turn-worker.ts)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

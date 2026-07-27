@@ -6,7 +6,7 @@
 <!-- source: backend/src/routes/campaign-characters.ts -->
 <!-- source: backend/migrations/018_character_integration.sql -->
 <!-- source: docs/superpowers/specs/2026-05-23-myt-54-character-integration-design.md -->
-<!-- source-hash: sha256:0744099cb81451291af9ac0055827cfc43c291a6d94a85f1a52bb4cbb2b9a063 -->
+<!-- source-hash: sha256:a2c9e0d683c8fea332c1b8bddd003c9c9f55277652b906cdc68fb0867ec1202f -->
 <!-- last-ticket: MYT-71 -->
 
 <h1>Character integration</h1>
@@ -150,6 +150,14 @@
   only on short labels, array element counts, numerics, and fields that mirror a DB
   <code>CHECK</code>.
 </aside>
+
+<p>
+  The <code>proseKernel</code> is prose a player eventually reads, so the template pulls in the
+  shared house-voice fragment through the prompt loader's
+  <a href="./world-gen.html">include directive</a> — the same one the world-gen stages, the
+  <a href="./session-prep.html">session prep</a>, and the live DM carry. A PC's kernel written in a
+  different register than the world around it is a seam the player feels without being able to name.
+</p>
 
 <h3>The single transaction</h3>
 

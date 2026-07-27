@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html" class="active">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Character creation</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>backend/migrations/016_character_concepts.sql</code>, <code>backend/migrations/033_starting_level.sql</code>, <code>backend/src/routes/campaign-characters.ts</code>, <code>backend/src/routes/campaign-setup-routes.ts</code>, <code>backend/src/routes/character-concept-routes.ts</code>, <code>backend/src/routes/character-roster-routes.ts</code>, <code>backend/src/routes/world-read-routes.ts</code>, <code>backend/src/routes/campaign-lifecycle-routes.ts</code>, <code>backend/src/llm/prep/character-creation-processor.ts</code>, <code>backend/src/llm/prep/stages/location-selection.ts</code>, <code>backend/src/llm/prep/stages/character-concept.ts</code>, <code>backend/src/llm/prep/stages/character-sheet.ts</code>, <code>backend/src/llm/prep/stages/character-integration.ts</code>, <code>backend/src/llm/prompts/prep/character-concept.txt</code>, <code>backend/src/llm/prompts/prep/character-sheet.txt</code>, <code>backend/src/llm/prompts/prep/character-integration.txt</code>, <code>backend/src/llm/schemas/character-concept.ts</code>, <code>backend/src/llm/schemas/character-sheet.ts</code>, <code>backend/src/llm/schemas/character-integration.ts</code>, <code>backend/src/repo/character-concepts.ts</code>, <code>backend/src/repo/campaigns.ts</code>, <code>backend/src/llm/prep/cost-cap.ts</code>, <code>backend/src/llm/prep/stages/starting-situation.ts</code>, <code>backend/src/contract/pipeline-routes.ts</code>, <code>backend/src/contract/pipeline-jobs.ts</code>, <code>backend/src/contract/backend-routes.ts</code>, <code>docs/superpowers/specs/2026-05-18-myt-53-per-player-character-creation-design.md</code>, <code>docs/superpowers/specs/2026-07-11-myt-90-character-creation-design.md</code></div>
-</div>
-
+        <article>
 <h1>Character creation</h1>
 
 <p class="lead">
@@ -223,14 +218,62 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
 </aside>
 
 <aside class="wiki-rationale">
-  <strong>Both fields required in v1; guided-choices deferred to its own bead</strong> — the
-  freeform path is the only consumer today, so the body schema is a two-field object with both
-  strings required (20..4000 / 20..2000, mirroring the CHECK bounds in migration 016). The
-  <code>character_concepts.guided_choices JSONB</code> column persists as the default
-  <code>{}</code>; a future guided-character-creation bead lights up the picker UI, extends the body
-  schema to accept a third field, and lights up the deterministic-assembly path in stages 2–3
-  without reshaping the route. Dropping the optional field today means a sharper 400 on bad bodies
-  and one less branch to keep covered.
+  <strong>Both texts are required; the structured picks ride a third, optional field</strong> — the
+  body schema keeps both strings required (20..4000 / 20..2000, mirroring the CHECK bounds in
+  migration 016), and adds an optional <code>guidedChoices</code> object persisted verbatim into
+  <code>character_concepts.guided_choices</code>. The guided builder <em>also</em> flattens its
+  picks into <code>conceptText</code>, so freeform and guided submissions are one shape at the
+  route: a freeform post simply omits the object and behaves exactly as it did before.
+</aside>
+
+<h3 id="structured-picks">Structured picks, and why they are pinned rather than prompted</h3>
+
+<p>
+  The guided builder's picks used to travel <strong>only</strong> as flattened prose inside the
+  concept text. Forensics on a staging run showed what that costs: the subclass died at the first
+  schema boundary, and by the time the sheet stage ran it invented a non-SRD one. The picks now ride
+  their own structured channel — class, subclass, species, background, and pronouns, every field
+  optional, short labels rather than prose. The concept stage renders the present ones into its
+  prompt as <em>committed</em> choices, and then <strong>deterministically overrides</strong> the
+  model's echo for the two that must not be negotiable.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A pick the player made is an input, not a judgment</strong> — asking the model to preserve
+  a value it was handed is a prompt-compliance bet, and the run that motivated this lost it: the
+  model dropped the subclass under the canonical-vocabulary framing. So the stage writes the pick
+  back over the output. That is squarely inside the ZFC carve-out — no reasoning is being replaced,
+  a known server-held value is being pinned — and it mirrors the existing level override. Both
+  fields are <em>optional</em> on the concept schema, and both are emitted only when the player
+  actually committed to one, so the model still owns every case where the player didn't.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Pronouns are a separate field from gender, and a closed token set</strong> —
+  <code>gender</code> describes the character; <code>pronouns</code> governs the
+  <em>words every later stage writes</em>. Run 3 answered "he/his" for a character whose description
+  never specified a gender, which is exactly the failure a player states a preference to avoid. The
+  wire value is an enum (<code>she_her</code> / <code>he_him</code> / <code>they_them</code> /
+  <code>name_only</code>) rather than free text, because a pin is only meaningful against a value
+  the server controls; the stage expands it into the written form and the instruction that rides
+  alongside it. <code>name_only</code> is a real answer, not an absence — the character is referred
+  to by name and the sentence is rewritten rather than reaching for a pronoun. Omitting the field is
+  also an answer: let the description decide, under the prompt's own they/them default. The pronoun
+  channel is carried on the same <code>guidedChoices</code> object from <em>both</em> creation
+  paths, which is why that name describes the structured-pick channel rather than claiming the
+  guided builder produced them — one wire field, no migration.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A twelve-row SRD subclass table, duplicated on purpose</strong> —
+  <code>session/srd/subclasses.ts</code> pins each SRD 2014 class to its single SRD subclass and the
+  level that grants it. It backs two things at once: the character-sheet coherence gate (a sheet for
+  an exact SRD class at a granting level must name its SRD subclass, or the player's pinned choice)
+  and the table rendered into the sheet prompt — so the gate and the prompt cannot drift apart. The
+  same data exists in the frontend's guided-builder catalog, and the duplication is deliberate:
+  backend and client-core are separate packages, and a unit test pins all twelve rows against drift
+  rather than coupling them. A flavored class name — "Storm-Touched Sorcerer" — deliberately misses
+  the lookup, because the gate applies only to exact SRD classes.
 </aside>
 
 <h2 id="the-routes-split-into-five-cohesive-modules">The routes, split into five cohesive modules</h2>
@@ -550,6 +593,20 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
   gained a <strong>coherence loop</strong>: a sheet that is Zod-valid but mechanically incoherent
   against those tables (a level-9 spell on a level-1 caster) triggers a full regeneration, bounded
   by a max attempt count, then terminal-fails loud rather than persisting a brickable character.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A schema rejection now spends an attempt instead of ending the run</strong> — that loop
+  originally caught coherence violations only. A <em>schema</em> rejection —
+  <code>generateObject</code>
+  exhausting its own repair chain — is terminal by class, and terminal at this depth meant one
+  stochastic bad draw took a player's whole character with it. The landmine that proved it was a
+  single over-long equipment name against a field cap: the item was fine, the run was not. Both
+  defect classes now spend an attempt and regenerate. The reasoning that makes this a real remedy
+  rather than a retry loop: the model draws differently each time, so a fresh draw is a genuinely
+  different computation — which is the same reason the SDK's own JSON repair cannot fix a coherence
+  violation, only a new generation can. The budget is shared and bounded; exhaustion still
+  terminal-fails loud.
 </aside>
 
 <aside class="wiki-rationale">
@@ -1037,10 +1094,12 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
 <ul>
   <li>
     <code>character_concepts</code> — one row per <code>(campaign_id, user_id)</code>. Carries
-    <code>concept_text</code>, <code>situation_grounding_text</code>, <code>guided_choices</code>
-    JSONB (reserved for the guided-mode follow-on; the route never writes it in v1),
-    <code>status</code> (<code>submitted | processing | completed | failed</code>), and an
-    <code>error</code> JSONB. Composite FK to
+    <code>concept_text</code>, <code>situation_grounding_text</code>,
+    <code>guided_choices</code> JSONB (the <a href="#structured-picks">structured-pick channel</a> —
+    class / subclass / species / background / pronouns, all optional; <code>{}</code> on a
+    submission that carries none), <code>status</code> (<code
+      >submitted | processing | completed | failed</code
+    >), and an <code>error</code> JSONB. Composite FK to
     <code>campaign_members(campaign_id, user_id) ON DELETE CASCADE</code>.
   </li>
   <li>
@@ -1108,7 +1167,7 @@ PHASE 1 ▶ myth-0b2r Pre-world-gen lobby retrofit
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-two-prompt-model">The two-prompt model</a></li><li style="padding-left:0"><a href="#the-routes-split-into-five-cohesive-modules">The routes, split into five cohesive modules</a></li><li style="padding-left:0"><a href="#the-three-stages">The three stages</a></li><li style="padding-left:12px"><a href="#sheet-prompt-schema-co-evolution">The sheet co-evolved with the live ledger (MYT-70)</a></li><li style="padding-left:0"><a href="#starting-level-the-one-deterministic-input">Starting level: the one deterministic input</a></li><li style="padding-left:0"><a href="#reset-and-confirmation-surviving-the-reveal">Reset and confirmation: surviving the reveal</a></li><li style="padding-left:0"><a href="#lifecycle-and-late-joiners">Lifecycle and late joiners</a></li><li style="padding-left:0"><a href="#surviving-a-stuck-job-the-resilience-layer">Surviving a stuck job — the resilience layer</a></li><li style="padding-left:0"><a href="#cross-pc-integration-moved-to-myt-54">Cross-PC integration moved to MYT-54</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#exercise-the-routes-end-to-end">Exercise the routes end-to-end</a></li><li style="padding-left:12px"><a href="#recovering-a-stuck-character">Recovering a stuck character</a></li><li style="padding-left:12px"><a href="#reset-a-stale-processing-concept-player-self-serve">Reset a stale-processing concept (player self-serve)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-schema-additions">Appendix: schema additions</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-two-prompt-model">The two-prompt model</a></li><li style="padding-left:12px"><a href="#structured-picks">Structured picks, and why they are pinned rather than prompted</a></li><li style="padding-left:0"><a href="#the-routes-split-into-five-cohesive-modules">The routes, split into five cohesive modules</a></li><li style="padding-left:0"><a href="#the-three-stages">The three stages</a></li><li style="padding-left:12px"><a href="#sheet-prompt-schema-co-evolution">The sheet co-evolved with the live ledger (MYT-70)</a></li><li style="padding-left:0"><a href="#starting-level-the-one-deterministic-input">Starting level: the one deterministic input</a></li><li style="padding-left:0"><a href="#reset-and-confirmation-surviving-the-reveal">Reset and confirmation: surviving the reveal</a></li><li style="padding-left:0"><a href="#lifecycle-and-late-joiners">Lifecycle and late joiners</a></li><li style="padding-left:0"><a href="#surviving-a-stuck-job-the-resilience-layer">Surviving a stuck job — the resilience layer</a></li><li style="padding-left:0"><a href="#cross-pc-integration-moved-to-myt-54">Cross-PC integration moved to MYT-54</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#exercise-the-routes-end-to-end">Exercise the routes end-to-end</a></li><li style="padding-left:12px"><a href="#recovering-a-stuck-character">Recovering a stuck character</a></li><li style="padding-left:12px"><a href="#reset-a-stale-processing-concept-player-self-serve">Reset a stale-processing concept (player self-serve)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-schema-additions">Appendix: schema additions</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

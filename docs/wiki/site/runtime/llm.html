@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html" class="active">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › LLM client</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>backend/src/llm/</code>, <code>backend/src/config/env.ts</code>, <code>backend/src/worker/bullmq-config.ts</code>, <code>backend/.env.development.example</code>, <code>backend/package.json</code></div>
-</div>
-
+        <article>
 <h1>LLM client</h1>
 
 <p class="lead">
@@ -65,11 +60,11 @@
 
 <figure class="wiki-diagram">
   
-<svg width="1759pt" height="403pt"
- viewBox="14.00 14.00 1744.00 388.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<svg width="1752pt" height="403pt"
+ viewBox="14.00 14.00 1738.00 388.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 384.4)">
 <title>llm</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-370 1726.02,-370 1726.02,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-370 1719.42,-370 1719.42,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_owned</title>
 <polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="359.72,-108 359.72,-358 1490.11,-358 1490.11,-108 359.72,-108"/>
@@ -227,17 +222,17 @@
 <!-- anthropic -->
 <g id="node11" class="node">
 <title>anthropic</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1722.02,-72.04 1578.12,-72.04 1578.12,-1.96 1722.02,-1.96 1722.02,-72.04"/>
-<text xml:space="preserve" text-anchor="middle" x="1650.07" y="-53.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Anthropic API</text>
-<text xml:space="preserve" text-anchor="middle" x="1650.07" y="-40.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">claude&#45;haiku&#45;4&#45;5</text>
-<text xml:space="preserve" text-anchor="middle" x="1650.07" y="-27.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">claude&#45;sonnet&#45;4&#45;6</text>
-<text xml:space="preserve" text-anchor="middle" x="1650.07" y="-13.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">claude&#45;opus&#45;4&#45;7</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1715.42,-72.04 1578.12,-72.04 1578.12,-1.96 1715.42,-1.96 1715.42,-72.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1646.77" y="-53.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Anthropic API</text>
+<text xml:space="preserve" text-anchor="middle" x="1646.77" y="-40.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">claude&#45;haiku&#45;4&#45;5</text>
+<text xml:space="preserve" text-anchor="middle" x="1646.77" y="-27.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">claude&#45;sonnet&#45;5</text>
+<text xml:space="preserve" text-anchor="middle" x="1646.77" y="-13.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">claude&#45;opus&#45;5</text>
 </g>
 <!-- sdk_anth&#45;&gt;anthropic -->
 <g id="edge10" class="edge">
 <title>sdk_anth&#45;&gt;anthropic</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1484.21,-37C1511.84,-37 1541.96,-37 1568.8,-37"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1568.58,-39.45 1575.58,-37 1568.58,-34.55 1568.58,-39.45"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1484.1,-37C1511.94,-37 1542.26,-37 1569.03,-37"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1568.78,-39.45 1575.78,-37 1568.78,-34.55 1568.78,-39.45"/>
 <text xml:space="preserve" text-anchor="middle" x="1534.12" y="-40" font-family="Courier,monospace" font-size="10.00">HTTPS</text>
 </g>
 </g>
@@ -286,9 +281,9 @@
   <code>models.ts</code> exports three constants — <code>HAIKU</code>, <code>SONNET</code>,
   <code>OPUS</code> — each constructed from <code>anthropic(modelId)</code> wrapped by
   <code>wrapLanguageModel</code> with the logging middleware. The IDs are pinned in this file and
-  this file alone: <code>claude-haiku-4-5-20251001</code>, <code>claude-sonnet-4-6</code>,
-  <code>claude-opus-4-7</code>. Every other call site in the codebase imports a tier constant by
-  name; no file outside <code>models.ts</code> mentions a model ID string.
+  this file alone: <code>claude-haiku-4-5-20251001</code>, <code>claude-sonnet-5</code>,
+  <code>claude-opus-5</code>. Every other call site in the codebase imports a tier constant by name;
+  no file outside <code>models.ts</code> mentions a model ID string.
 </p>
 
 <aside class="wiki-rationale">
@@ -1123,12 +1118,12 @@
     </tr>
     <tr>
       <td><code>SONNET</code></td>
-      <td><code>claude-sonnet-4-6</code></td>
+      <td><code>claude-sonnet-5</code></td>
       <td>Player-facing prose (Fast Thinker), Scribe extraction.</td>
     </tr>
     <tr>
       <td><code>OPUS</code></td>
-      <td><code>claude-opus-4-7</code></td>
+      <td><code>claude-opus-5</code></td>
       <td>Slow Thinker reasoning, prep-engine generation.</td>
     </tr>
   </tbody>

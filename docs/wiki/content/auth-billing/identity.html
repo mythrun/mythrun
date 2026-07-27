@@ -2,11 +2,12 @@
 <!-- source: infra/modules/auth/main.tf -->
 <!-- source: infra/modules/auth/variables.tf -->
 <!-- source: infra/modules/auth/outputs.tf -->
+<!-- source: infra/modules/auth/alarms.tf -->
 <!-- source: infra/environments/staging/main.tf -->
 <!-- source: backend/src/routes/auth.ts -->
 <!-- source: backend/src/auth/cognito-oauth-client.ts -->
 <!-- source: backend/src/auth/refresh-cookie.ts -->
-<!-- source-hash: sha256:e6b24565d260742328d1d67c8385b6c3c74b00d9384ab1b890a0c470d47f9b16 -->
+<!-- source-hash: sha256:de378debf9b4bdd662c0e6e3544f3438bcf7372e2e9b7d1ece3a827cad1dc24b -->
 <!-- last-ticket: MYT-84 -->
 
 <h1>Identity</h1>
@@ -415,7 +416,83 @@
   the refresh token never lands in CloudWatch.
 </p>
 
+<h2>Throttling alarms on the pool</h2>
+
+<p>
+  <code>infra/modules/auth/alarms.tf</code> puts two kinds of CloudWatch alarm on the User Pool,
+  both publishing to the environment's SNS alerts topic through a new
+  <code>alerts_topic_arn</code> module input. They live in the module rather than in the environment
+  root for the same reason the billing alarms live in <a href="../infra/serving.html">serving</a>: a
+  production composition should inherit them by construction, not because someone remembered to add
+  them. The whole file is count-gated on the topic ARN, so an environment can stand its pool up
+  before its alerts topic exists.
+</p>
+
+<p>
+  <code>SignInThrottles</code> covers native sign-in; <code>FederationThrottles</code> covers the
+  federated path and fans out to one alarm per identity provider. Both mean the same thing: the AWS
+  account is over a Cognito request quota and users are being refused at the door, before any
+  Mythrun code runs — so nothing appears in the API logs and there is no application-side error to
+  find. Because Mythrun has no password sign-in path, a firing Google <em>and</em> Discord
+  federation alarm means nobody can get in by any route.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One alarm per provider, because the dimension set is the metric's identity</strong> —
+  <code>FederationThrottles</code> is published with three dimensions (<code>UserPool</code>,
+  <code>UserPoolClient</code>, <code>IdentityProvider</code>), not the two the
+  <code>SignIn*</code> metrics carry. CloudWatch identifies a metric by its
+  <em>complete</em> dimension set, so a single alarm declared with only the first two matches no
+  timeseries at all: it sits in <code>INSUFFICIENT_DATA</code> forever while looking perfectly
+  healthy in the console. The provider list is also empty until the two-pass IdP apply has run, for
+  the same reason — an alarm on a provider that doesn't exist yet never resolves.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>treat_missing_data = "notBreaching"</code>, not the usual "breaching"</strong> —
+  Cognito publishes a throttling datapoint only when a request is <em>actually</em> throttled. A
+  healthy pool emits nothing at all, so the conservative default would page continuously on a
+  working system. Missing data here is the good case, and the alarm has to say so.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>What is deliberately not alarmed</strong> — <code>SignInSuccesses</code> rate-of-change
+  has no meaningful static threshold against a pool holding four synthetic smoke users and no
+  organic traffic; the right instrument is a CloudWatch anomaly-detection band, and a band needs
+  weeks of real traffic to train on. It belongs to the production composition. Secret-age on the two
+  OAuth credential secrets is not alarmed either, for a harder reason: Secrets Manager publishes no
+  age metric, so there is nothing to alarm on. Covering it means a scheduled job that reads
+  <code>LastChangedDate</code> and emits a custom metric, or the AWS Config
+  <code>secretsmanager-secret-periodic-rotation</code> managed rule — both new mechanisms rather
+  than new alarms, and the scheduled-job option overlaps the <code>myth-fhri</code> nightly export,
+  so they ship together or not at all. <code>myth-s48q</code> stays open for that half.
+</aside>
+
 <h2>Operating this piece</h2>
+
+<h3 id="respond-to-a-cognito-throttling-alarm">Respond to a Cognito throttling alarm</h3>
+<ol>
+  <li>
+    Identify which alarm fired: <code>mythrun-&lt;env&gt;-cognito-sign-in-throttles</code> is the
+    native path, <code>mythrun-&lt;env&gt;-cognito-federation-throttles-{google,discord}</code> the
+    federated one. Mythrun sign-ins are federated, so the per-provider alarms are the ones that
+    correspond to real users being turned away.
+  </li>
+  <li>
+    Cognito quotas are per-account, not per-pool, so the cause is account-wide. Find the operation
+    that is over by checking the <code>AWS/Usage</code> namespace's <code>CallCount</code> and
+    <code>ThrottleCount</code> metrics for Cognito.
+  </li>
+  <li>
+    Request a quota increase for that operation through Service Quotas. This does not resolve on its
+    own — a throttled pool stays throttled until the account's limit moves or the load drops.
+  </li>
+  <li>
+    Nothing in the API logs will corroborate the alarm; the requests never reach Mythrun. Confirm
+    from the user side with the
+    <a href="#verify-a-sign-in-flow-click-through">click-through runbook</a> below.
+  </li>
+</ol>
 
 <h3 id="rotate-an-oauth-client-secret">Rotate an OAuth client secret</h3>
 <ol>
@@ -533,10 +610,13 @@
   user row on first sign-in; the <a href="../frontend/app-shell.html">SPA app shell</a> is the
   client half that runs the PKCE redirect and stores the access token in memory. The OAuth client
   credentials live in <a href="../infra/data.html#secrets">Secrets Manager</a> alongside the other
-  per-env secrets the platform owns. Discord's OIDC userinfo endpoint and Google's OAuth flow are
-  the two external integration points; both are pinned in <code>provider_details</code> rather than
-  autodiscovered, so a Discord <code>/.well-known/openid-configuration</code> outage doesn't stop
-  sign-ins on a cold <code>terraform apply</code>.
+  per-env secrets the platform owns. The throttling alarms publish to the same per-env SNS alerts
+  topic the <a href="../infra/serving.html">serving module</a>'s billing and retrieval alarms use —
+  the environment root owns the topic and passes its ARN into both modules. Discord's OIDC userinfo
+  endpoint and Google's OAuth flow are the two external integration points; both are pinned in
+  <code>provider_details</code> rather than autodiscovered, so a Discord
+  <code>/.well-known/openid-configuration</code> outage doesn't stop sign-ins on a cold
+  <code>terraform apply</code>.
 </p>
 
 <h2>Appendix: inputs &amp; outputs</h2>
@@ -574,6 +654,24 @@
       <td><code>logout_urls</code></td>
       <td>—</td>
       <td>Non-empty allowlist. Staging: <code>https://staging.mythrun.com</code>.</td>
+    </tr>
+    <tr>
+      <td><code>alerts_topic_arn</code></td>
+      <td><code>""</code></td>
+      <td>
+        SNS topic the throttling alarms publish to. Empty disables alarm creation entirely, so a
+        fresh environment can apply the module before its alerts topic exists. Staging passes the
+        env workspace's <code>aws_sns_topic.alerts.arn</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>smoke_test_user_enabled</code></td>
+      <td><code>false</code></td>
+      <td>
+        Provisions four native Cognito test users (one owner + three players) plus their per-user
+        Secrets Manager credential entries. Staging-only; the production composition leaves it at
+        the default.
+      </td>
     </tr>
   </tbody>
 </table>

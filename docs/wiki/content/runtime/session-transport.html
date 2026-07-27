@@ -1,4 +1,5 @@
 <!-- source: backend/src/routes/ws-session.ts -->
+<!-- source: backend/src/session/replay-frames.ts -->
 <!-- source: backend/src/ws/session-hub.ts -->
 <!-- source: backend/src/redis/session-state.ts -->
 <!-- source: backend/src/session/session-suspend.ts -->
@@ -12,8 +13,8 @@
 <!-- source: backend/migrations/024_session_messages_dm_rows.sql -->
 <!-- source: backend/migrations/028_session_messages_trigger_kind.sql -->
 <!-- source: backend/migrations/035_session_opening_trigger_kind.sql -->
-<!-- source-hash: sha256:b1069e39308ba8af7bed9d5ec61334fcd0b394a1893aeb28ba148b1b4a52317a -->
-<!-- last-ticket: myth-wat0m -->
+<!-- source-hash: sha256:e49df18a7467084898732c96003590bb7a97161d01651f76eba724f93e80d91f -->
+<!-- last-ticket: myth-ficc -->
 
 <h1>Session transport</h1>
 
@@ -262,7 +263,7 @@
   "public" here means "no JWT," not "unauthenticated." The auth boundary is the route's
   <code>preHandler</code>, <code>wsSessionAuth</code>, which <code>@fastify/websocket</code> v11
   runs <em>before</em> the upgrade completes: any <code>reply.code(…).send()</code> it issues
-  rejects the handshake with no socket opening at all. The handshake runs five checks in order:
+  rejects the handshake with no socket opening at all. The handshake runs six checks in order:
 </p>
 
 <ol>
@@ -286,7 +287,34 @@
     predicate as
     <code>requireCampaignMember</code> → else <code>403 not_campaign_member</code>.
   </li>
+  <li>
+    Re-check the account's standing (<code>users.isSuspended</code>) →
+    <code>403 account_suspended</code>, the same answer the HTTP surface gives.
+  </li>
 </ol>
+
+<aside class="wiki-rationale">
+  <strong>The suspension check cannot be inherited from the mint route (myth-ficc)</strong> — a
+  ticket minted while a player was in good standing stays valid for its 30-second TTL, so without a
+  check <em>here</em> a just-banned player still gets a socket. It fails closed in both directions:
+  a missing row reads as suspended, and a thrown Postgres fault propagates to the route error
+  handler as a 500, which is also no upgrade. Every outcome other than "definitely allowed" ends
+  without a socket. This is also what keeps the permanently-suspended system user — the demo world's
+  owner — off the transport entirely.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Blocking new sockets is only half of enforcement; the hub kills live ones</strong> —
+  suspending someone who is already at the table must not wait for them to reconnect. The
+  <code>SessionHub</code> exposes <code>closeUser</code>, which closes and deregisters every socket
+  that container holds for the user, across all campaigns, with a distinct application close code
+  (4403 <code>account_suspended</code>) so the client can tell a ban from a resync and stop
+  reconnecting — a reconnect would need a fresh ticket, and the mint route already refuses. The
+  deregister is the part that actually enforces: a closed-but-still-registered socket keeps
+  receiving fan-out until its <code>close</code> event lands. Each close is independently guarded so
+  one already-torn-down socket cannot abort the sweep. It is deliberately local-only — a user's
+  sockets on other API containers are those containers' to kill.
+</aside>
 
 <aside class="wiki-rationale">
   <strong
@@ -366,6 +394,27 @@
   <code>player_joined</code> only when this is the user's <strong>first</strong> live connection — a
   second tab opens silently rather than re-announcing a player already at the table.
 </p>
+
+<p>
+  Both first frames now carry the
+  <a href="./session-turn.html#the-session-progress-signal">session-progress</a> floor when there is
+  one, so a joining client renders the real fraction immediately instead of sitting at empty until
+  the next turn completes. The read is read-only — the turn worker alone raises the floor — and the
+  field is omitted at zero and on any read failure, because an absent field means "no statement"
+  while a zero would be a claim. It is guarded independently on both arms: a progress hiccup must
+  never cost a player their connection or their replay.
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>session_ready</code> is effectively dead code, and that is a trap</strong> — the
+  shipped web client seeds its <code>lastSeq</code> at 0 rather than leaving it null, and 0 is a
+  valid seq, so <em>every</em> real connection — first join included — arrives as
+  <code>lastSeq=0</code> and takes the <strong>reconnect</strong> branch. Only a client that never
+  seeds (the ws-transport smoke, curl) reaches <code>session_ready</code> at all. Any new
+  per-connect payload must therefore ride <code>session_reconnect</code> to reach players; putting
+  it only on <code>session_ready</code> looks correct, passes its test, and ships nothing. The two
+  arms are kept in sync deliberately, and the code says so at both sites.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>register-before-replay, so live frames during the DB read aren't lost</strong> — the
@@ -559,6 +608,22 @@
   lookup. An author who has since left the campaign falls back to a stable "Former player" byline;
   their prose history still replays intact.
 </p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The row-to-frame mapping now lives on its own, and the turn worker publishes through it</strong
+  >
+  — <code>rowToReplayFrame</code> moved out of <code>ws-session.ts</code> into
+  <code>session/replay-frames.ts</code>. That is not tidying: the
+  <a href="./session-turn.html#the-audit-gate">audit gate</a>'s repair used to reach only players
+  who happened to reconnect, which is not something a table does mid-session. The turn worker now
+  rebuilds the corrected turn's frames through this exact function and publishes them as a live
+  <code>session_reconnect</code> carrying one turn. Because the frames come from the persisted,
+  seq-bearing rows, the client's high-water mark advances precisely as it would on a real reconnect,
+  and its per-<code>turnId</code> whole-turn replace repairs that turn and leaves the rest alone.
+  One mapping, two callers — a second implementation would drift, and the drift would be invisible
+  until a corrected turn rendered differently on the two paths.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>A corrupt DM row drops one frame, never breaks the reconnect</strong> — the DM-row replay
@@ -916,12 +981,16 @@
     <tr>
       <td>Server → client</td>
       <td>
-        <code>session_ready</code>, <code>session_reconnect</code>, <code>player_joined</code>,
-        <code>player_left</code>, <code>player_message</code> (the only frame with a
-        <code>seq</code>), <code>typing_start</code>, <code>typing_stop</code>, <code>error</code>,
-        the MYT-66 DM-turn frames <code>dm_thinking</code> / <code>text_delta</code> /
-        <code>turn_end</code> / <code>turn_error</code> (each carries a <code>turnId</code>, no seq;
-        published by the <a href="./session-turn.html">turn worker</a>), the myth-d6knq
+        <code>session_ready</code> and <code>session_reconnect</code> (both carry the optional
+        <a href="./session-turn.html#the-session-progress-signal"><code>progress</code></a
+        >; <code>session_reconnect</code> is the arm real clients actually take, and the turn worker
+        also republishes it to whole-turn-replace an audit-corrected turn),
+        <code>player_joined</code>, <code>player_left</code>, <code>player_message</code> (the only
+        frame with a <code>seq</code>), <code>typing_start</code>, <code>typing_stop</code>,
+        <code>error</code>, the MYT-66 DM-turn frames <code>dm_thinking</code> /
+        <code>text_delta</code> / <code>turn_end</code> (also optional <code>progress</code>) /
+        <code>turn_error</code> (each carries a <code>turnId</code>, no seq; published by the
+        <a href="./session-turn.html">turn worker</a>), the myth-d6knq
         <code>dm_correction</code> errata frame (<code>{ turnId, text }</code> live, row seq on
         replay), and the MYT-74a <code>session_end</code> lifecycle frame (<code
           >{ reason: 'normal' }</code
@@ -948,10 +1017,15 @@
       <td>10/min/user</td>
       <td>
         <code>200 { sessionId }</code> · <code>402</code> (no credits, row rolled back) ·
-        <code>409</code> (<code>campaign_not_active</code> /
+        <code>409</code> (<code>campaign_not_active</code> / <code>campaign_failed</code> /
         <code>members_without_characters</code> (body carries the blocking members) /
         <code>prep_not_ready</code> / <code>session_already_active</code> /
-        <code>reconcile_pending</code> / <code>session_ending</code>)
+        <code>reconcile_pending</code> / <code>session_ending</code>). The two campaign-status 409s
+        are split because the client treats them oppositely: <code>campaign_not_active</code> means
+        integration is still running (transient — back off and poll), while
+        <code>campaign_failed</code> means it exhausted its repair chain (terminal — route back to
+        setup, which owns the retry). Collapsing them would leave a client polling a dead campaign
+        forever.
       </td>
     </tr>
     <tr>
@@ -959,6 +1033,24 @@
       <td><code>/api/sessions/:campaignId/active</code></td>
       <td>60/min</td>
       <td><code>200 { session }</code> (session is <code>null</code> when none)</td>
+    </tr>
+    <tr>
+      <td><code>GET</code></td>
+      <td><code>/api/sessions/:campaignId/recap</code></td>
+      <td>60/min</td>
+      <td>
+        <code>200 { recap }</code> — the campaign's most-recent ended session's close-out (<code
+          >null</code
+        >
+        when there is none). Member-gated, and <strong>secret-free by selection</strong>: only
+        <code>summary</code> and <code>emergingThreads</code> are read out of the
+        <a href="./session-reconcile.html">post-session analysis</a>; the secret-aware
+        <code>handoff</code> and the ST running summary are never touched. The analysis is enqueued
+        at finalize and lands asynchronously, so a just-ended session answers
+        <code>status: 'pending'</code> with facts only and the surface polls until
+        <code>ready</code>. A malformed or legacy <code>summary</code> column reads as pending
+        rather than erroring.
+      </td>
     </tr>
     <tr>
       <td><code>GET</code></td>
@@ -1040,6 +1132,16 @@
       </td>
     </tr>
     <tr>
+      <td><code>session:{campaignId}:progress</code></td>
+      <td>
+        The <a href="./session-turn.html#the-session-progress-signal">session-progress</a> floor —
+        the last published fraction, raised only, carrying the state TTL. Written by the turn worker
+        alone; read here on both connect arms. DEL'd by <code>resetSessionSpend</code> at
+        <code>/start</code> alongside the spend and summary keys, since the floor never falls on its
+        own and would otherwise open the next session pinned at the last one's reading.
+      </td>
+    </tr>
+    <tr>
       <td><code>session:campaign:{campaignId}</code> (channel)</td>
       <td>Pub/sub channel; the hub <code>PSUBSCRIBE</code>s <code>session:campaign:*</code>.</td>
     </tr>
@@ -1058,19 +1160,31 @@
     <tr>
       <td><code>src/routes/ws-session.ts</code></td>
       <td>
-        <code>wsSessionRoutes</code> plugin (the upgrade route + handshake + connection lifecycle —
-        including the join-time <code>reseedSeq</code> floor-guard and the reconnect replay's DM-row
-        reconstruction, <code>dm_correction</code> included), <code>WS_MAX_PAYLOAD_BYTES</code>. The
-        inbound handler also writes the <a href="./dm-trigger.html">DM-trigger</a> typing / activity
-        state and reschedules the quiet-window debounce (the explicit / auto branching is delegated
-        to <code>ws-trigger-actions.ts</code>).
+        <code>wsSessionRoutes</code> plugin (the upgrade route + handshake — including the myth-ficc
+        suspension re-check — + connection lifecycle, the join-time <code>reseedSeq</code>
+        floor-guard, and both connect arms' progress carriers),
+        <code>WS_MAX_PAYLOAD_BYTES</code>. The inbound handler also writes the
+        <a href="./dm-trigger.html">DM-trigger</a> typing / activity state and reschedules the
+        quiet-window debounce (the explicit / auto branching is delegated to
+        <code>ws-trigger-actions.ts</code>).
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/replay-frames.ts</code></td>
+      <td>
+        <code>rowToReplayFrame</code> — one persisted row to its replay <code>ServerFrame</code>(s)
+        (0 for a dropped or no-op row, 1 for the common case, N for a <code>take_rest</code>).
+        Lifted out of <code>ws-session.ts</code> so the
+        <a href="./session-turn.html">turn worker</a>'s whole-turn-replace push and the reconnect
+        share one mapping.
       </td>
     </tr>
     <tr>
       <td><code>src/ws/session-hub.ts</code></td>
       <td>
         <code>createSessionHub</code>, <code>SessionHub</code> / <code>WSLike</code> types — the
-        cross-container pub/sub fan-out.
+        cross-container pub/sub fan-out; plus the myth-ficc <code>closeUser</code> sweep and its
+        <code>SUSPENDED_CLOSE_CODE</code> (4403) / <code>SUSPENDED_CLOSE_REASON</code>.
       </td>
     </tr>
     <tr>
@@ -1083,8 +1197,10 @@
         / <code>isEnding</code> / the myth-x4ca4 <code>clearEnding</code> release); the LLM-tier
         turn-state surface (<code>flushTurnState</code> usage-only, <code>setRunningSummary</code> /
         <code>incrUsageSt</code> / <code>totalUsageTokens</code> / <code>resetSessionSpend</code> —
-        MYT-69); <code>PRESENCE_TTL</code>, <code>SessionMode</code> /
-        <code>SessionStateBlob</code> / <code>CheckpointStore</code> types.
+        MYT-69 — and the myth-nu0hm <code>progressFraction</code> read /
+        <code>raiseProgressFraction</code> raise-only write); <code>PRESENCE_TTL</code>,
+        <code>SessionMode</code> / <code>SessionStateBlob</code> / <code>CheckpointStore</code>
+        types.
       </td>
     </tr>
     <tr>
@@ -1122,8 +1238,9 @@
       <td><code>src/routes/sessions.ts</code></td>
       <td>
         <code>sessionsRoutes</code> — the ws-ticket mint plus <code>/start</code> /
-        <code>/active</code> / <code>/messages</code>
-        lifecycle routes.
+        <code>/active</code> / <code>/messages</code> / <code>/recap</code> lifecycle routes;
+        <code>parseRecapSummary</code> (the secret-free projection of the analysis's
+        <code>summary</code> column, pending-on-malformed).
       </td>
     </tr>
     <tr>
@@ -1161,8 +1278,8 @@
 <h2>Source</h2>
 
 <p>
-  <code>backend/src/routes/ws-session.ts</code>, <code>backend/src/ws/session-hub.ts</code>,
-  <code>backend/src/redis/session-state.ts</code>,
+  <code>backend/src/routes/ws-session.ts</code>, <code>backend/src/session/replay-frames.ts</code>,
+  <code>backend/src/ws/session-hub.ts</code>, <code>backend/src/redis/session-state.ts</code>,
   <code>backend/src/session/session-suspend.ts</code>,
   <code>backend/src/contract/session-events.ts</code>,
   <code>backend/src/contract/session-channel.ts</code>, <code>backend/src/routes/sessions.ts</code>,

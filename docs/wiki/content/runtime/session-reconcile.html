@@ -22,8 +22,8 @@
 <!-- source: backend/migrations/027_fact_supersede.sql -->
 <!-- source: docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md -->
 <!-- source: docs/superpowers/specs/2026-06-17-myt-74c-campaign-wiki-promotion-design.md -->
-<!-- source-hash: sha256:9d74a1c6dadf14698fd5fc6d129785f66ada620d8e71c5abd6b684429ada8846 -->
-<!-- last-ticket: myth-8mom0 -->
+<!-- source-hash: sha256:4109332ac70aba6c88f4f0b198b7debaea5c2c2d72c85df18cc0675279d0e266 -->
+<!-- last-ticket: myth-g4hf3 -->
 
 <h1>End-of-session reconciliation</h1>
 
@@ -54,11 +54,11 @@
   Through a live session the <a href="./scribe.html">Scribe</a> accumulates the session's
   improvisation into a Redis working set — an append-only list of facts the Fast Thinker invented,
   each stamped with its tier (<code>known</code> / <code>discoverable</code> / <code>secret</code>)
-  and provenance (objective ground truth, or an NPC's attributed claim). That working set is
-  ephemeral: it lives in Redis (ridden onto the durable 5-minute Postgres checkpoint) and it never
-  touches the world store while the session is live. Reconciliation is the closing step that makes
-  the session's discoveries permanent — it turns the working set into canon the next session, the
-  next prep, and the wiki can read.
+  and provenance (objective ground truth, an NPC's attributed claim, or a dice-earned grant). That
+  working set is ephemeral: it lives in Redis (ridden onto the durable 5-minute Postgres checkpoint)
+  and it never touches the world store while the session is live. Reconciliation is the closing step
+  that makes the session's discoveries permanent — it turns the working set into canon the next
+  session, the next prep, and the wiki can read.
 </p>
 
 <p>
@@ -399,6 +399,18 @@
   accrete a duplicate fact every session.
 </p>
 
+<aside class="wiki-rationale">
+  <strong>A dice-earned item is rendered as canon-on-grant, not as one more claim</strong> — the
+  working set carries a third provenance alongside objective and attributed:
+  <a href="./scribe.html">dice_outcome</a>, stamped on facts asserted in a turn whose skill check
+  actually passed. The reconciler's rendering says so in as many words — "dice-earned (<em>tier</em>
+  on a resolved roll — canon-on-grant; the world conforms to it)" — because the model otherwise has
+  no way to tell a reward the system itself granted from an improvisation that happens to collide
+  with prep material, and would resolve the collision by discarding the grant. The direction of
+  reconciliation is the opposite: the world conforms to play. A collision steers future turns; it
+  does not retract something a player earned at the table.
+</aside>
+
 <p>
   The prompt makes the closing narration authoritative for how the session <em>ended</em>: any
   canon-worthy end-state it establishes is folded, matched onto an existing candidate rather than
@@ -597,7 +609,8 @@
   <li>
     <strong><code>summary</code> / <code>emergingThreads</code></strong> — the player-facing recap.
     Secret-free by construction: the prompt's hard rule is that these describe only what the players
-    witnessed at the table. They land in <code>sessions.summary</code> as a JSON wrapper.
+    witnessed at the table. They land in <code>sessions.summary</code> as a JSON wrapper, and reach
+    players through the <a href="./session-transport.html">recap route</a>.
   </li>
   <li>
     <strong><code>handoff</code></strong> — the <code>SessionHandoff</code>, which <em>may</em> be
@@ -622,6 +635,19 @@
   <em>banned as a verbatim voice or atmosphere source</em> — two different channels, and the prompt
   holds both rules at once.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The recap is paragraphed, and the paragraphs are structural only</strong> — a session with
+  three distinct movements compressed into one dense block reads as a wall, so the prompt now asks
+  for one to four short paragraphs broken where the <em>session</em> broke: a discovery, a
+  confrontation, a journey, a retreat. A session that was one continuous scene stays one paragraph.
+  Same words, same register — only the breaks are new, and they pass through as blank lines inside
+  the same single <code>summary</code> string, so the wire contract and the recap route are
+  unchanged. The prompt also pulls in <code>shared/prose-register</code> for
+  <code>summary</code> and <code>emergingThreads</code>, and explicitly exempts the handoff's
+  <code>voice</code> and <code>atmosphere</code> fields: those are quoted verbatim from the
+  transcript, and restyling a quote would destroy the thing that makes it useful.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Verbatim NPC voice is the point of the handoff</strong> — the recurring failure across

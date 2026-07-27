@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../infra/index.html" class="active">Overview</a></li><li><a href="../infra/network.html">Network</a></li><li><a href="../infra/data.html">Data plane</a></li><li><a href="../infra/dns.html">DNS</a></li><li><a href="../infra/serving.html">Serving</a></li><li><a href="../infra/frontend-hosting.html">Frontend hosting</a></li><li><a href="../infra/ci-cd.html">CI/CD</a></li><li><a href="../infra/smoke-testing.html">Smoke testing</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Infra</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>infra/</code>, <code>infra/scripts/bootstrap.sh</code></div>
-</div>
-
+        <article>
 <h1>Infra</h1>
 
 <p class="lead">
@@ -84,6 +79,14 @@
   secret shells, the scoped GitHub Actions IAM role, and an SNS alerts topic.
 </p>
 
+<p>
+  The shared workspace also carries the account-level pieces that belong to no single module: the
+  image-build IAM role, the KMS key that encrypts both alerts topics, the cost budget, and the
+  alarms whose subject is a shared resource. See
+  <a href="#alerting-and-spend">Alerting and spend</a>
+  below.
+</p>
+
 <aside class="wiki-rationale">
   <strong>Shared vs per-env split</strong> — a second Postgres or VPC would double cost without
   buying anything real in staging. Sensitive boundaries (per-env databases, per-env app users,
@@ -107,6 +110,59 @@
   reason about.
 </aside>
 
+<h2 id="alerting-and-spend">Alerting and spend</h2>
+
+<p>
+  Every alarm in the account lands in one of two SNS topics, and which one it lands in follows a
+  single rule: <strong>the topic belongs to whoever owns the resource being watched</strong>. Alarms
+  on shared infrastructure — the RDS instance, the Redis replication group, the ALB, the wildcard
+  certificate, the NAT gateway — publish to <code>mythrun-shared-alerts</code> in the shared
+  workspace. Alarms whose subject is one environment — the API's health and 5xx rate, the
+  log-derived billing and retrieval alarms, Cognito throttling — publish to that environment's own
+  topic, and live in the module that owns the resource so a production composition inherits them
+  rather than re-declaring them. Both topics carry a single email subscription today, which starts
+  in <code>PendingConfirmation</code> until the recipient clicks the AWS link.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two topics, because the dependency arrow only runs one way</strong> — the staging
+  workspace reads shared's remote state, never the reverse, so a shared-resource alarm cannot
+  publish to the staging topic without inverting that. The alternative, declaring the shared alarms
+  inside each environment, means a production composition either duplicates every one of them (two
+  pages for one database) or silently omits them. One shared resource, one alarm, one topic that
+  belongs to nobody's environment.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A customer-managed KMS key, not <code>alias/aws/sns</code></strong> — the AWS-managed key
+  is free and looks like the obvious choice, and it silently disarms every alarm on the topic.
+  Publishing an encrypted message requires the publisher to reach <code>kms:GenerateDataKey</code>,
+  which the AWS-managed key's policy grants only to IAM principals in the account. A CloudWatch
+  alarm publishes as the service principal <code>cloudwatch.amazonaws.com</code>, and an AWS-managed
+  key's policy cannot be edited to add it. The alarm still turns red and the console still looks
+  right; the notification is simply never sent, and the only evidence is one line in the alarm's
+  History tab. One customer-managed key (<code>alias/mythrun-alerts</code>) therefore encrypts both
+  topics, and each topic is smoke-tested once after wiring with
+  <code>aws cloudwatch set-alarm-state</code> — a green <code>apply</code> proves nothing about
+  delivery here.
+</aside>
+
+<p>
+  Account spend is watched separately, by AWS Budgets rather than a CloudWatch alarm: a monthly cost
+  budget with three layered notifications — 85% actual, 100% forecasted, 100% actual. The forecast
+  usually fires first on a sharp ramp, which is exactly the case worth catching early, because a
+  runaway LLM spend doesn't creep, it steps. The budget predates its Terraform declaration and is
+  therefore imported rather than applied; the name is half the import ID, so renaming it destroys
+  and recreates it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Budgets, not an alarm on <code>AWS/Billing EstimatedCharges</code></strong> — that metric
+  doesn't exist in this account. It is published only once the &ldquo;Receive Billing Alerts&rdquo;
+  account preference is switched on, and only ever into <code>us-east-1</code>. Budgets needs no
+  such preference, evaluates forecasts as well as actuals, and is what AWS itself now points at.
+</aside>
+
 <h2 id="operating-this-piece">Operating this piece</h2>
 
 <h3 id="create-the-state-bucket-in-a-new-aws-account">Create the state bucket in a new AWS account</h3>
@@ -122,12 +178,45 @@
   </li>
 </ol>
 
+<h3 id="verify-an-alerts-topic-delivers">Verify an alerts topic actually delivers</h3>
+<p>
+  Do this once per topic, after wiring and after any change to the topic's encryption or policy. A
+  green <code>terraform apply</code> proves the alarm exists, not that a notification reaches
+  anyone.
+</p>
+<ol>
+  <li>
+    Confirm the email subscription is out of <code>PendingConfirmation</code>:
+    <code
+      >aws sns list-subscriptions-by-topic --topic-arn &lt;arn&gt; --query
+      'Subscriptions[0].SubscriptionArn'</code
+    >.
+  </li>
+  <li>
+    Force one alarm into ALARM:
+    <code
+      >aws cloudwatch set-alarm-state --alarm-name mythrun-staging-api-down --state-value ALARM
+      --state-reason "delivery smoke test"</code
+    >.
+  </li>
+  <li>Check the inbox. Then let the alarm settle back on its own, or set it to <code>OK</code>.</li>
+  <li>
+    If no email arrives while the console shows the alarm red, read the alarm's History tab. A
+    &ldquo;Failed to execute action … does not have authorization to access the SNS topic encryption
+    key&rdquo; line means the topic is on the wrong KMS key. SNS's own
+    <code>NumberOfNotificationsFailed</code> will show nothing — the publish is rejected before the
+    message enters SNS.
+  </li>
+</ol>
+
 <h2 id="integration-points">Integration points</h2>
 
 <p>
-  The <a href="network.html">Network</a> page drills into the VPC. The <a href="data.html">Data</a>
-  page covers RDS, Redis, and the bootstrap script that creates per-env databases inside the shared
-  RDS instance.
+  The <a href="network.html">Network</a> page drills into the VPC. The
+  <a href="data.html">Data</a> page covers RDS, Redis, and the bootstrap script that creates per-env
+  databases inside the shared RDS instance. <a href="serving.html">Serving</a> carries the
+  per-environment half of the alerting story — the alarms declared inside the serving module, the
+  environment's own topic, and its policy.
 </p>
 
 <h2 id="appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</h2>
@@ -185,18 +274,88 @@
     <tr>
       <td><code>shared</code></td>
       <td><code>environments/shared/terraform.tfstate</code></td>
-      <td>Network, Data, DNS modules + ECR, OIDC provider, ECS cluster, ALB, listeners</td>
+      <td>
+        Network, Data, DNS modules + ECR, OIDC provider, ECS cluster, ALB, listeners, GH Actions
+        build role, alerts KMS key + shared alerts topic, shared-resource alarms, cost budget
+      </td>
     </tr>
     <tr>
       <td><code>staging</code></td>
       <td><code>environments/staging/terraform.tfstate</code></td>
       <td>
-        Serving + frontend-hosting modules + per-env secret shells + GH Actions role + SNS alerts
-        (reads shared state)
+        Serving + auth + frontend-hosting modules + per-env secret shells + GH Actions deploy role +
+        SNS alerts topic (reads shared state)
       </td>
     </tr>
   </tbody>
 </table>
+
+<h3 id="shared-resource-alarms">Shared-resource alarms</h3>
+
+<p>
+  Declared in the shared workspace, publishing to <code>mythrun-shared-alerts</code>.
+  Per-environment alarms are listed on the <a href="serving.html">Serving</a> page.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Alarm</th>
+      <th>Condition</th>
+      <th>Why it matters</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>mythrun-rds-cpu-high</code></td>
+      <td>CPU &gt; 90%</td>
+      <td>The one Postgres instance every environment shares.</td>
+    </tr>
+    <tr>
+      <td><code>mythrun-rds-storage-low</code></td>
+      <td>Free storage &lt; 2 GiB</td>
+      <td>Autoscaling has a ceiling; this is the warning before it.</td>
+    </tr>
+    <tr>
+      <td><code>mythrun-redis-&lt;n&gt;-memory-high</code></td>
+      <td>Node memory &gt; 80% for 5 min</td>
+      <td>
+        <code>maxmemory-policy</code> is <code>noeviction</code>, so a full node rejects writes
+        rather than shedding load — every job enqueue starts failing. One alarm per node.
+      </td>
+    </tr>
+    <tr>
+      <td><code>mythrun-alb-5xx</code></td>
+      <td>&gt; 50 ELB-generated 5xx in 5 min</td>
+      <td>The load balancer's own 502/503/504 — the platform's view, not the application's.</td>
+    </tr>
+    <tr>
+      <td><code>mythrun-acm-wildcard-expiry</code></td>
+      <td>&lt; 30 days to expiry; missing data breaches</td>
+      <td>
+        ACM auto-renews at ~60 days, so reaching 30 means renewal has been failing. The cert fronts
+        every hostname we serve.
+      </td>
+    </tr>
+    <tr>
+      <td><code>mythrun-nat-port-allocation-errors</code></td>
+      <td>Any <code>ErrorPortAllocation</code></td>
+      <td>
+        Source-port exhaustion toward one destination (~55k concurrent connections). Surfaces in the
+        app as scattered, hard-to-diagnose connection failures under load.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  Worker liveness is deliberately absent. Container Insights is off by design, so
+  <code>RunningTaskCount</code> isn't published, and the worker has no target group to borrow
+  <code>HealthyHostCount</code> from. The two honest options are enabling Container Insights at
+  Launch or having the worker emit its own heartbeat metric — the task role already carries
+  <code>cloudwatch:PutMetricData</code> for the <code>Mythrun/&lt;env&gt;</code> namespace — and
+  both cost something, so neither is taken silently.
+</p>
 
 <h2 id="source">Source</h2>
 
@@ -206,7 +365,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#state-and-bootstrap">State and bootstrap</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#create-the-state-bucket-in-a-new-aws-account">Create the state bucket in a new AWS account</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#state-bucket">State bucket</a></li><li style="padding-left:12px"><a href="#workspaces">Workspaces</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#state-and-bootstrap">State and bootstrap</a></li><li style="padding-left:0"><a href="#alerting-and-spend">Alerting and spend</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#create-the-state-bucket-in-a-new-aws-account">Create the state bucket in a new AWS account</a></li><li style="padding-left:12px"><a href="#verify-an-alerts-topic-delivers">Verify an alerts topic actually delivers</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#state-bucket">State bucket</a></li><li style="padding-left:12px"><a href="#workspaces">Workspaces</a></li><li style="padding-left:12px"><a href="#shared-resource-alarms">Shared-resource alarms</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

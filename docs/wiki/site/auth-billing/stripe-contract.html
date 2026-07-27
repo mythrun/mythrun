@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html">JWT middleware</a></li><li><a href="../auth-billing/onboarding.html">Onboarding & invites</a></li><li><a href="../auth-billing/access-control-ws-ticket.html">Access control & WS ticket</a></li><li><a href="../auth-billing/stripe-contract.html" class="active">Stripe contract</a></li><li><a href="../auth-billing/billing-webhook.html">Billing webhook</a></li><li><a href="../auth-billing/billing-routes.html">Billing routes</a></li><li><a href="../auth-billing/billing-metering.html">Billing metering</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Auth & Billing › Stripe contract</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>backend/src/billing/lookup-keys.ts</code>, <code>backend/src/billing/stripe-client.ts</code>, <code>backend/src/billing/probe.ts</code>, <code>backend/src/billing/sku-cache.ts</code>, <code>backend/src/config/env.ts</code>, <code>backend/src/server.ts</code>, <code>backend/eslint-rules/no-stripe-price-mutations.cjs</code>, <code>backend/eslint-rules/no-stripe-subscription-price-mutation.cjs</code>, <code>eslint.config.js</code></div>
-</div>
-
+        <article>
 <h1>Stripe contract</h1>
 
 <p class="lead">
@@ -397,6 +392,21 @@
 </p>
 
 <aside class="wiki-rationale">
+  <strong>The pin is not a one-line edit — it is a coordinated change (myth-e3ary)</strong> — this
+  constant must equal the <code>api_version</code> of every enabled Stripe webhook endpoint. Bumping
+  it alone breaks the money path silently: the <a href="./billing-webhook.html">dispatcher</a> fails
+  closed on any event whose <code>api_version</code> doesn't match, so every delivery is acked 200
+  with no handler run and paid customers are charged and never credited. There is no repair after
+  the fact — a Stripe Event is immutable, rendered once at the delivering endpoint's version, so
+  re-fetching it returns the same bytes. Worse, an endpoint's <code>api_version</code> is
+  <em>create-only</em> on the Stripe API, so realigning one generally means standing up a
+  replacement endpoint, moving its new signing secret into Secrets Manager, and retiring the old
+  one. Bump the endpoint and the constant together, in one rollout — the runbook below is the order
+  that works. The boot probe asserting the two agree is what stops a half-done bump from reaching
+  production.
+</aside>
+
+<aside class="wiki-rationale">
   <strong>Pinned <code>apiVersion</code>, not "use whatever Stripe's account default is"</strong> —
   Stripe lets you set a per-account default API version in the Dashboard, but that's an action at a
   distance: a Dashboard click could silently change the shape of webhook payloads and SDK responses
@@ -434,7 +444,8 @@
   default <a href="#the-customer-portal-config-probe">Customer Portal configuration</a>
   to verify the asymmetric upgrade-immediate / downgrade-at-renewal shape downgrades depend on, and
   a third against every enabled
-  <a href="#the-webhook-endpoint-api_version-probe">webhook endpoint's <code>api_version</code></a>.
+  <a href="#the-webhook-endpoint-api_version-probe">webhook endpoint's <code>api_version</code></a
+  >.
 </p>
 
 <p>The price-list pass distinguishes four failure modes by throwing different typed errors:</p>
@@ -585,9 +596,9 @@
   non-problem. An <strong>empty endpoint list</strong>: the Stripe CLI forwards without registering
   an endpoint (the entire local dev flow), and Stripe's newer v2 event destinations don't appear in
   the v1 list at all, so absence proves nothing —
-  <code>billing.probe_webhook_version_skipped</code>. A <strong>permission error</strong>: production
-  runs a restricted key, and if it lacks the <code>webhook_endpoints: read</code> scope the right
-  answer is to note the gate is disarmed, not to refuse to boot —
+  <code>billing.probe_webhook_version_skipped</code>. A <strong>permission error</strong>:
+  production runs a restricted key, and if it lacks the <code>webhook_endpoints: read</code> scope
+  the right answer is to note the gate is disarmed, not to refuse to boot —
   <code>billing.probe_webhook_version_unavailable</code>. A <strong>transient Stripe error</strong>:
   a Stripe blip must not block a rollout on a defense-in-depth check. In all three the runtime
   <code>stripe_webhook_api_version_mismatch</code> alarm remains the backstop.
@@ -598,9 +609,9 @@
   doesn't have to infer the failure class from a stack trace. The drift failure is
   <code>classification: 'config'</code> — retrying will produce the same answer forever, so the
   crashloop it causes is intentional and must not be read as a flaky dependency to wait out; it also
-  carries <code>expected_api_version</code> and a <code>remedy</code> string. The two non-fatal paths
-  are <code>'permission'</code> (remedy: grant the <code>webhook_endpoints: read</code> scope) and
-  <code>'transient'</code> (the gate re-arms on the next boot).
+  carries <code>expected_api_version</code> and a <code>remedy</code> string. The two non-fatal
+  paths are <code>'permission'</code> (remedy: grant the <code>webhook_endpoints: read</code> scope)
+  and <code>'transient'</code> (the gate re-arms on the next boot).
 </p>
 
 <h3 id="the-boot-gate-wiring">The boot-gate wiring</h3>
@@ -753,8 +764,56 @@
   <li>
     <code>BillingProbeStripeAPIChangeError</code> → Stripe changed the <code>prices.list</code> API
     contract. This requires a code change in <code>probe.ts</code> to handle the new shape; check
-    Stripe's API changelog for the breaking change and bump <code>STRIPE_API_VERSION</code> in
-    <code>stripe-client.ts</code> alongside the fix.
+    Stripe's API changelog for the breaking change. If the fix also needs a newer
+    <code>STRIPE_API_VERSION</code>, do <em>not</em> edit the constant on its own — follow the
+    version-bump runbook below.
+  </li>
+  <li>
+    <code>billing.probe_webhook_version_failed</code> → an enabled webhook endpoint's
+    <code>api_version</code> doesn't match the pin, or the endpoint is unpinned and following the
+    account default. The log line carries the endpoint id, its URL, and the expected version. The
+    fix is the version-bump runbook below, run in the direction that realigns the endpoint. This is
+    <code>classification: 'config'</code> — the crashloop is intentional and will not clear on its
+    own.
+  </li>
+</ol>
+
+<h3 id="bump-the-stripe-api-version">Bump <code>STRIPE_API_VERSION</code></h3>
+<ol>
+  <li>
+    Read Stripe's API changelog for every release between the current pin and the target. Webhook
+    payload shapes and field names move between versions; the handlers that read them are typed
+    against the SDK, so the bump is a code review, not a config change.
+  </li>
+  <li>
+    Create a <em>new</em> webhook endpoint in the Stripe Dashboard at the target version, pointing
+    at the same <code>POST /webhooks/stripe</code> URL and subscribing to the same events as the
+    existing one. A new endpoint is required because <code>api_version</code> is create-only — the
+    update call accepts only <code>url</code>, <code>enabled_events</code>,
+    <code>description</code>, <code>disabled</code>, and <code>metadata</code>. Leave the old
+    endpoint enabled for now; both will deliver.
+  </li>
+  <li>
+    Write the new endpoint's signing secret into Secrets Manager:
+    <code
+      >aws secretsmanager put-secret-value --secret-id mythrun/&lt;env&gt;/stripe-webhook-secret
+      --secret-string &lt;whsec_value&gt;</code
+    >.
+  </li>
+  <li>
+    Disable the old endpoint in the Dashboard, then let the code change deploy. The order matters
+    and is forced by the probe: it asserts <em>every enabled</em> endpoint matches the pin, so a
+    deploy that lands while both endpoints are enabled fails on whichever one doesn't match. There
+    is a window here — the running tasks still hold the old signing secret, so deliveries from the
+    new endpoint fail signature verification and come back 400 until the new tasks boot. Stripe
+    retries non-2xx deliveries, so those land once the rollout completes.
+  </li>
+  <li>
+    Confirm <code>billing.probe_webhook_version_passed</code> in CloudWatch on the new tasks, then
+    delete the old endpoint. Check the Stripe Dashboard's webhook attempts UI for anything that
+    exhausted its retries, and replay it with <code>stripe events resend &lt;event_id&gt;</code> —
+    the dispatcher deliberately writes no <code>stripe_events</code> row on a version mismatch, so a
+    dropped event stays replayable inside Stripe's 30-day retention.
   </li>
 </ol>
 
@@ -892,6 +951,18 @@
       <td>3 attempts with 1/2/4s + jitter</td>
       <td>Wait for Stripe; redeploy</td>
     </tr>
+    <tr>
+      <td><code>BillingProbePortalConfigError</code></td>
+      <td>Default Portal config missing the upgrade/downgrade proration asymmetry</td>
+      <td>No</td>
+      <td>Fix Stripe Dashboard</td>
+    </tr>
+    <tr>
+      <td><code>BillingProbeWebhookVersionError</code></td>
+      <td>An enabled webhook endpoint is on a different <code>api_version</code>, or unpinned</td>
+      <td>No</td>
+      <td><a href="#bump-the-stripe-api-version">Realign the endpoint</a></td>
+    </tr>
   </tbody>
 </table>
 
@@ -963,6 +1034,32 @@
       <td>error</td>
       <td><code>attempts</code>, <code>err</code> (last error after retry exhaustion)</td>
     </tr>
+    <tr>
+      <td><code>billing.probe_webhook_version_passed</code></td>
+      <td>info</td>
+      <td><code>count</code> (enabled endpoints), <code>apiVersion</code></td>
+    </tr>
+    <tr>
+      <td><code>billing.probe_webhook_version_skipped</code></td>
+      <td>info</td>
+      <td><code>count</code> (endpoints listed, none enabled)</td>
+    </tr>
+    <tr>
+      <td><code>billing.probe_webhook_version_unavailable</code></td>
+      <td>warn</td>
+      <td>
+        <code>classification</code> (<code>permission</code> | <code>transient</code>),
+        <code>remedy</code>, <code>err</code>
+      </td>
+    </tr>
+    <tr>
+      <td><code>billing.probe_webhook_version_failed</code></td>
+      <td>error</td>
+      <td>
+        <code>classification: 'config'</code>, <code>remedy</code>,
+        <code>expected_api_version</code>, <code>mismatchCount</code>, <code>mismatches</code>
+      </td>
+    </tr>
   </tbody>
 </table>
 
@@ -971,6 +1068,7 @@
 <p>
   <code>backend/src/billing/lookup-keys.ts</code>,
   <code>backend/src/billing/stripe-client.ts</code>, <code>backend/src/billing/probe.ts</code>,
+  <code>backend/src/billing/probe-webhook-version.ts</code>,
   <code>backend/src/billing/sku-cache.ts</code>, <code>backend/src/config/env.ts</code>,
   <code>backend/src/server.ts</code>,
   <code>backend/eslint-rules/no-stripe-price-mutations.cjs</code>,
@@ -982,7 +1080,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-closed-enum-and-what-it-carries">The closed enum and what it carries</a></li><li style="padding-left:12px"><a href="#the-cached-sdk-client">The cached SDK client</a></li><li style="padding-left:12px"><a href="#the-boot-probe-and-its-error-classes">The boot probe and its error classes</a></li><li style="padding-left:12px"><a href="#the-sku-cache-and-its-public-projection">The SKU cache and its public projection</a></li><li style="padding-left:12px"><a href="#the-customer-portal-config-probe">The Customer Portal config probe</a></li><li style="padding-left:12px"><a href="#the-webhook-endpoint-api-version-probe">The webhook-endpoint api_version probe</a></li><li style="padding-left:12px"><a href="#the-boot-gate-wiring">The boot-gate wiring</a></li><li style="padding-left:12px"><a href="#the-restricted-key-boundary">The restricted-key boundary</a></li><li style="padding-left:12px"><a href="#the-eslint-ast-tripwires">The ESLint AST tripwires</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#rotate-the-stripe-restricted-key">Rotate the Stripe restricted key</a></li><li style="padding-left:12px"><a href="#diagnose-a-failed-billing-probe">Diagnose a failed billing probe</a></li><li style="padding-left:12px"><a href="#add-a-new-tier-or-sku">Add a new tier or SKU</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#lookup-keys">Lookup keys</a></li><li style="padding-left:12px"><a href="#probe-error-classes">Probe error classes</a></li><li style="padding-left:12px"><a href="#environment-variables">Environment variables</a></li><li style="padding-left:12px"><a href="#probe-log-events">Probe log events</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-closed-enum-and-what-it-carries">The closed enum and what it carries</a></li><li style="padding-left:12px"><a href="#the-cached-sdk-client">The cached SDK client</a></li><li style="padding-left:12px"><a href="#the-boot-probe-and-its-error-classes">The boot probe and its error classes</a></li><li style="padding-left:12px"><a href="#the-sku-cache-and-its-public-projection">The SKU cache and its public projection</a></li><li style="padding-left:12px"><a href="#the-customer-portal-config-probe">The Customer Portal config probe</a></li><li style="padding-left:12px"><a href="#the-webhook-endpoint-api-version-probe">The webhook-endpoint api_version probe</a></li><li style="padding-left:12px"><a href="#the-boot-gate-wiring">The boot-gate wiring</a></li><li style="padding-left:12px"><a href="#the-restricted-key-boundary">The restricted-key boundary</a></li><li style="padding-left:12px"><a href="#the-eslint-ast-tripwires">The ESLint AST tripwires</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#rotate-the-stripe-restricted-key">Rotate the Stripe restricted key</a></li><li style="padding-left:12px"><a href="#diagnose-a-failed-billing-probe">Diagnose a failed billing probe</a></li><li style="padding-left:12px"><a href="#bump-the-stripe-api-version">Bump STRIPE_API_VERSION</a></li><li style="padding-left:12px"><a href="#add-a-new-tier-or-sku">Add a new tier or SKU</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#lookup-keys">Lookup keys</a></li><li style="padding-left:12px"><a href="#probe-error-classes">Probe error classes</a></li><li style="padding-left:12px"><a href="#environment-variables">Environment variables</a></li><li style="padding-left:12px"><a href="#probe-log-events">Probe log events</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

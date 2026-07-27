@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../infra/index.html">Overview</a></li><li><a href="../infra/network.html">Network</a></li><li><a href="../infra/data.html">Data plane</a></li><li><a href="../infra/dns.html">DNS</a></li><li><a href="../infra/serving.html">Serving</a></li><li><a href="../infra/frontend-hosting.html">Frontend hosting</a></li><li><a href="../infra/ci-cd.html">CI/CD</a></li><li><a href="../infra/smoke-testing.html" class="active">Smoke testing</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Infra › Smoke testing</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>infra/modules/auth/smoke-test.tf</code>, <code>infra/modules/auth/variables.tf</code>, <code>infra/modules/auth/outputs.tf</code>, <code>infra/environments/staging/main.tf</code>, <code>infra/modules/bootstrap-db/main.tf</code>, <code>infra/modules/bootstrap-db/variables.tf</code>, <code>infra/modules/bootstrap-db/outputs.tf</code>, <code>infra/scripts/bootstrap-databases.sh</code>, <code>backend/scripts/smoke/staging.sh</code>, <code>backend/scripts/smoke/prep-pipeline.ts</code>, <code>backend/scripts/smoke/ws-transport.ts</code>, <code>backend/scripts/smoke/ws-transport.sh</code>, <code>package.json</code></div>
-</div>
-
+        <article>
 <h1>Smoke testing</h1>
 
 <p class="lead">
@@ -66,10 +61,10 @@
   <code>PASSWORD</code> challenge inline (single API call, no challenge round-trip), and hits the
   API with the resulting access token. The broader prep-pipeline smoke
   (<code>backend/scripts/smoke/prep-pipeline.ts</code>) reads all four secrets, authenticates each
-  user in parallel, and drives three concurrent owner-creates-campaign /
-  three-players-each-submit-character flows end-to-end against the deployed staging API. Both
-  surfaces hold no IAM write permissions on Cognito; users are pre-provisioned and the smokes only
-  need <code>secretsmanager:GetSecretValue</code> on the credential secrets and
+  user in parallel, and drives three concurrent campaign flows end-to-end against the deployed
+  staging API &mdash; owner creates, then every member (the owner included) submits a character.
+  Both surfaces hold no IAM write permissions on Cognito; users are pre-provisioned and the smokes
+  only need <code>secretsmanager:GetSecretValue</code> on the credential secrets and
   <code>cognito-idp:InitiateAuth</code> (which the public App Client allows by design).
 </p>
 
@@ -154,14 +149,16 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Why the smokes aren't yet on a cron</strong> &mdash; both are manual today (<code
+  <strong>Why the smokes aren't yet on a cron</strong> &mdash; all three are manual today (<code
     >pnpm smoke:staging</code
-  >
-  + the prep-pipeline run-task command). Scheduled GitHub Actions runs are the obvious next step but
-  need CloudWatch alarm wiring before they're worth automating; an unwatched green/red signal is
-  operational noise. Until alarms exist, the scripts live where any human or agent can run them on
-  demand: pre-deploy, post-deploy, after a flaky-feeling outage, or during a billing-rate change to
-  verify spend is what we expect.
+  >, <code>pnpm smoke:ws-transport</code>, and the prep-pipeline run-task command). The original
+  blocker was that an unwatched green/red signal is operational noise, and there was nowhere for a
+  failure to page. That half is now built: the
+  <a href="index.html#alerting-and-spend">alerting layer</a> exists, both alerts topics are wired,
+  and the serving module already turns structured log events into alarms. What is still missing is
+  the schedule and the failure signal a scheduled run would emit. Until that lands the scripts stay
+  where any human or agent can run them on demand: pre-deploy, post-deploy, after a flaky-feeling
+  outage, or during a billing-rate change to verify spend is what we expect.
 </aside>
 
 <h2 id="the-prep-pipeline-smoke-myt-55">The prep-pipeline smoke (MYT-55)</h2>
@@ -185,7 +182,8 @@
   its own task-execution role (ECR pull + log writes + the <code>rds-password</code> secret) and its
   own task role (per-ARN <code>secretsmanager:GetSecretValue</code> on the four smoke-user secrets
   only), kept separate from the API and bootstrap-db roles for blast-radius isolation. Logs land in
-  <code>/ecs/mythrun-staging-smoke-prep-pipeline</code> with 14-day retention.
+  <code>/ecs/mythrun-staging-smoke-prep-pipeline</code> with 30-day retention, the same value the
+  staging workspace now holds for every log group it owns.
 </p>
 
 <aside class="wiki-rationale">
@@ -226,8 +224,9 @@
   <li>
     <strong>Phase completeness</strong> &mdash; each campaign reaches <code>status='active'</code>,
     each world reaches <code>status='complete'</code>, every <code>pipeline_runs</code> row is
-    <code>completed</code> (zero <code>failed</code>, zero <code>running</code>), every campaign has
-    exactly 3 character rows, total entity-PC count is 9 across 3 worlds.
+    <code>completed</code> (zero <code>failed</code>, zero <code>running</code>), and every campaign
+    has one character row <em>per member</em> &mdash; four today, since the owner is a member and
+    gets a character of their own.
   </li>
   <li>
     <strong>Per-concept floors</strong> &mdash; entity count, relationship count, and average
@@ -246,18 +245,33 @@
     that's eval / red-team territory, not a plumbing assertion.
   </li>
   <li>
-    <strong>Global gates</strong> &mdash; total cost across all 3 campaigns &le; $8; wall-clock &le;
-    35 minutes; zero <code>LlmRateLimitedError</code> entries observed during the run. The
+    <strong>Global gates</strong> &mdash; total cost across all 3 campaigns &le; $15; wall-clock
+    &le; 35 minutes; zero <code>LlmRateLimitedError</code> entries observed during the run. The
     rate-limit gate is what makes this smoke also the concurrency-ceilings verification.
   </li>
 </ul>
 
 <aside class="wiki-rationale">
-  <strong>$8 cap, not $5</strong> &mdash; the prior $5 cap covered three-campaign world-gen +
-  character creation. Appending one session-prep stream per campaign adds three measured ~$0.52
-  streams (~$1.56), so the cap rose to $8 with headroom for LLM cost variance. The wall-clock budget
-  stayed at 35 minutes: session-prep (~3.4 min) appends to each campaign's <em>parallel</em> chain,
-  adding to the slowest campaign once rather than three times.
+  <strong>The one-character-per-member assertion is derived, not counted</strong> &mdash; it reads
+  the server's own <code>totalMembers</code> off the character-creation-progress endpoint rather
+  than a literal. The hard-coded <code>=== 3</code> it replaced failed a fully-green run the day the
+  owner became a member with a character of their own: the smoke was correct about the count it was
+  written for, and wrong about the system. Deriving both sides from one number means a future change
+  to campaign membership moves them together.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>$15, up from $8 &mdash; additive scope, not a runaway</strong> &mdash; a 2026-07-10
+  staging run passed every pipeline barrier and still failed the $8 cap at $11.01 (~$3.67 per
+  world). The growth was traced before the cap moved: a new Opus world-introduction stage runs once
+  per campaign; four characters per campaign instead of three multiplies both per-character Sonnet
+  stages and widens the Opus character-integration context; and relationship counts roughly doubled
+  against the numbers the $8 was calibrated on, which inflates input tokens for every downstream
+  stage that reads the woven graph. $15 leaves roughly a third of headroom over the observed spend
+  &mdash; still tight enough to trip on a genuine runaway, which is the only reason the cap exists.
+  Revisit if per-world cost passes ~$4.50. The wall-clock budget stayed at 35 minutes: session-prep
+  (~3.4 min) appends to each campaign's <em>parallel</em> chain, adding to the slowest campaign once
+  rather than three times.
 </aside>
 
 <p>
@@ -540,11 +554,11 @@
     <tr>
       <td><code>SMOKE_COST_CAP_USD</code></td>
       <td>Prep-pipeline task env</td>
-      <td><code>8.00</code></td>
+      <td><code>15.00</code></td>
       <td>
-        Cumulative cost across all three campaigns. Calibrated against the myth-imxg reference run
-        (~$1.20 per world, with headroom for character creation + integration), plus three measured
-        ~$0.52 session-prep streams added by MYT-64.
+        Cumulative cost across all three campaigns. History: $5 (world-gen + character creation) →
+        $8 (MYT-64 added three ~$0.52 session-prep streams) → $15 (world-introduction, a fourth
+        character per campaign, and roughly doubled relationship counts; observed $11.01).
       </td>
     </tr>
   </tbody>

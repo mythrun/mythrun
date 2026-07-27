@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html" class="active">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › World gen</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>backend/src/routes/campaigns.ts</code>, <code>backend/src/contract/pipeline-routes.ts</code>, <code>backend/src/contract/pipeline-jobs.ts</code>, <code>backend/src/contract/pipeline-errors.ts</code>, <code>backend/src/contract/pipeline-events.ts</code>, <code>backend/src/llm/prep/synthesize-concept.ts</code>, <code>backend/src/llm/prep/input-gate.ts</code>, <code>backend/src/llm/prep/paint-job-validator.ts</code>, <code>backend/src/llm/prep/cost-cap.ts</code>, <code>backend/src/llm/prep/streaming-extractor.ts</code>, <code>backend/src/llm/prep/structured-output-repair.ts</code>, <code>backend/src/llm/prep/stages/concept-intake.ts</code>, <code>backend/src/llm/prep/stages/vocabulary-intake.ts</code>, <code>backend/src/llm/prompts/prep/vocabulary-intake.txt</code>, <code>backend/src/llm/prep/vocabulary-renderer.ts</code>, <code>backend/src/llm/schemas/vocabulary-registry.ts</code>, <code>backend/src/llm/prep/stages/world-and-factions.ts</code>, <code>backend/src/llm/prep/stages/locations-and-npcs.ts</code>, <code>backend/src/llm/prep/stages/entity-relationships.ts</code>, <code>backend/src/llm/prep/stages/entity-consolidation.ts</code>, <code>backend/src/llm/prep/stages/starting-situation.ts</code>, <code>backend/src/llm/prep/stages/world-introduction.ts</code>, <code>backend/src/llm/prep/stages/random-tables.ts</code>, <code>backend/src/llm/prep/stages/coherence-pass.ts</code>, <code>backend/src/llm/prompts/prep/world-and-factions.txt</code>, <code>backend/src/llm/prompts/prep/locations-and-npcs.txt</code>, <code>backend/src/llm/prompts/prep/coherence-pass.txt</code>, <code>backend/src/llm/prep/stages/embed-world.ts</code>, <code>backend/src/llm/prep/world-gen-processor.ts</code>, <code>backend/src/worker/job-context.ts</code>, <code>backend/src/boot/process-error-handlers.ts</code>, <code>backend/src/llm/logger.ts</code>, <code>backend/src/server.ts</code>, <code>backend/src/server-queues.ts</code>, <code>backend/src/routes/dev-credits.ts</code>, <code>backend/src/repo/credit-grants.ts</code>, <code>backend/src/auth/rejection-storm.ts</code>, <code>backend/src/repo/pipeline-runs.ts</code>, <code>backend/src/repo/world-snapshot-view.ts</code>, <code>backend/src/sse/derive-phase.ts</code>, <code>backend/migrations/010_settings_world_gen_cost_cap.sql</code>, <code>backend/migrations/011_credit_ledger_cost_cap_refund.sql</code>, <code>backend/migrations/012_credit_ledger_admin_source.sql</code>, <code>backend/migrations/014_access_tier_rework.sql</code>, <code>backend/migrations/015_vocabulary_registry.sql</code>, <code>backend/migrations/017_entity_consolidation.sql</code>, <code>backend/src/llm/schemas/entity-relationships.ts</code>, <code>backend/src/llm/schemas/entity-consolidation.ts</code>, <code>backend/src/llm/prompts/prep/entity-consolidation.txt</code>, <code>backend/src/llm/prompts/prep/entity-relationships.txt</code>, <code>backend/dev-tool/src/components/campaign-create-panel.ts</code>, <code>backend/dev-tool/src/components/campaign-details-panel.ts</code>, <code>backend/dev-tool/src/components/dev-credits-grant-panel.ts</code>, <code>backend/dev-tool/src/components/world-snapshot-panel.ts</code>, <code>backend/dev-tool/coverage.json</code>, <code>docs/superpowers/specs/2026-05-12-myt-51-world-gen-non-streaming-design.md</code>, <code>docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md</code>, <code>docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md</code>, <code>docs/specs/2026-04-13-world-campaign-pipeline.md</code></div>
-</div>
-
+        <article>
 <h1>World gen</h1>
 
 <p class="lead">
@@ -957,9 +952,8 @@
 
 <p>
   Then the synthesizer fires if the body is guided-mode. It's one <code>generateText</code> call
-  with <code>temperature: 0.9</code> against the prompt template at
-  <code>backend/src/llm/prompts/prep/synthesize-concept.txt</code>, structured-output against the
-  <code>SynthesizerOutput</code> schema:
+  against the prompt template at <code>backend/src/llm/prompts/prep/synthesize-concept.txt</code>,
+  structured-output against the <code>SynthesizerOutput</code> schema:
   <code>{ concept: string, intentSummary: { aesthetics[], themes[], sourcesInternal[] } }</code>.
   The <code>concept</code> field is what the input gate (and later stages) see as the user's
   freeform-equivalent input; <code>intentSummary</code> is the structured trace of what aesthetic /
@@ -1016,17 +1010,32 @@
   <code>backend/src/llm/prep/paint-job-validator.ts</code>. For each attempt: one
   <strong>Opus</strong> call generates the structured <code>WorldConcept</code> (the foundational
   synthesis runs at Opus-tier — myth-rg09); a SECOND <strong>Sonnet</strong> call (distinct prompt,
-  fresh context, <code>temperature: 0.1</code>) judges the draft along TWO IP-mirror axes —
-  <em>structural</em> (the plot, characters, factions, or setting read as a re-skin of a known work)
-  and <em>vocabulary</em> (the concept invokes one franchise so directly that the world's natural
-  vocabulary would pull in that franchise's <em>invented</em> neologisms downstream — "muggle",
-  "Floo", "midi-chlorian", "mithril"). On flag (confidence &gt; 0.85), the loop discards the draft
-  entirely and retries with a fresh-direction amendment built from the judge's structured output
-  (the Opus generator ignores <code>temperature</code> — myth-v3rq — so divergence comes from the
-  amendment + the model's inherent sampling). <strong>Max 3 attempts total</strong> (1 original + 2
-  retries). On exhaustion the loop throws <code>PaintJobLoopExhaustedError</code>, which the worker
-  treats as a stage failure.
+  fresh context) judges the draft along TWO IP-mirror axes — <em>structural</em> (the plot,
+  characters, factions, or setting read as a re-skin of a known work) and <em>vocabulary</em> (the
+  concept invokes one franchise so directly that the world's natural vocabulary would pull in that
+  franchise's <em>invented</em> neologisms downstream — "muggle", "Floo", "midi-chlorian",
+  "mithril"). On flag (confidence &gt; 0.85), the loop discards the draft entirely and retries with
+  a fresh-direction amendment built from the judge's structured output — divergence comes from the
+  amendment plus the model's inherent sampling. <strong>Max 3 attempts total</strong> (1 original +
+  2 retries). On exhaustion the loop throws <code>PaintJobLoopExhaustedError</code>, which the
+  worker treats as a stage failure.
 </p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Sampling parameters are gone from the whole prep engine, and they had already stopped
+    working</strong
+  >
+  — twenty prep call sites passed a <code>temperature</code> (0.1 through 0.9), and the creative
+  variance they were presumed to supply had in fact been coming from the prompts for some time. The
+  current Anthropic model line rejects sampling parameters outright: a raw request carrying
+  <code>temperature: 0.9</code> returns a 400, while the same call through our stack returns 200 —
+  because <code>@ai-sdk/anthropic</code> <em>silently drops</em> unsupported sampling params. So
+  every one of those settings was inert, and would have become a 400 across the entire prep engine
+  the day the SDK stopped swallowing them. All twenty were removed rather than carried, and
+  <code>temperature</code> was dropped from the <a href="./llm.html">LLM client</a>'s option surface
+  so it cannot be reintroduced.
+</aside>
 
 <p>
   The judgement carries a <code>failureKind</code> field —
@@ -1293,6 +1302,20 @@
   the new shape by setting <code>finalizedEvents: []</code> and <code>capExhausted: false</code>. No
   call-site changes; the contract is uniform downstream.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Prose-writing stages share one register fragment via an include</strong> — the stages that
+  produce prose a player will eventually read load their template through
+  <code>resolveIncludes</code>, which splices in <code>prompts/shared/prose-register.txt</code> at a
+  <code>{{include:…}}</code> directive. Register drift between a dozen separately-edited templates
+  is otherwise inevitable and invisible: each prompt reads fine on its own, and the world reads as
+  written by a dozen different hands. The include resolves once at module load, so it costs nothing
+  per call. The same fragment is pulled in by the
+  <a href="./session-prep.html">session-prep</a> template, the
+  <a href="./fast-thinker.html">Fast Thinker</a>'s system prompt, and the
+  <a href="./session-reconcile.html">post-session analysis</a> — one voice from world generation
+  through live play to the recap.
+</aside>
 
 <h3 id="stage-taxonomy">Stage taxonomy</h3>
 

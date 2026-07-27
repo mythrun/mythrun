@@ -20,7 +20,7 @@
 <!-- source: frontend/ui/src/styles/index.css -->
 <!-- source: pnpm-workspace.yaml -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:07e9b2e1d3cf0a5f785e0e6b73dce3f7d942010ac26e3eb66abf5aed5af61bbe -->
+<!-- source-hash: sha256:4c4fb2c37036407c02a02f0d099a51db1c984ee98a915f6ef33d1d38fce27e8e -->
 <!-- last-ticket: MYT-100 -->
 
 <h1>Frontend</h1>
@@ -328,18 +328,21 @@
   <code>[ph_*]</code> tokens so a frame rendered at honest width before its copy landed. MYT-100 —
   the <strong>copy pass</strong> — closed that era: with every surface built, Miklos and Claude swept
   the whole catalog against the live app and authored the real strings, so no
-  <code>[ph:</code>/<code>[ph_</code> marker renders anywhere. The catalog now holds
-  <strong>482 leaves</strong> under the single <code>common</code> namespace.
+  <code>[ph:</code>/<code>[ph_</code> marker renders anywhere. The catalog keeps growing with the
+  surfaces — the staging-audit fix waves that followed the pass added the session-position vocabulary,
+  the end-session confirm, the wind-down offer, the composer's gate captions, the credit explainers
+  and grant ledgers, the pronoun ask, and the escalated error screen — and now holds
+  <strong>643 leaves</strong> under the single <code>common</code> namespace.
 </p>
 
 <p>
   The pass also folded repeated copy into a <strong><code>shared.*</code> subtree</strong>. A line
   that recurs verbatim across the app — the low-credits nudge, the retry cooldown, the weave-interrupt
-  notice, a plain <code>Try again</code> (thirteen sites), the entity-type labels — is written once
-  under <code>shared</code> and referenced elsewhere through i18next's
-  <strong><code>$t()</code> nesting</strong>: a value of <code>"$t(shared.tryAgain)"</code> resolves
-  to the shared string at lookup. Fifty-seven keys are such aliases, so one edit to a shared line
-  updates every site that reads it.
+  notice, a plain <code>Try again</code>, the entity-type labels, the draft-cost disclosure — is
+  written once under <code>shared</code> (a dozen keys today) and referenced elsewhere through
+  i18next's <strong><code>$t()</code> nesting</strong>: a value of
+  <code>"$t(shared.tryAgain)"</code> resolves to the shared string at lookup. Fifty-eight keys are
+  such aliases, so one edit to a shared line updates every site that reads it.
 </p>
 
 <aside class="wiki-rationale">
@@ -362,6 +365,26 @@
   <code>_one</code>/<code>_other</code> plural shapes the pass introduced (<code>home.card.record</code>
   pluralized, so a one-session campaign no longer reads "1 sessions").
 </p>
+
+<p>
+  The pass also left a <strong>reviewing surface</strong> behind it. <code>frontend/copy-workbench/</code>
+  is an internal tooling app — its own Vite entry, outside the web app's own
+  <code>tsconfig</code> — that lays every catalog key out flow by flow with its description, its call
+  sites, and the candidate lines, and folds the build into one self-contained HTML page Miklos reads
+  copy in. It is the sibling of the existing <code>animation-audit/</code> surface and ships nothing to
+  players.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The workbench's typecheck is chained onto <code>typecheck</code>, not a new gate</strong> —
+  the file that declares its compiler project already existed, but nothing ran it, so the workbench
+  silently rotted through several rounds of component-contract changes while every sweep stayed green.
+  <code>@mythrun/web</code>'s <code>typecheck</code> script now runs <code>tsc --noEmit</code> and then
+  the workbench's project, so every existing caller — the pre-push frontend section, CI's
+  <code>frontend-check</code>, the root <code>pnpm typecheck</code> — covers it with no new step for
+  anyone to forget to wire up. The workbench is the surface copy is reviewed in; a broken one blocks
+  the copy work, so it gets a real gate.
+</aside>
 
 <h2 id="design-tokens">Design tokens</h2>
 
@@ -423,7 +446,11 @@
   <em>foreground</em> — so dark-mode button fills, link text, and focus rings each clear AA under
   opposite contrast constraints; the
   <a href="./design-system.html#the-design-language-flat-1-bit">Design system</a>
-  tells that story.
+  tells that story. A canvas gets its ink from the same vocabulary: the
+  <a href="./world-gen-experience.html">world-gen</a> terrain field paints through a
+  <code>--worldgen-terrain</code> alias — a different paper step per theme — rather than a hard-coded
+  hex, so the map's ground flips with the theme and its measured contrast against the page can be
+  pinned by a test.
 </p>
 
 <aside class="wiki-rationale">

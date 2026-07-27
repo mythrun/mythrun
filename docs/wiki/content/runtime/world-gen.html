@@ -57,7 +57,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:3816113edb21e426c3159203a596f184a138d382199c7de52a4d7bbb3931792b -->
+<!-- source-hash: sha256:25238c12ca96f1e3ee43631d9b0126d633f2e2fa340f4f552b001cc5ee8149ae -->
 <!-- last-ticket: MYT-102 -->
 
 <h1>World gen</h1>
@@ -307,9 +307,8 @@
 
 <p>
   Then the synthesizer fires if the body is guided-mode. It's one <code>generateText</code> call
-  with <code>temperature: 0.9</code> against the prompt template at
-  <code>backend/src/llm/prompts/prep/synthesize-concept.txt</code>, structured-output against the
-  <code>SynthesizerOutput</code> schema:
+  against the prompt template at <code>backend/src/llm/prompts/prep/synthesize-concept.txt</code>,
+  structured-output against the <code>SynthesizerOutput</code> schema:
   <code>{ concept: string, intentSummary: { aesthetics[], themes[], sourcesInternal[] } }</code>.
   The <code>concept</code> field is what the input gate (and later stages) see as the user's
   freeform-equivalent input; <code>intentSummary</code> is the structured trace of what aesthetic /
@@ -366,17 +365,32 @@
   <code>backend/src/llm/prep/paint-job-validator.ts</code>. For each attempt: one
   <strong>Opus</strong> call generates the structured <code>WorldConcept</code> (the foundational
   synthesis runs at Opus-tier — myth-rg09); a SECOND <strong>Sonnet</strong> call (distinct prompt,
-  fresh context, <code>temperature: 0.1</code>) judges the draft along TWO IP-mirror axes —
-  <em>structural</em> (the plot, characters, factions, or setting read as a re-skin of a known work)
-  and <em>vocabulary</em> (the concept invokes one franchise so directly that the world's natural
-  vocabulary would pull in that franchise's <em>invented</em> neologisms downstream — "muggle",
-  "Floo", "midi-chlorian", "mithril"). On flag (confidence &gt; 0.85), the loop discards the draft
-  entirely and retries with a fresh-direction amendment built from the judge's structured output
-  (the Opus generator ignores <code>temperature</code> — myth-v3rq — so divergence comes from the
-  amendment + the model's inherent sampling). <strong>Max 3 attempts total</strong> (1 original + 2
-  retries). On exhaustion the loop throws <code>PaintJobLoopExhaustedError</code>, which the worker
-  treats as a stage failure.
+  fresh context) judges the draft along TWO IP-mirror axes — <em>structural</em> (the plot,
+  characters, factions, or setting read as a re-skin of a known work) and <em>vocabulary</em> (the
+  concept invokes one franchise so directly that the world's natural vocabulary would pull in that
+  franchise's <em>invented</em> neologisms downstream — "muggle", "Floo", "midi-chlorian",
+  "mithril"). On flag (confidence &gt; 0.85), the loop discards the draft entirely and retries with
+  a fresh-direction amendment built from the judge's structured output — divergence comes from the
+  amendment plus the model's inherent sampling. <strong>Max 3 attempts total</strong> (1 original +
+  2 retries). On exhaustion the loop throws <code>PaintJobLoopExhaustedError</code>, which the
+  worker treats as a stage failure.
 </p>
+
+<aside class="wiki-rationale">
+  <strong
+    >Sampling parameters are gone from the whole prep engine, and they had already stopped
+    working</strong
+  >
+  — twenty prep call sites passed a <code>temperature</code> (0.1 through 0.9), and the creative
+  variance they were presumed to supply had in fact been coming from the prompts for some time. The
+  current Anthropic model line rejects sampling parameters outright: a raw request carrying
+  <code>temperature: 0.9</code> returns a 400, while the same call through our stack returns 200 —
+  because <code>@ai-sdk/anthropic</code> <em>silently drops</em> unsupported sampling params. So
+  every one of those settings was inert, and would have become a 400 across the entire prep engine
+  the day the SDK stopped swallowing them. All twenty were removed rather than carried, and
+  <code>temperature</code> was dropped from the <a href="./llm.html">LLM client</a>'s option surface
+  so it cannot be reintroduced.
+</aside>
 
 <p>
   The judgement carries a <code>failureKind</code> field —
@@ -643,6 +657,20 @@
   the new shape by setting <code>finalizedEvents: []</code> and <code>capExhausted: false</code>. No
   call-site changes; the contract is uniform downstream.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Prose-writing stages share one register fragment via an include</strong> — the stages that
+  produce prose a player will eventually read load their template through
+  <code>resolveIncludes</code>, which splices in <code>prompts/shared/prose-register.txt</code> at a
+  <code>{{include:…}}</code> directive. Register drift between a dozen separately-edited templates
+  is otherwise inevitable and invisible: each prompt reads fine on its own, and the world reads as
+  written by a dozen different hands. The include resolves once at module load, so it costs nothing
+  per call. The same fragment is pulled in by the
+  <a href="./session-prep.html">session-prep</a> template, the
+  <a href="./fast-thinker.html">Fast Thinker</a>'s system prompt, and the
+  <a href="./session-reconcile.html">post-session analysis</a> — one voice from world generation
+  through live play to the recap.
+</aside>
 
 <h3>Stage taxonomy</h3>
 

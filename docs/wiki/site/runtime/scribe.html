@@ -25,230 +25,301 @@
       <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html" class="active">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Scribe</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>backend/src/session/scribe-worker.ts</code>, <code>backend/src/session/scribe-queue.ts</code>, <code>backend/src/session/scribe-config.ts</code>, <code>backend/src/redis/working-set.ts</code>, <code>backend/src/session/working-set/types.ts</code>, <code>backend/src/llm/secret-tripwire.ts</code>, <code>backend/src/llm/schemas/secret-tripwire.ts</code>, <code>backend/src/llm/prompts/session/secret-tripwire.txt</code>, <code>backend/src/llm/retcon-author.ts</code>, <code>backend/src/llm/schemas/retcon-author.ts</code>, <code>backend/src/llm/prompts/session/retcon-author.txt</code>, <code>backend/src/llm/schemas/world-delta.ts</code>, <code>docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md</code></div>
-</div>
-
+        <article>
 <h1>Scribe</h1>
 
 <p class="lead">
   The post-turn reconciler — off the hot path. After each DM turn it turns the Fast Thinker's
   improvisation into durable in-session canon without breaking secrets: it appends the turn's
-  proposed facts to an ephemeral session working set the FT can read next turn, runs a per-turn
-  Haiku <strong>secret tripwire</strong> over the player-facing prose, and on a core-secret breach
-  authors (Opus) a secret-preserving <strong>retcon</strong> the DM delivers openly through a
-  player-less correction turn. The secret <code>sd_playbook</code> is read only on the secret side;
-  the FT sees working-set content only through the Slow-Thinker-vet relay.
+  proposed facts to an ephemeral session working set the FT can read next turn, and runs a per-turn
+  Haiku <strong>secret tripwire</strong> over the player-facing prose. The tripwire returns a
+  <strong>severity</strong>, and the severity picks the remedy: an actual reveal gets an
+  Opus-authored secret-preserving <strong>retcon</strong> the DM delivers openly on a player-less
+  correction turn; an NPC merely acting in character gets a silent nudge to the
+  <a href="./slow-thinker.html">Slow Thinker</a> instead. The secret <code>sd_playbook</code> is
+  read only on the secret side; the FT sees working-set content only through the Slow-Thinker-vet
+  relay.
 </p>
 
 <figure class="wiki-diagram">
   
-<svg width="2981pt" height="315pt"
- viewBox="14.00 14.00 2967.00 300.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 296.4)">
+<svg width="3736pt" height="485pt"
+ viewBox="14.00 14.00 3722.00 471.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 466.84)">
 <title>scribe</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-282 2948.21,-282 2948.21,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-452.44 3703.4,-452.44 3703.4,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_turn</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-88 8,-179 540.43,-179 540.43,-88 8,-88"/>
-<text xml:space="preserve" text-anchor="middle" x="274.21" y="-165.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Turn worker &#160;(the producer)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-257 8,-348 540.43,-348 540.43,-257 8,-257"/>
+<text xml:space="preserve" text-anchor="middle" x="274.21" y="-334.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Turn worker &#160;(the producer)</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_batch</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="676.44,-95 676.44,-173 879.75,-173 879.75,-95 676.44,-95"/>
-<text xml:space="preserve" text-anchor="middle" x="778.09" y="-159.1" font-family="Courier,monospace" font-size="11.00">redisBatch</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="676.44,-264 676.44,-342 879.75,-342 879.75,-264 676.44,-264"/>
+<text xml:space="preserve" text-anchor="middle" x="778.09" y="-328.1" font-family="Courier,monospace" font-size="11.00">redisBatch</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_scribe</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1003.76,-94 1003.76,-270 2066.34,-270 2066.34,-94 1003.76,-94"/>
-<text xml:space="preserve" text-anchor="middle" x="1535.05" y="-256.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Scribe worker &#160;— &#160;the 7th BullMQ worker (concurrency 2)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1003.76,-185 1003.76,-392 2778.62,-392 2778.62,-185 1003.76,-185"/>
+<text xml:space="preserve" text-anchor="middle" x="1891.19" y="-378.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Scribe worker &#160;— &#160;the 7th BullMQ worker (concurrency 2)</text>
 </g>
 <g id="clust4" class="cluster">
 <title>cluster_realtime</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="2274.36,-91 2274.36,-182 2517.28,-182 2517.28,-91 2274.36,-91"/>
-<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-168.1" font-family="Courier,monospace" font-size="11.00">Redis (realtime cluster)</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="3029.55,-197 3029.55,-288 3272.46,-288 3272.46,-197 3029.55,-197"/>
+<text xml:space="preserve" text-anchor="middle" x="3151.01" y="-274.1" font-family="Courier,monospace" font-size="11.00">Redis (realtime cluster)</text>
 </g>
 <g id="clust5" class="cluster">
 <title>cluster_pg</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="1464.3,-8 1464.3,-86 1733.62,-86 1733.62,-8 1464.3,-8"/>
-<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-72.1" font-family="Courier,monospace" font-size="11.00">Postgres</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="1602.32,-8 1602.32,-185 1917.85,-185 1917.85,-8 1602.32,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="1760.08" y="-171.1" font-family="Courier,monospace" font-size="11.00">Postgres</text>
 </g>
 <!-- ctrl -->
 <g id="node1" class="node">
 <title>ctrl</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="184.9,-158.04 8,-158.04 8,-87.96 184.9,-87.96 184.9,-158.04"/>
-<text xml:space="preserve" text-anchor="middle" x="96.45" y="-139.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SessionController</text>
-<text xml:space="preserve" text-anchor="middle" x="96.45" y="-126.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">enqueueScribeJob()</text>
-<text xml:space="preserve" text-anchor="middle" x="96.45" y="-113.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(flushed success ·</text>
-<text xml:space="preserve" text-anchor="middle" x="96.45" y="-99.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> NOT correction turns)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="184.9,-327.04 8,-327.04 8,-256.96 184.9,-256.96 184.9,-327.04"/>
+<text xml:space="preserve" text-anchor="middle" x="96.45" y="-308.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SessionController</text>
+<text xml:space="preserve" text-anchor="middle" x="96.45" y="-295.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">enqueueScribeJob()</text>
+<text xml:space="preserve" text-anchor="middle" x="96.45" y="-282.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(flushed success ·</text>
+<text xml:space="preserve" text-anchor="middle" x="96.45" y="-268.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> NOT correction turns)</text>
 </g>
 <!-- payload -->
 <g id="node2" class="node">
 <title>payload</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="540.43,-151.44 290.91,-151.44 290.91,-94.56 540.43,-94.56 540.43,-151.44"/>
-<text xml:space="preserve" text-anchor="middle" x="415.67" y="-132.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ScribeJobPayload</text>
-<text xml:space="preserve" text-anchor="middle" x="415.67" y="-119.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">prose · worldDelta · injections</text>
-<text xml:space="preserve" text-anchor="middle" x="415.67" y="-106.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worldId · turnId</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="540.43,-327.04 290.91,-327.04 290.91,-256.96 540.43,-256.96 540.43,-327.04"/>
+<text xml:space="preserve" text-anchor="middle" x="415.67" y="-308.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ScribeJobPayload</text>
+<text xml:space="preserve" text-anchor="middle" x="415.67" y="-295.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">prose · worldDelta · injections</text>
+<text xml:space="preserve" text-anchor="middle" x="415.67" y="-282.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">skillChecks (resolved outcomes)</text>
+<text xml:space="preserve" text-anchor="middle" x="415.67" y="-268.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worldId · turnId</text>
 </g>
 <!-- ctrl&#45;&gt;payload -->
 <g id="edge1" class="edge">
 <title>ctrl&#45;&gt;payload</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M185.39,-123C215.19,-123 249.16,-123 281.66,-123"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="281.52,-125.45 288.52,-123 281.52,-120.55 281.52,-125.45"/>
-<text xml:space="preserve" text-anchor="middle" x="237.91" y="-126" font-family="Courier,monospace" font-size="10.00">assemble</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M185.39,-292C215.19,-292 249.16,-292 281.66,-292"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="281.52,-294.45 288.52,-292 281.52,-289.55 281.52,-294.45"/>
+<text xml:space="preserve" text-anchor="middle" x="237.91" y="-295" font-family="Courier,monospace" font-size="10.00">assemble</text>
 </g>
 <!-- q_scribe -->
 <g id="node3" class="node">
 <title>q_scribe</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="879.75,-151.44 676.44,-151.44 676.44,-94.56 879.75,-94.56 879.75,-151.44"/>
-<text xml:space="preserve" text-anchor="middle" x="778.09" y="-132.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: scribe</text>
-<text xml:space="preserve" text-anchor="middle" x="778.09" y="-119.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">no dedup id</text>
-<text xml:space="preserve" text-anchor="middle" x="778.09" y="-106.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(each turn = distinct job)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="879.75,-320.44 676.44,-320.44 676.44,-263.56 879.75,-263.56 879.75,-320.44"/>
+<text xml:space="preserve" text-anchor="middle" x="778.09" y="-301.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: scribe</text>
+<text xml:space="preserve" text-anchor="middle" x="778.09" y="-288.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">no dedup id</text>
+<text xml:space="preserve" text-anchor="middle" x="778.09" y="-275.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(each turn = distinct job)</text>
 </g>
 <!-- payload&#45;&gt;q_scribe -->
 <g id="edge2" class="edge">
 <title>payload&#45;&gt;q_scribe</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M540.96,-123C582.02,-123 627.37,-123 667.27,-123"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="667.14,-125.45 674.14,-123 667.14,-120.55 667.14,-125.45"/>
-<text xml:space="preserve" text-anchor="middle" x="608.43" y="-126" font-family="Courier,monospace" font-size="10.00">enqueueScribe</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M540.96,-292C582.02,-292 627.37,-292 667.27,-292"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="667.14,-294.45 674.14,-292 667.14,-289.55 667.14,-294.45"/>
+<text xml:space="preserve" text-anchor="middle" x="608.43" y="-295" font-family="Courier,monospace" font-size="10.00">enqueueScribe</text>
 </g>
 <!-- proc -->
 <g id="node4" class="node">
 <title>proc</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1286.28,-144.84 1003.76,-144.84 1003.76,-101.16 1286.28,-101.16 1286.28,-144.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1145.02" y="-126.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">processScribeJob (TOTAL)</text>
-<text xml:space="preserve" text-anchor="middle" x="1145.02" y="-113.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">embed → tripwire → (breach) retcon</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1325.89,-313.84 1030.16,-313.84 1030.16,-270.16 1325.89,-270.16 1325.89,-313.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1178.02" y="-295.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">processScribeJob (TOTAL)</text>
+<text xml:space="preserve" text-anchor="middle" x="1178.02" y="-282.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">embed → tripwire → route by SEVERITY</text>
 </g>
 <!-- q_scribe&#45;&gt;proc -->
 <g id="edge3" class="edge">
 <title>q_scribe&#45;&gt;proc</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M880.26,-123C915.56,-123 955.96,-123 994.36,-123"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="994.21,-125.45 1001.21,-123 994.21,-120.55 994.21,-125.45"/>
-<text xml:space="preserve" text-anchor="middle" x="941.75" y="-126" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M880.28,-292C922.98,-292 973.69,-292 1020.99,-292"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1020.96,-294.45 1027.96,-292 1020.96,-289.55 1020.96,-294.45"/>
+<text xml:space="preserve" text-anchor="middle" x="941.75" y="-295" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
 </g>
 <!-- embed -->
 <g id="node5" class="node">
 <title>embed</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1687.41,-150.44 1510.51,-150.44 1510.51,-93.56 1687.41,-93.56 1687.41,-150.44"/>
-<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-131.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">embed&#45;on&#45;append</text>
-<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-118.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Voyage embedDocuments</text>
-<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-105.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(boot&#45;probed embedder)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1848.54,-256.44 1671.63,-256.44 1671.63,-199.56 1848.54,-199.56 1848.54,-256.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1760.08" y="-237.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">embed&#45;on&#45;append</text>
+<text xml:space="preserve" text-anchor="middle" x="1760.08" y="-224.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Voyage embedDocuments</text>
+<text xml:space="preserve" text-anchor="middle" x="1760.08" y="-211.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(boot&#45;probed embedder)</text>
 </g>
 <!-- proc&#45;&gt;embed -->
 <g id="edge4" class="edge">
 <title>proc&#45;&gt;embed</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1286.85,-122.69C1356.49,-122.53 1438.78,-122.35 1501.23,-122.21"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1501.1,-124.66 1508.09,-122.2 1501.09,-119.76 1501.1,-124.66"/>
-<text xml:space="preserve" text-anchor="middle" x="1375.29" y="-125.62" font-family="Courier,monospace" font-size="10.00">1. embed proposals</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1326.23,-280.62C1400.44,-274.36 1491.77,-265.86 1573.32,-256 1602.5,-252.47 1634.15,-247.96 1662.92,-243.59"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1663,-246.06 1669.55,-242.58 1662.26,-241.21 1663,-246.06"/>
+<text xml:space="preserve" text-anchor="middle" x="1477.31" y="-302.04" font-family="Courier,monospace" font-size="10.00">1. embed proposals</text>
+<text xml:space="preserve" text-anchor="middle" x="1477.31" y="-290.04" font-family="Courier,monospace" font-size="10.00">(dice_outcome provenance</text>
+<text xml:space="preserve" text-anchor="middle" x="1477.31" y="-278.04" font-family="Courier,monospace" font-size="10.00"> on a passing check)</text>
 </g>
 <!-- trip -->
-<g id="node6" class="node">
+<g id="node7" class="node">
 <title>trip</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1723.72,-249.04 1474.2,-249.04 1474.2,-178.96 1723.72,-178.96 1723.72,-249.04"/>
-<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-230.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">secret tripwire (Haiku)</text>
-<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-217.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">prose vs sd_playbook →</text>
-<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-204.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">{breached, confidence, secretRef}</text>
-<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-190.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">OPAQUE control signal</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1911.25,-368.64 1608.92,-368.64 1608.92,-285.36 1911.25,-285.36 1911.25,-368.64"/>
+<text xml:space="preserve" text-anchor="middle" x="1760.08" y="-350.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">secret tripwire (Haiku)</text>
+<text xml:space="preserve" text-anchor="middle" x="1760.08" y="-336.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">prose vs secrets, GROUNDED on</text>
+<text xml:space="preserve" text-anchor="middle" x="1760.08" y="-323.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">the PUBLIC ft_context + resolved dice →</text>
+<text xml:space="preserve" text-anchor="middle" x="1760.08" y="-310.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">{severity, confidence, secretRef}</text>
+<text xml:space="preserve" text-anchor="middle" x="1760.08" y="-297.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">OPAQUE control signal</text>
 </g>
 <!-- proc&#45;&gt;trip -->
-<g id="edge7" class="edge">
+<g id="edge9" class="edge">
 <title>proc&#45;&gt;trip</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1258.02,-145.55C1320.82,-158.2 1399.52,-174.04 1465.38,-187.31"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1464.63,-189.65 1471.98,-188.63 1465.6,-184.85 1464.63,-189.65"/>
-<text xml:space="preserve" text-anchor="middle" x="1375.29" y="-182.33" font-family="Courier,monospace" font-size="10.00">3. prose vs secret</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1293.33,-314.57C1321.94,-319.29 1352.64,-323.57 1381.29,-326 1452.9,-332.07 1532.41,-333.13 1599.95,-332.35"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1599.76,-334.81 1606.73,-332.27 1599.7,-329.91 1599.76,-334.81"/>
+<text xml:space="preserve" text-anchor="middle" x="1477.31" y="-335.57" font-family="Courier,monospace" font-size="10.00">3. prose, grounded</text>
 </g>
 <!-- prep -->
-<g id="node9" class="node">
+<g id="node11" class="node">
 <title>prep</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1733.62,-64.44 1464.3,-64.44 1464.3,-7.56 1733.62,-7.56 1733.62,-64.44"/>
-<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-45.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session_preps.sd_playbook</text>
-<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-32.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(the SECRET)</text>
-<text xml:space="preserve" text-anchor="middle" x="1598.96" y="-19.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">narrow ScribeRepo.sessionPreps.getBy</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1917.85,-78.04 1602.32,-78.04 1602.32,-7.96 1917.85,-7.96 1917.85,-78.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1760.08" y="-59.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session_preps</text>
+<text xml:space="preserve" text-anchor="middle" x="1760.08" y="-46.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">sd_playbook (the SECRET) +</text>
+<text xml:space="preserve" text-anchor="middle" x="1760.08" y="-33.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ft_context (PUBLIC — the grounding floor)</text>
+<text xml:space="preserve" text-anchor="middle" x="1760.08" y="-19.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">narrow ScribeRepo.sessionPreps.getBy</text>
 </g>
 <!-- proc&#45;&gt;prep -->
 <g id="edge6" class="edge">
 <title>proc&#45;&gt;prep</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1263.29,-100.43C1321.86,-89.15 1393.23,-75.41 1454.99,-63.52"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1455.45,-65.93 1461.86,-62.2 1454.52,-61.12 1455.45,-65.93"/>
-<text xml:space="preserve" text-anchor="middle" x="1375.29" y="-104.85" font-family="Courier,monospace" font-size="10.00">2. read secret</text>
-<text xml:space="preserve" text-anchor="middle" x="1375.29" y="-92.85" font-family="Courier,monospace" font-size="10.00">(fail loud if empty)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1326.53,-274.28C1335.92,-269.36 1344.65,-263.34 1352.29,-256 1390.61,-219.18 1342.43,-176.24 1381.29,-140 1444.68,-80.89 1490.84,-132.65 1573.32,-106 1586.94,-101.6 1589.01,-97.26 1602.32,-92 1611.44,-88.4 1620.93,-84.88 1630.54,-81.49"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1631.11,-83.88 1636.91,-79.27 1629.5,-79.26 1631.11,-83.88"/>
+<text xml:space="preserve" text-anchor="middle" x="1477.31" y="-155" font-family="Courier,monospace" font-size="10.00">2. read secret + public</text>
+<text xml:space="preserve" text-anchor="middle" x="1477.31" y="-143" font-family="Courier,monospace" font-size="10.00">(fail loud on an empty playbook)</text>
 </g>
 <!-- ws -->
-<g id="node8" class="node">
+<g id="node10" class="node">
 <title>ws</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2517.28,-161.04 2274.36,-161.04 2274.36,-90.96 2517.28,-90.96 2517.28,-161.04"/>
-<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-142.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session:{cId}:workingset</text>
-<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-129.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">RPUSH&#45;append&#45;only list</text>
-<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-116.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ft_delta / st_injection / retcon</text>
-<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-102.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">evictIfOver (cap 200)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3272.46,-267.04 3029.55,-267.04 3029.55,-196.96 3272.46,-196.96 3272.46,-267.04"/>
+<text xml:space="preserve" text-anchor="middle" x="3151.01" y="-248.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session:{cId}:workingset</text>
+<text xml:space="preserve" text-anchor="middle" x="3151.01" y="-235.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">RPUSH&#45;append&#45;only list</text>
+<text xml:space="preserve" text-anchor="middle" x="3151.01" y="-222.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ft_delta / st_injection / retcon</text>
+<text xml:space="preserve" text-anchor="middle" x="3151.01" y="-208.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">evictIfOver (cap 200)</text>
 </g>
 <!-- embed&#45;&gt;ws -->
 <g id="edge5" class="edge">
 <title>embed&#45;&gt;ws</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1688.06,-122.44C1828.14,-123.15 2102.38,-124.53 2264.99,-125.35"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2264.78,-127.8 2271.8,-125.38 2264.81,-122.9 2264.78,-127.8"/>
-<text xml:space="preserve" text-anchor="middle" x="1967.98" y="-127.33" font-family="Courier,monospace" font-size="10.00">RPUSH + evict</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1849.29,-228.25C2086.79,-228.94 2740.66,-230.82 3020.35,-231.63"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="3020.09,-234.08 3027.1,-231.65 3020.11,-229.18 3020.09,-234.08"/>
+<text xml:space="preserve" text-anchor="middle" x="2425.99" y="-233.14" font-family="Courier,monospace" font-size="10.00">RPUSH + evict</text>
+</g>
+<!-- split -->
+<g id="node6" class="node">
+<title>split</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1352.29,-241.44 1003.76,-241.44 1003.76,-184.56 1352.29,-184.56 1352.29,-241.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1178.02" y="-222.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">splitPlaybook</text>
+<text xml:space="preserve" text-anchor="middle" x="1178.02" y="-209.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">secret sections → [SECRET&#45;n] handles</text>
+<text xml:space="preserve" text-anchor="middle" x="1178.02" y="-196.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">everything else → CONSISTENCY (soft path only)</text>
+</g>
+<!-- split&#45;&gt;trip -->
+<g id="edge8" class="edge">
+<title>split&#45;&gt;trip</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1285.28,-183.85C1369.77,-167.09 1487.61,-158.62 1573.32,-212 1598.12,-227.45 1580.52,-251.55 1602.32,-271 1605.83,-274.13 1609.52,-277.08 1613.36,-279.88"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1611.77,-281.76 1618.92,-283.7 1614.54,-277.72 1611.77,-281.76"/>
+<text xml:space="preserve" text-anchor="middle" x="1477.31" y="-215" font-family="Courier,monospace" font-size="10.00">secrets + consistency</text>
+</g>
+<!-- gate -->
+<g id="node8" class="node">
+<title>gate</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2312.98,-356.44 2023.86,-356.44 2023.86,-299.56 2312.98,-299.56 2312.98,-356.44"/>
+<text xml:space="preserve" text-anchor="middle" x="2168.42" y="-337.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">hard&#45;reveal HANDLE GATE</text>
+<text xml:space="preserve" text-anchor="middle" x="2168.42" y="-324.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">hard_reveal AND a recognized [SECRET&#45;n]</text>
+<text xml:space="preserve" text-anchor="middle" x="2168.42" y="-311.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ open retcon; anything else → soft</text>
+</g>
+<!-- trip&#45;&gt;gate -->
+<g id="edge11" class="edge">
+<title>trip&#45;&gt;gate</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1911.81,-327.37C1945.44,-327.45 1981.12,-327.54 2014.82,-327.62"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2014.52,-330.07 2021.53,-327.64 2014.53,-325.17 2014.52,-330.07"/>
+<text xml:space="preserve" text-anchor="middle" x="1970.85" y="-330.56" font-family="Courier,monospace" font-size="10.00">4. route</text>
+</g>
+<!-- verdicts -->
+<g id="node12" class="node">
+<title>verdicts</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1894.74,-163.44 1625.42,-163.44 1625.42,-106.56 1894.74,-106.56 1894.74,-163.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1760.08" y="-144.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tripwire_verdicts (mig 037)</text>
+<text xml:space="preserve" text-anchor="middle" x="1760.08" y="-131.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">one row per verdict</text>
+<text xml:space="preserve" text-anchor="middle" x="1760.08" y="-118.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">HANDLE&#45;ONLY, sanitized before insert</text>
+</g>
+<!-- trip&#45;&gt;verdicts -->
+<g id="edge10" class="edge">
+<title>trip&#45;&gt;verdicts</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1608.43,-323.58C1559.59,-314.33 1510.19,-294.64 1479.43,-255 1433.12,-195.32 1525.41,-164.89 1616.3,-149.65"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1616.49,-152.1 1623.01,-148.56 1615.71,-147.26 1616.49,-152.1"/>
+<text xml:space="preserve" text-anchor="middle" x="1477.31" y="-246" font-family="Courier,monospace" font-size="10.00">persist verdict</text>
+<text xml:space="preserve" text-anchor="middle" x="1477.31" y="-234" font-family="Courier,monospace" font-size="10.00">(own try/catch)</text>
 </g>
 <!-- retcon -->
-<g id="node7" class="node">
+<g id="node9" class="node">
 <title>retcon</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2066.34,-249.04 1869.63,-249.04 1869.63,-178.96 2066.34,-178.96 2066.34,-249.04"/>
-<text xml:space="preserve" text-anchor="middle" x="1967.98" y="-230.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">retcon&#45;author (Opus)</text>
-<text xml:space="preserve" text-anchor="middle" x="1967.98" y="-217.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">secret&#45;preserving Z</text>
-<text xml:space="preserve" text-anchor="middle" x="1967.98" y="-204.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(reasons over the secret;</text>
-<text xml:space="preserve" text-anchor="middle" x="1967.98" y="-190.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> redactRawText)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2778.62,-363.04 2581.91,-363.04 2581.91,-292.96 2778.62,-292.96 2778.62,-363.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2680.26" y="-344.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">retcon&#45;author (Opus)</text>
+<text xml:space="preserve" text-anchor="middle" x="2680.26" y="-331.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">secret&#45;preserving Z</text>
+<text xml:space="preserve" text-anchor="middle" x="2680.26" y="-318.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(reasons over the secret;</text>
+<text xml:space="preserve" text-anchor="middle" x="2680.26" y="-304.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c"> redactRawText)</text>
 </g>
-<!-- trip&#45;&gt;retcon -->
-<g id="edge8" class="edge">
-<title>trip&#45;&gt;retcon</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1724.22,-214C1768.38,-214 1817.68,-214 1860.25,-214"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1860.13,-216.45 1867.13,-214 1860.13,-211.55 1860.13,-216.45"/>
-<text xml:space="preserve" text-anchor="middle" x="1801.62" y="-229" font-family="Courier,monospace" font-size="10.00">breached:true</text>
-<text xml:space="preserve" text-anchor="middle" x="1801.62" y="-217" font-family="Courier,monospace" font-size="10.00">→ escalate</text>
+<!-- gate&#45;&gt;retcon -->
+<g id="edge12" class="edge">
+<title>gate&#45;&gt;retcon</title>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M2313.47,-328C2395.98,-328 2497.74,-328 2572.96,-328"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="2572.72,-330.45 2579.72,-328 2572.72,-325.55 2572.72,-330.45"/>
+<text xml:space="preserve" text-anchor="middle" x="2425.99" y="-331" font-family="Courier,monospace" font-size="10.00">hard_reveal + known handle</text>
+</g>
+<!-- q_st -->
+<g id="node15" class="node">
+<title>q_st</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2821.53,-448.44 2539,-448.44 2539,-391.56 2821.53,-391.56 2821.53,-448.44"/>
+<text xml:space="preserve" text-anchor="middle" x="2680.26" y="-429.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: st&#45;evaluation</text>
+<text xml:space="preserve" text-anchor="middle" x="2680.26" y="-416.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SILENT steer — no player&#45;facing text</text>
+<text xml:space="preserve" text-anchor="middle" x="2680.26" y="-403.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">dedup&#45;collapsed per campaign</text>
+</g>
+<!-- gate&#45;&gt;q_st -->
+<g id="edge13" class="edge">
+<title>gate&#45;&gt;q_st</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M2313.47,-353.99C2381.24,-366.22 2462,-380.8 2530.37,-393.13"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2529.53,-395.47 2536.86,-394.3 2530.4,-390.65 2529.53,-395.47"/>
+<text xml:space="preserve" text-anchor="middle" x="2425.99" y="-402.62" font-family="Courier,monospace" font-size="10.00">soft_consistency, or a hard</text>
+<text xml:space="preserve" text-anchor="middle" x="2425.99" y="-390.62" font-family="Courier,monospace" font-size="10.00">verdict with no known handle</text>
 </g>
 <!-- retcon&#45;&gt;ws -->
-<g id="edge10" class="edge">
+<g id="edge15" class="edge">
 <title>retcon&#45;&gt;ws</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M2066.95,-193.76C2125.82,-181.59 2201.45,-165.96 2265.23,-152.78"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="2265.61,-155.2 2271.96,-151.39 2264.61,-150.41 2265.61,-155.2"/>
-<text xml:space="preserve" text-anchor="middle" x="2170.35" y="-200.54" font-family="Courier,monospace" font-size="10.00">append `retcon` supersede</text>
-<text xml:space="preserve" text-anchor="middle" x="2170.35" y="-188.54" font-family="Courier,monospace" font-size="10.00">(Z + secretRef only)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M2779.24,-307.93C2849.29,-293.59 2944.26,-274.14 3020.55,-258.51"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="3020.67,-260.99 3027.03,-257.19 3019.68,-256.19 3020.67,-260.99"/>
+<text xml:space="preserve" text-anchor="middle" x="2925.54" y="-306.42" font-family="Courier,monospace" font-size="10.00">append `retcon` supersede</text>
+<text xml:space="preserve" text-anchor="middle" x="2925.54" y="-294.42" font-family="Courier,monospace" font-size="10.00">(Z + secretRef only)</text>
 </g>
 <!-- q_corr -->
-<g id="node11" class="node">
+<g id="node14" class="node">
 <title>q_corr</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2507.37,-264.04 2284.26,-264.04 2284.26,-193.96 2507.37,-193.96 2507.37,-264.04"/>
-<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-245.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: session&#45;turn</text>
-<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-232.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">player&#45;less `correction` turn</text>
-<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-219.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">trigger.kind:&#39;correction&#39;</text>
-<text xml:space="preserve" text-anchor="middle" x="2395.82" y="-205.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">correctionText: Z</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3262.56,-370.04 3039.45,-370.04 3039.45,-299.96 3262.56,-299.96 3262.56,-370.04"/>
+<text xml:space="preserve" text-anchor="middle" x="3151.01" y="-351.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">queue: session&#45;turn</text>
+<text xml:space="preserve" text-anchor="middle" x="3151.01" y="-338.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">player&#45;less `correction` turn</text>
+<text xml:space="preserve" text-anchor="middle" x="3151.01" y="-325.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">trigger.kind:&#39;correction&#39;</text>
+<text xml:space="preserve" text-anchor="middle" x="3151.01" y="-311.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">correctionText: Z</text>
 </g>
 <!-- retcon&#45;&gt;q_corr -->
-<g id="edge9" class="edge">
+<g id="edge14" class="edge">
 <title>retcon&#45;&gt;q_corr</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M2066.95,-217.45C2128.88,-219.63 2209.34,-222.47 2275.06,-224.78"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="2274.92,-227.23 2282,-225.03 2275.09,-222.33 2274.92,-227.23"/>
-<text xml:space="preserve" text-anchor="middle" x="2170.35" y="-238.72" font-family="Courier,monospace" font-size="10.00">enqueue correction</text>
-<text xml:space="preserve" text-anchor="middle" x="2170.35" y="-226.72" font-family="Courier,monospace" font-size="10.00">(secret&#45;free Z)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M2779.24,-329.46C2852.4,-330.56 2952.74,-332.05 3030.59,-333.22"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="3030.16,-335.66 3037.19,-333.32 3030.23,-330.76 3030.16,-335.66"/>
+<text xml:space="preserve" text-anchor="middle" x="2925.54" y="-347.74" font-family="Courier,monospace" font-size="10.00">enqueue correction</text>
+<text xml:space="preserve" text-anchor="middle" x="2925.54" y="-335.74" font-family="Courier,monospace" font-size="10.00">(secret&#45;free Z)</text>
 </g>
 <!-- ft -->
-<g id="node10" class="node">
+<g id="node13" class="node">
 <title>ft</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="2944.21,-161.04 2701.3,-161.04 2701.3,-90.96 2944.21,-90.96 2944.21,-161.04"/>
-<text xml:space="preserve" text-anchor="middle" x="2822.75" y="-142.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">FT lookup tools</text>
-<text xml:space="preserve" text-anchor="middle" x="2822.75" y="-129.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">search_lore / graph walks</text>
-<text xml:space="preserve" text-anchor="middle" x="2822.75" y="-116.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">working&#45;set ∪ canon read&#45;merge</text>
-<text xml:space="preserve" text-anchor="middle" x="2822.75" y="-102.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(via the ST&#45;vet relay)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="3699.4,-267.04 3456.48,-267.04 3456.48,-196.96 3699.4,-196.96 3699.4,-267.04"/>
+<text xml:space="preserve" text-anchor="middle" x="3577.94" y="-248.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">FT lookup tools</text>
+<text xml:space="preserve" text-anchor="middle" x="3577.94" y="-235.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">search_lore / graph walks</text>
+<text xml:space="preserve" text-anchor="middle" x="3577.94" y="-222.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">working&#45;set ∪ canon read&#45;merge</text>
+<text xml:space="preserve" text-anchor="middle" x="3577.94" y="-208.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(via the ST&#45;vet relay)</text>
 </g>
 <!-- ws&#45;&gt;ft -->
-<g id="edge11" class="edge">
+<g id="edge16" class="edge">
 <title>ws&#45;&gt;ft</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M2518.02,-126C2572.39,-126 2636.61,-126 2691.96,-126"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="2691.94,-128.45 2698.94,-126 2691.94,-123.55 2691.94,-128.45"/>
-<text xml:space="preserve" text-anchor="middle" x="2609.29" y="-141" font-family="Courier,monospace" font-size="10.00">read&#45;merge</text>
-<text xml:space="preserve" text-anchor="middle" x="2609.29" y="-129" font-family="Courier,monospace" font-size="10.00">(cosine vs query vec)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" stroke-dasharray="5,2" d="M3273.21,-232C3327.58,-232 3391.8,-232 3447.14,-232"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="3447.13,-234.45 3454.13,-232 3447.13,-229.55 3447.13,-234.45"/>
+<text xml:space="preserve" text-anchor="middle" x="3364.47" y="-247" font-family="Courier,monospace" font-size="10.00">read&#45;merge</text>
+<text xml:space="preserve" text-anchor="middle" x="3364.47" y="-235" font-family="Courier,monospace" font-size="10.00">(cosine vs query vec)</text>
+</g>
+<!-- prep&#45;&gt;split -->
+<g id="edge7" class="edge">
+<title>prep&#45;&gt;split</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1601.81,-48.36C1532.65,-54.4 1451.39,-66.63 1381.29,-91 1322.58,-111.41 1262.49,-150.42 1223.23,-178.85"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1221.82,-176.84 1217.62,-182.95 1224.71,-180.8 1221.82,-176.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1477.31" y="-94" font-family="Courier,monospace" font-size="10.00">split on section seams</text>
 </g>
 </g>
 </svg>
@@ -283,12 +354,15 @@
 </aside>
 
 <p>
-  Three inputs ride the job. The <a href="./fast-thinker.html">Fast Thinker</a> appends a
-  lightweight <strong>fact-delta</strong> after its prose (the new named things it introduced this
-  turn). The lookup tools' <a href="./fast-thinker.html#world-knowledge-lookups">ST-vet</a> records
-  each <strong>injection</strong> (a fact it relayed or invented mid-turn) into a per-turn sink. And
-  the FT's whole player-facing prose is the tripwire's input. The
-  <a href="./session-turn.html">SessionController</a> assembles all three into one
+  Four inputs ride the job. The <a href="./fast-thinker.html">Fast Thinker</a> appends a lightweight
+  <strong>fact-delta</strong> after its prose (the new named things it introduced this turn). The
+  lookup tools' <a href="./fast-thinker.html#world-knowledge-lookups">ST-vet</a> records each
+  <strong>injection</strong> (a fact it relayed or invented mid-turn) into a per-turn sink. The
+  turn's <strong>resolved skill checks</strong> ride along — roll, tier, and the outcome constraint
+  the FT wrote under — which are public by construction (the outcome table is generated FT-side
+  under enforced ignorance, and the constraint already streamed to the players on the
+  <code>skill_check</code> frame). And the FT's whole player-facing prose is the tripwire's input.
+  The <a href="./session-turn.html">SessionController</a> assembles all of it into one
   <code>ScribeJobPayload</code> and the worker enqueues it once per flushed turn.
 </p>
 
@@ -403,26 +477,156 @@
   ST-vet nor the prose downstream ever surfaces an NPC's claim as ground truth.
 </aside>
 
+<aside class="wiki-rationale">
+  <strong>A third provenance: <code>dice_outcome</code>, and why it exists</strong> — when a turn
+  resolved a passing skill check, the facts it asserted were at least partly licensed by the
+  system's own outcome table. Those proposals are stamped <code>dice_outcome</code> with the tier
+  that earned them (highest passing tier wins; a turn with only failed checks or none stays
+  <code>objective</code>). This is <strong>canonize-on-grant</strong>: a reward the system granted
+  under a success is canon the moment it lands. If it collides with scripted prep material, the
+  world conforms to play — the collision steers <em>future</em> turns down the soft ST path; it
+  never erases the grant. The stamp is deliberately coarse: deciding <em>which</em> fact the dice
+  earned would be local intelligence over prose, so the reconciler sees the provenance and makes the
+  judgment.
+</aside>
+
 <h2 id="the-secret-tripwire-the-per-turn-breach-detector">The secret tripwire: the per-turn breach detector</h2>
 
 <p>
   The other half of the Scribe job is the safety check. <code>secret-tripwire.ts</code> is a cheap
-  Haiku <code>generateObject</code> call that reads the FT's player-facing prose and the session's
-  core secrets (the prep's <code>sd_playbook</code>, formatted under handle annotations) and returns
-  an <strong>opaque control signal</strong> — <code>{ breached, confidence, secretRef }</code>,
-  where <code>secretRef</code> is a handle like <code>[SECRET-1]</code>, never secret-derived prose.
-  It asks one question: did the FT, blind to the playbook, just state something that breaks a core
-  secret?
+  Haiku <code>generateObject</code> call that reads the FT's player-facing prose against the
+  session's core secrets and returns an <strong>opaque control signal</strong> —
+  <code>{ severity, confidence, secretRef }</code>, where <code>secretRef</code> is a handle like
+  <code>[SECRET-1]</code>, never secret-derived prose. There is deliberately no free-text
+  <code>why</code> field and no <code>.refine</code> on the schema: the first would carry the
+  secret, and the second lets the repair chain author a "valid" tree and defeat the gate.
+</p>
+
+<h3 id="severity-not-a-boolean">Severity, not a boolean</h3>
+
+<p>
+  The verdict used to be <code>breached: true | false</code>. That bit conflated two very different
+  things, because the FT writes blind: a "hit" is either an accidental hard reveal
+  <em>or</em> improvised colour that merely rhymes with a hidden truth. Both routed to the same
+  open, player-facing correction. So an NPC whose gaze drifted to a door — good DMing, and exactly
+  what a hidden agenda should look like from outside — earned a public "actually, his eyes were just
+  wandering", which confused the player and advertised the secret. The
+  <strong>Streisand retcon</strong>. The verdict is now a severity:
+</p>
+
+<ul>
+  <li>
+    <code>hard_reveal</code> — the prose <em>states</em> a secret, or a player could only conclude
+    its actual content from it. This alone warrants a player-facing correction.
+  </li>
+  <li>
+    <code>soft_consistency</code> — an NPC <em>acts</em> in line with a hidden agenda (a gaze, a
+    mood, guarding a door) without stating or necessarily implying the secret. Good DMing, not a
+    leak.
+  </li>
+  <li><code>none</code> — no meaningful relation to any secret.</li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Confidence survives as observability, not as a gate</strong> — routing is severity's job
+  now; the old <code>TRIPWIRE_ESCALATE_CONFIDENCE_FLOOR</code> is gone. The recall bias it existed
+  to express lives inside the severity call instead: <em>any</em> <code>hard_reveal</code> fires the
+  correction regardless of how confident the model claims to be, because a suspected live leak is
+  corrected rather than waved through. What changed is that a low-confidence hit no longer reaches
+  the disruptive path merely by virtue of being a hit — the severity split is what makes the remedy
+  proportionate.
+</aside>
+
+<h3 id="the-grounding-floor">The grounding floor</h3>
+
+<p>
+  A tripwire that only ever sees prose and secrets will fire on prose the system itself licensed.
+  Two inputs stop that. The first is the <strong>public briefing</strong> — the same
+  enforced-ignorance-safe <code>ft_context</code> the FT reads. A detail grounded there was
+  explicitly handed to the narrator, so it is definitionally not a breach even when it is
+  thematically consistent with a secret. (The incident that forced this: an NPC watching a door the
+  briefing already said he watches.) The second is the turn's
+  <strong>resolved skill-check outcomes</strong> — the deterministic roll plus the Haiku-generated
+  outcome constraint the FT wrote under. Content the system granted through a resolved roll is
+  likewise not a breach.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Recall-biased: any breach escalates, even a low-confidence one</strong> — the tripwire is
-  tuned to catch leaks, not to be precise. A <code>breached: true</code> verdict escalates to the
-  Opus retcon-author regardless of confidence — a breach under the confidence floor is still a
-  breach, never waved through; the expensive author is the second opinion. A
-  <code>breached: false</code>
-  verdict never escalates. The cost of a false positive is a wasted Opus call and a redundant
-  correction; the cost of a false negative is a leaked secret. The asymmetry is deliberate.
+  <strong>Reading a public column is not widening the secret surface</strong> — the Scribe's narrow
+  <code>ScribeRepo</code> now returns <code>ftContext</code> alongside <code>sdPlaybook</code>. That
+  looks like a boundary loosening and is the opposite: <code>ft_context</code> is the
+  <em>public</em> artifact, already in the FT's own hands every turn, and it enters here only to
+  make the tripwire fire <em>less</em>. An empty briefing degrades gracefully — grounding simply
+  rescues nothing that turn — rather than failing the job.
+</aside>
+
+<h3 id="the-playbook-split">Splitting the playbook</h3>
+
+<p>
+  The other half of the false-positive problem was the input shape. The whole
+  <code>sd_playbook</code> used to ride a single <code>[SECRET-1]</code> handle, so "the prose
+  contradicts an encounter script" and "the prose revealed a secret" were literally
+  indistinguishable in the verdict — which is how a dice-earned reward got openly retconned.
+  <code>splitPlaybook</code> now parses the prep template's section seams: only the actual secret
+  sections (NPC secrets and the revelation list) get per-secret <code>[SECRET-n]</code> handles, and
+  everything else — session goals, knowledge bounds, encounter scripts, pacing, hooks — becomes
+  <strong>consistency material</strong>, which the tripwire may route to the soft path only.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Structural parsing of a template we author is ZFC-legal</strong> — this is not
+  intelligence about prose; it is splitting a markdown document on headings we wrote ourselves,
+  matched as case-insensitive prefixes so minor prep drift still classifies. When no secret section
+  is recognized at all the split falls back to the old whole-playbook lump and logs a warn: over-
+  protective rather than under-protective, and visible rather than silent.
+</aside>
+
+<h3 id="the-remedy-routed">The remedy, routed</h3>
+
+<p>
+  <code>none</code> logs clean and returns. <code>soft_consistency</code> gets the
+  <strong>silent</strong> remedy: no player-facing correction at all, just an
+  <a href="./slow-thinker.html">st-evaluation</a> enqueue so the secret-aware Opus director can
+  decide for itself whether to steer future turns through its standing directive. Only
+  <code>hard_reveal</code> reaches the open retcon below — and only when it cites one of the emitted
+  handles.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The hard-reveal handle gate</strong> — an open, player-facing correction is licensed only
+  when the tripwire named a real <code>[SECRET-n]</code> from this playbook. A hard verdict with a
+  null, <code>[CONSISTENCY]</code>, or hallucinated ref means no listed core secret was actually
+  named, so it routes to the silent path instead. This is structural validation of an opaque control
+  signal — the same class of check as a schema validation — and it is the backstop that keeps a
+  scripted-canon collision off the disruptive path even if the severity call itself gets it wrong.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The soft path carries strictly less back than the retcon path</strong> — the ST signal is
+  a bare enqueue: campaign and session ids, nothing secret-derived, no text. It is dedup-collapsed
+  per campaign by the st-eval queue's no-TTL dedup, so a scene full of in-character NPC beats cannot
+  spam Opus, and it is total — an enqueue failure logs and returns, because steering is an
+  enhancement and the ST's own five-turn oversight floor is the backstop. The turn already shipped
+  clean; nothing is being repaired here, only aimed.
+</aside>
+
+<h3 id="every-verdict-is-durable">Every verdict is durable</h3>
+
+<p>
+  Each verdict writes one row to <code>tripwire_verdicts</code> (migration 037): campaign, session,
+  turn, severity, confidence, handle. Forensics on a live incident previously had to infer a firing
+  breach from two incidental "skipping re-author" log lines; the table makes the whole series
+  queryable per turn. The insert has its own try/catch — verdict persistence is observability, and
+  this job is total, so a Postgres hiccup must never skip the routing.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The handle is sanitized before it is stored</strong> — <code>secret_ref</code> is a free
+  string on the wire, and the schema's handle-only contract is a promise the model makes, not one
+  the database can rely on. So a ref that is not a recognized <code>[SECRET-n]</code> or
+  <code>[CONSISTENCY]</code> collapses to <code>[UNRECOGNIZED]</code> before insert. A durable row
+  must not depend on the model honouring a contract — the same rule that keeps a corrected-field
+  echo out of shared storage.
 </aside>
 
 <aside class="wiki-rationale">
@@ -439,14 +643,14 @@
 <h2 id="the-retcon-a-secret-preserving-correction-on-a-player-less-turn">The retcon: a secret-preserving correction on a player-less turn</h2>
 
 <p>
-  On a breach, <code>retcon-author.ts</code> writes the fix. It is an Opus call — the same tier as
-  the narrative director — because the judgment is the same: it reasons over the secret to author a
-  correction <code>Z</code> that <em>removes the contradiction without revealing the secret</em>,
-  paraphrased or implied. Its <code>retconText</code> is the player-facing correction prose,
-  surfaced verbatim. The Scribe then delivers it through a
-  <strong>player-less correction turn</strong>: it enqueues a normal <code>session-turn</code> job
-  with <code>trigger.kind: 'correction'</code>, empty trigger messages, and the
-  <code>correctionText</code> set to <code>Z</code>.
+  On a <code>hard_reveal</code> that cited a real handle, <code>retcon-author.ts</code> writes the
+  fix. It is an Opus call — the same tier as the narrative director — because the judgment is the
+  same: it reasons over the secret to author a correction <code>Z</code> that
+  <em>removes the contradiction without revealing the secret</em>, paraphrased or implied. Its
+  <code>retconText</code> is the player-facing correction prose, surfaced verbatim. The Scribe then
+  delivers it through a <strong>player-less correction turn</strong>: it enqueues a normal
+  <code>session-turn</code> job with <code>trigger.kind: 'correction'</code>, empty trigger
+  messages, and the <code>correctionText</code> set to <code>Z</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -489,12 +693,13 @@
   The producer is the turn worker's post-turn <code>finally</code> phase, so the whole job is
   <strong>total</strong>: <code>processScribeJob</code> never throws out. A working-set append/evict
   failure logs and continues to the tripwire (the secret check is the load-bearing half). A tripwire
-  call failure skips the breach check this turn and returns. An embed failure degrades to empty
-  embeddings (the fact still appends, just unrankable until re-embedded) rather than dropping the
-  turn's facts. A retcon-author repair attempt fail-softs — a repaired tree was re-authored by a
-  different model and could re-author the safety-critical text, so the correction is skipped and
-  re-fires next turn. Transient failures lean on BullMQ retry; the one loud error is the disarmed
-  tripwire.
+  call failure skips the breach check this turn and returns. A verdict-persist failure or a failed
+  soft-path ST enqueue logs and continues — both are observability and steering, not correctness. An
+  embed failure degrades to empty embeddings (the fact still appends, just unrankable until
+  re-embedded) rather than dropping the turn's facts. A retcon-author repair attempt fail-softs — a
+  repaired tree was re-authored by a different model and could re-author the safety-critical text,
+  so the correction is skipped and re-fires next turn. Transient failures lean on BullMQ retry; the
+  one loud error is the disarmed tripwire.
 </p>
 
 <h2 id="operating-this-piece">Operating this piece</h2>
@@ -529,9 +734,26 @@
     <code>Z</code>, and a <code>correction</code> turn delivers it.
   </li>
   <li>
-    On the worker log, a clean turn logs <code>scribe: tripwire clean; no retcon</code>; a breach
-    logs the escalation and (on a fresh secret) the enqueued correction. Grep the streamed
+    On the worker log, a clean turn logs <code>scribe: tripwire clean; no retcon</code>; a
+    <code>hard_reveal</code> logs <code>hard_reveal breach → authoring open retcon</code> with its
+    handle and confidence, and (on a fresh secret) the enqueued correction. Grep the streamed
     correction prose against the playbook's secret strings to confirm zero verbatim leak.
+  </li>
+  <li>
+    A turn that logs
+    <code>soft_consistency (NPC behavior consistent with a secret) — NO player correction</code>
+    took the <a href="#severity-not-a-boolean">silent path</a>: expect an
+    <code>st-evaluation</code> enqueue and <em>no</em> correction turn. A
+    <code>hard_reveal without a recognized secret handle</code> warn means the handle gate rerouted
+    a hard verdict to the same silent path — worth reading alongside the playbook split's
+    <code>no recognizable secret sections</code> warn, which says the prep doc's headings drifted.
+  </li>
+  <li>
+    For the full series rather than a single turn, query the durable verdicts:
+    <code
+      >SELECT turn_id, severity, confidence, secret_ref FROM tripwire_verdicts WHERE session_id =
+      '&lt;id&gt;' ORDER BY created_at</code
+    >.
   </li>
   <li>
     A <code>scribe_tripwire_misconfigured</code> error means the session's <code>sd_playbook</code>
@@ -588,13 +810,22 @@
     </tr>
     <tr>
       <td><code>SCRIBE_RETCON_MAX_OUTPUT_TOKENS</code></td>
-      <td>1200</td>
-      <td>A short open correction <code>Z</code>; bounds a runaway.</td>
+      <td>6000</td>
+      <td>
+        A short open correction <code>Z</code>. Raised 1200 → 6000 on the Opus 5 bump: the cap now
+        covers adaptive thinking and the visible output together, so a ceiling sized for the
+        correction alone would truncate mid-thought. The runaway guard is
+        <code>SCRIBE_RETCON_TIMEOUT_MS</code>.
+      </td>
     </tr>
     <tr>
-      <td><code>TRIPWIRE_ESCALATE_CONFIDENCE_FLOOR</code></td>
-      <td>0.5</td>
-      <td>A breach under this still escalates (recall-biased); only informs the log line.</td>
+      <td><code>SECRET_TRIPWIRE_SEVERITIES</code></td>
+      <td><code>none</code> / <code>soft_consistency</code> / <code>hard_reveal</code></td>
+      <td>
+        The <a href="#severity-not-a-boolean">routing verdict</a>. Replaces
+        <code>TRIPWIRE_ESCALATE_CONFIDENCE_FLOOR</code>, which is gone — there is deliberately no
+        numeric escalation knob; severity is the gate and confidence is observability.
+      </td>
     </tr>
     <tr>
       <td><code>WORKING_SET_CAP</code></td>
@@ -663,22 +894,44 @@
     <tr>
       <td><code>src/session/scribe-worker.ts</code></td>
       <td>
-        <code>processScribeJob</code> (total: embed → tripwire → retcon),
+        <code>processScribeJob</code> (total: embed → tripwire → route by severity),
         <code>buildScribeWorker</code>, the narrow <code>ScribeRepo</code> /
-        <code>ScribeTriggerState</code> / <code>ScribeWorkingSet</code>
-        interfaces.
+        <code>ScribeTriggerState</code> / <code>ScribeWorkingSet</code> interfaces,
+        <code>handleSoftConsistency</code> (the silent ST steer), <code>diceProvenance</code>, and
+        <code>sanitizeRefForPersist</code>.
       </td>
     </tr>
     <tr>
       <td><code>src/session/scribe-queue.ts</code></td>
       <td>
         <code>enqueueScribe</code>, <code>QUEUE_SCRIBE</code>, <code>ScribeJobPayload</code> (prose
-        + worldDelta + injections + worldId; no dedup id).
+        + worldDelta + injections + worldId + the optional <code>skillChecks</code>; no dedup id),
+        <code>ResolvedSkillCheckOutcome</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/playbook-split.ts</code></td>
+      <td>
+        <code>splitPlaybook</code> / <code>isKnownSecretHandle</code> /
+        <code>normalizeHandle</code> — the
+        <a href="#the-playbook-split">secret / consistency split</a> along the prep template's
+        section seams, the emitted handle list the hard-reveal gate validates against, and the
+        over-protective fallback flag.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/repo/tripwire-verdicts.ts</code> +
+        <code>migrations/037_tripwire_verdicts.sql</code>
+      </td>
+      <td>
+        One durable row per verdict — severity, confidence, and a sanitized handle. Handle-only by
+        design; never secret content.
       </td>
     </tr>
     <tr>
       <td><code>src/session/scribe-config.ts</code></td>
-      <td>The tuning constants above (models, timeouts, working-set cap, escalation floor).</td>
+      <td>The tuning constants above (models, timeouts, working-set cap).</td>
     </tr>
     <tr>
       <td><code>src/redis/working-set.ts</code> + <code>src/session/working-set/types.ts</code></td>
@@ -695,7 +948,10 @@
       </td>
       <td>
         <code>runSecretTripwire</code> (Haiku, <code>redactRawText</code>) + the
-        <code>{ breached, confidence, secretRef }</code> schema + prompt.
+        <code>{ severity, confidence, secretRef }</code> schema
+        (<code>SECRET_TRIPWIRE_SEVERITIES</code>) + prompt. The wrapper also takes the
+        <a href="#the-grounding-floor">grounding-floor</a> inputs: <code>publicContext</code>, plus
+        the optional <code>consistencyContext</code> and <code>diceOutcomes</code>.
       </td>
     </tr>
     <tr>
@@ -725,7 +981,11 @@
 <p>
   <code>backend/src/session/scribe-worker.ts</code>,
   <code>backend/src/session/scribe-queue.ts</code>,
-  <code>backend/src/session/scribe-config.ts</code>, <code>backend/src/redis/working-set.ts</code>,
+  <code>backend/src/session/scribe-config.ts</code>,
+  <code>backend/src/session/playbook-split.ts</code>,
+  <code>backend/src/repo/tripwire-verdicts.ts</code>,
+  <code>backend/migrations/037_tripwire_verdicts.sql</code>,
+  <code>backend/src/redis/working-set.ts</code>,
   <code>backend/src/session/working-set/types.ts</code>,
   <code>backend/src/llm/secret-tripwire.ts</code>, <code>backend/src/llm/retcon-author.ts</code>,
   <code>backend/src/llm/schemas/world-delta.ts</code> (+ the tripwire / retcon schemas and prompts).
@@ -738,7 +998,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-fact-delta-the-ft-s-public-by-construction-proposal">The fact-delta: the FT's public-by-construction proposal</a></li><li style="padding-left:0"><a href="#the-working-set-ephemeral-in-session-canon">The working set: ephemeral in-session canon</a></li><li style="padding-left:0"><a href="#the-read-after-write-working-set-canon">The read-after-write: working set ∪ canon</a></li><li style="padding-left:0"><a href="#the-secret-tripwire-the-per-turn-breach-detector">The secret tripwire: the per-turn breach detector</a></li><li style="padding-left:0"><a href="#the-retcon-a-secret-preserving-correction-on-a-player-less-turn">The retcon: a secret-preserving correction on a player-less turn</a></li><li style="padding-left:0"><a href="#total-by-construction">Total by construction</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#watch-a-fact-survive-the-turn">Watch an invented fact survive to the next turn</a></li><li style="padding-left:12px"><a href="#exercise-the-tripwire-and-retcon">Exercise the tripwire and the retcon</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#tuning-constants-scribe-config-ts">Tuning constants (scribe-config.ts)</a></li><li style="padding-left:12px"><a href="#bullmq-worker-config-scribe-worker-ts">BullMQ worker config (scribe-worker.ts)</a></li><li style="padding-left:12px"><a href="#redis-key-realtime-cluster">Redis key (realtime cluster)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-fact-delta-the-ft-s-public-by-construction-proposal">The fact-delta: the FT's public-by-construction proposal</a></li><li style="padding-left:0"><a href="#the-working-set-ephemeral-in-session-canon">The working set: ephemeral in-session canon</a></li><li style="padding-left:0"><a href="#the-read-after-write-working-set-canon">The read-after-write: working set ∪ canon</a></li><li style="padding-left:0"><a href="#the-secret-tripwire-the-per-turn-breach-detector">The secret tripwire: the per-turn breach detector</a></li><li style="padding-left:12px"><a href="#severity-not-a-boolean">Severity, not a boolean</a></li><li style="padding-left:12px"><a href="#the-grounding-floor">The grounding floor</a></li><li style="padding-left:12px"><a href="#the-playbook-split">Splitting the playbook</a></li><li style="padding-left:12px"><a href="#the-remedy-routed">The remedy, routed</a></li><li style="padding-left:12px"><a href="#every-verdict-is-durable">Every verdict is durable</a></li><li style="padding-left:0"><a href="#the-retcon-a-secret-preserving-correction-on-a-player-less-turn">The retcon: a secret-preserving correction on a player-less turn</a></li><li style="padding-left:0"><a href="#total-by-construction">Total by construction</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#watch-a-fact-survive-the-turn">Watch an invented fact survive to the next turn</a></li><li style="padding-left:12px"><a href="#exercise-the-tripwire-and-retcon">Exercise the tripwire and the retcon</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#tuning-constants-scribe-config-ts">Tuning constants (scribe-config.ts)</a></li><li style="padding-left:12px"><a href="#bullmq-worker-config-scribe-worker-ts">BullMQ worker config (scribe-worker.ts)</a></li><li style="padding-left:12px"><a href="#redis-key-realtime-cluster">Redis key (realtime cluster)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

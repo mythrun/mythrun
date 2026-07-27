@@ -9,7 +9,7 @@
 <!-- source: backend/src/boot/migrations-current.ts -->
 <!-- source: backend/src/db/migrate.ts -->
 <!-- source: infra/modules/serving/migrate.tf -->
-<!-- source-hash: sha256:171a77249cddbcd141f93395fdc98aff3eda3c76d570e20fb8d495181268ae9e -->
+<!-- source-hash: sha256:9b68718caff9b34de32bb2478d6dfa67772296affd89304f1b1a6bacc10c186a -->
 <!-- last-ticket: MYT-84 -->
 
 <h1>CI/CD</h1>
@@ -37,8 +37,21 @@
   the run, as does <code>frontend/**</code> (the frontend has no backend image to roll; it is gated
   by its own <a href="#the-frontend-check-gate">frontend-check</a> workflow).
   <code>workflow_dispatch</code> is on so a deploy can be re-run by hand from the Actions tab
-  without pushing a no-op commit.
+  without pushing a no-op commit. Every job in this file targets <code>mythrun-staging-*</code>, so
+  manual dispatch reaches staging and nothing else.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The production job, when it lands, must not be dispatch-reachable</strong> — dispatch
+  widens the authorization boundary in a way a push does not. A leaked PAT with repo write can run
+  <code>gh workflow run deploy.yml</code>, which satisfies every OIDC trust condition (environment
+  and ref both match) and ships whatever <code>HEAD</code> happens to be, leaving no record of the
+  decision anywhere but the Actions log. The equivalent deliberate act —
+  <code>git commit --allow-empty -m redeploy &amp;&amp; git push</code> — leaves the same effect in
+  git history, where it can be reviewed. The production job therefore either carries
+  <code>if: github.event_name != 'workflow_dispatch'</code> or lives in its own push-only workflow
+  file. For staging the convenience is worth it; for production it is not.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>One concurrency group per ECS service, not per branch</strong> — a future branch-based
@@ -71,10 +84,12 @@
   After the verification gates pass, the job assumes the
   <code>mythrun-github-actions-staging</code> IAM role through the shared
   <a href="serving.html#the-github-actions-deploy-role">GitHub OIDC provider</a>, logs in to ECR,
-  and runs <code>docker build</code>. The build passes
-  <code>--build-arg BASE_IMAGE_REGISTRY=$REGISTRY</code> — the account-specific ECR host — so the
-  <a href="../runtime/index.html">backend Dockerfile</a> resolves its <code>FROM</code> through the
-  ECR pull-through cache instead of Docker Hub directly.
+  and runs <code>docker build</code>. That is the role today; an ECR-push-only
+  <a href="serving.html#the-build-deploy-split">build role</a> exists in the shared workspace and is
+  not yet assumed by anything — moving this job onto it is a sequenced cutover, described on the
+  Serving page. The build passes <code>--build-arg BASE_IMAGE_REGISTRY=$REGISTRY</code> — the
+  account-specific ECR host — so the <a href="../runtime/index.html">backend Dockerfile</a> resolves
+  its <code>FROM</code> through the ECR pull-through cache instead of Docker Hub directly.
 </p>
 
 <aside class="wiki-rationale">
@@ -579,6 +594,16 @@
   decision, not a place to hide untested work.
 </p>
 
+<p>
+  Entries also come <em>off</em> the list, and that direction is the one worth watching. A file
+  excluded as type-only stays excluded silently after it grows runtime code — the threshold keeps
+  passing while a real code path goes unmeasured. <code>src/billing/errors.ts</code> is the worked
+  example: it was a pure-type file until it gained the billing error-code tuple and the
+  <code>billingError()</code> constructor every emit site now goes through, at which point it was
+  removed from the exclusions and covered by its own test. The removal leaves a comment where the
+  entry used to be, so the next reader can see the file was reconsidered rather than overlooked.
+</p>
+
 <aside class="wiki-rationale">
   <strong>Order: cheapest first, slowest last</strong> — a one-second grep gives the operator
   feedback on the auth-narrowing violation before the 3-minute coverage suite even starts. If the
@@ -764,11 +789,12 @@
   </li>
   <li>
     If the build fails with an ECR authorization error on
-    <code>ecr-public/docker/library/*</code>, the GH Actions role is missing
+    <code>ecr-public/docker/library/*</code>, whichever role the build job assumed is missing
     <code>ecr:CreateRepository</code> or <code>ecr:BatchImportUpstreamImage</code> on the
-    <code>ecr-public/*</code> prefix — see the
-    <a href="serving.html#the-github-actions-deploy-role">Serving</a>
-    page's IAM notes.
+    <code>ecr-public/*</code> prefix. Before the build-role cutover that is the staging deploy role
+    (check that <code>github_build_role_cutover</code> is still <code>false</code>); after it, the
+    build role. See the <a href="serving.html#the-github-actions-deploy-role">Serving</a> page's IAM
+    notes.
   </li>
 </ol>
 
@@ -779,12 +805,12 @@
   repo, ECS cluster, and the staging API service. The image it builds is produced by the
   <a href="../runtime/index.html">backend</a> Dockerfile, which reads the
   <code>BASE_IMAGE_REGISTRY</code> ARG this workflow sets. The pull-through cache itself is a
-  shared-workspace resource — see the Serving page's shared-platform section. Post-launch, a sibling
-  prod job will be appended to this same workflow, assuming a separate
-  <code>mythrun-github-actions-production</code> role (<a href="serving.html">Serving</a>, follow-up
-  bead). The separate <code>deploy-frontend</code> workflow consumes the
-  <a href="frontend-hosting.html">frontend-hosting</a> module's S3 bucket and CloudFront
-  distribution through the same GitHub Actions role, which carries the scoped S3 and
+  shared-workspace resource — see the Serving page's shared-platform section. The
+  <a href="serving.html#the-build-deploy-split">build / deploy role split</a> is the pre-production
+  hardening this workflow is sequenced against: the build role is created, the cutover is gated, and
+  the production deploy job comes after both. The separate <code>deploy-frontend</code> workflow
+  consumes the <a href="frontend-hosting.html">frontend-hosting</a> module's S3 bucket and
+  CloudFront distribution through the same GitHub Actions role, which carries the scoped S3 and
   CloudFront-invalidation grants for them.
 </p>
 
@@ -808,7 +834,10 @@
     </tr>
     <tr>
       <td><code>workflow_dispatch</code></td>
-      <td>Manual run from the Actions UI on any branch listed under the staging Environment</td>
+      <td>
+        Manual run from the Actions UI on any branch listed under the staging Environment.
+        Staging-only by construction — every job here targets <code>mythrun-staging-*</code>
+      </td>
     </tr>
   </tbody>
 </table>

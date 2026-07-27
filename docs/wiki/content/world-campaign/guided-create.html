@@ -8,16 +8,17 @@
 <!-- source: frontend/src/routes/campaign-new/ -->
 <!-- source: frontend/client-core/src/api/synthesize-stream.ts -->
 <!-- source: frontend/contract/src/events/synthesize-stream.ts -->
-<!-- source-hash: sha256:4747ce8ad703650a1ecaa4f20a578f8e562bed70fd3a78195797d6363ca4947a -->
+<!-- source-hash: sha256:374579f2f20fdc8edc84c30f36c7bcd3d91450cb86045b2642d4a53de81d6c24 -->
 <!-- last-ticket: MYT-89 -->
 
-<h1>Guided create</h1>
+<h1>Campaign create</h1>
 
 <p class="lead">
-  The path a player takes to turn three things they love into a campaign: name three favourites,
-  watch a world brief write itself, then read it, optionally rework it once, and commit. Every step
-  before the commit is <strong>non-charging</strong> — the concept lives in Redis under an opaque
-  preview id and the credit is charged only when the player presses Begin.
+  The path a player takes to turn an idea into a campaign. Two ways in — write your own paragraph,
+  or name three things you love — and <strong>one proposal checkpoint</strong> both pass through:
+  read the world back, optionally rework it once, then commit. Everything before the commit is
+  <strong>non-charging</strong>; the proposal lives in Redis under an opaque preview id and the
+  credit is spent only when the player presses Begin.
 </p>
 
 <!-- @diagram: world-campaign/guided-create -->
@@ -25,127 +26,191 @@
 <h2>How it fits together</h2>
 
 <p>
-  Campaign creation forks two ways. <em>Start from an idea</em> is freeform prose the player writes
-  themselves; <em>build from what you love</em> is the guided path, where a Sonnet synthesizer
-  invents an original concept from three media-picks. This page owns the guided path and its preview
-  machinery — the synthesizer, the streamed brief, the rework, and the Redis holding pen the concept
-  waits in. The freeform fork is a passthrough: it carries the player's own prose straight to the
-  commit endpoint, where it is gated for the first and only time (see
-  <a href="../runtime/world-gen.html">World gen</a> for the commit-side flow both forks share).
+  Creation forks two ways at its first screen. <em>Start from an idea</em> is freeform prose the
+  player writes themselves; <em>build from what you love</em> is the brainstorm path, where a Sonnet
+  synthesizer invents an original concept from three media-picks. The two differ only in what they
+  hand the synthesizer. From there they share everything: the same route, the same stream, the same
+  input gate, the same Redis holding pen, the same preview screen, the same commit.
 </p>
 
 <aside class="wiki-rationale">
   <strong>Preview, then commit — because world-gen is expensive</strong> — committing kicks off
-  roughly ten minutes of multi-stage Sonnet world generation and debits a credit. So the guided path
-  gives the player a concept to read <em>before</em> they spend anything: synthesize, look, change
-  their mind once, and only then commit. The whole preview loop is deliberately cheap enough to
-  abandon.
+  roughly ten minutes of multi-stage world generation and debits a credit. So the flow gives the
+  player a proposal to read <em>before</em> they spend anything: synthesize, look, change their mind
+  once, and only then commit. The whole preview loop is deliberately cheap enough to abandon.
 </aside>
 
 <aside class="wiki-rationale">
-  <strong>Begin is double-submit-guarded, because it is the one charging click (MYT-102)</strong> —
-  pressing Begin is the only action in the whole flow that spends a credit, and
-  <code>busy</code>/<code>disabled</code> are async React state: two clicks in the same tick both
-  pass the disabled check and fire two <code>createCampaign</code> calls — two campaigns and two
-  <code>world_gen</code> debits off one impatient double-tap. The Begin CTA closes that with a
-  synchronous <code>useRef</code> latch set <em>before</em> the async state flips, so the second
-  click returns immediately (the same guard the character-creation submit uses).
+  <strong
+    >Freeform used to skip the checkpoint, and that was the asymmetry worth closing
+    (myth-6t06f)</strong
+  >
+  — the player who wrote their own paragraph went straight from the field to ten minutes of world
+  generation, sight unseen, while the player who named three films got to read a brief first.
+  Routing both through the proposal means the freeform player also sees what their words became
+  before buying it. The cost is one extra Sonnet call on a path that previously had none; the gain
+  is that the one irreversible click always comes after a read.
 </aside>
+
+<h3>Where the gate sits, per path</h3>
+
+<p>
+  Whatever reaches the preview store has passed the input gate — one Sonnet call over three axes
+  (does it fit the SRD, is it a thinly-veiled franchise clone, is it inappropriate). Each path runs
+  exactly one gate call, but at a different moment. The brainstorm path has no raw words worth
+  judging — its input is three media titles — so it synthesizes first and gates what it wrote. The
+  freeform path gates the player's <em>own text</em> before a token of synthesis burns.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Freeform gates first, and the order is load-bearing</strong> — it is the exact check the
+  commit route used to run on this text, kept in the same position relative to the player's input. A
+  synthesis in between would launder the concept: the gate would then be judging a Sonnet paraphrase
+  rather than what the player actually typed, and a rejected idea could survive by being reworded on
+  its way through. Gating first also keeps an abusive input at one cheap call instead of a full
+  synthesis. There is no second gate on that path — the proposal is a paraphrase of text already
+  judged, and re-judging it would burn Sonnet on an input the caller could not have altered.
+</aside>
+
+<h3>The proposal has a name</h3>
+
+<p>
+  The synthesizer emits a <code>title</code> alongside the concept, and it rides the whole way
+  through: into the <code>PreviewRecord</code>, out on the <code>complete</code> frame and the 201,
+  through a rework, and onto the preview screen as the headline above the prose. The page never
+  mines a name out of the first words of the concept — the stage that wrote the world is the stage
+  that names it.
+</p>
 
 <h3>The screen state machine</h3>
 
 <p>
   The SPA flow (<code>campaign-new.tsx</code>) is a thin screen state machine over a back-history
-  stack. <code>fork</code> is the permanent root; <code>guided</code> collects the three picks;
-  <code>synthesizing</code> renders the brief as it streams; <code>preview</code> shows the settled
-  concept and its actions; <code>rejection</code> is the calm dead-end. Each screen is pure
-  presentation firing neutral intents — it never navigates itself. The controller owns the carried
-  payloads (the live stream handle, the parked preview, the rejection reason) and maps each intent
-  to the next screen.
+  stack. <code>fork</code> is the permanent root; <code>freeform</code> and
+  <code>guided</code> collect the two kinds of input; <code>synthesizing</code> renders the proposal
+  as it streams; <code>preview</code> shows the settled proposal and its actions;
+  <code>rejection</code> is the calm dead-end. Each screen is pure presentation firing neutral
+  intents — it never navigates itself. The controller owns the carried payloads (the live stream
+  handle, the parked proposal, the rejection reason) and maps each intent to the next screen.
+</p>
+
+<p>
+  Because both inputs now feed one checkpoint, the controller also remembers the
+  <strong>origin</strong> — which screen produced the proposal currently on display. Every
+  &ldquo;back to the start of my path&rdquo; exit reads it: <em>start over</em> from the preview, a
+  <em>start over</em> from the rejection screen, and a commit-time 410 all return the player to
+  their own input rather than to the other path's. Origin also gates the preview's &ldquo;woven
+  from&rdquo; credit line, which is only true of a brainstorm proposal — a freeform one was woven
+  from words the player is already reading.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>The synthesizing beat swaps, it doesn't push</strong> — when the brief finishes the
+  <strong>The synthesizing beat swaps, it doesn't push</strong> — when the proposal finishes the
   controller <em>replaces</em> the top of the history with <code>preview</code> (or
   <code>rejection</code>) rather than pushing onto it. So a <code>← back</code> from the preview
-  lands on the guided picks, not on a half-written brief the player can never return to
-  meaningfully. The brief-writing beat is a transition, not a place.
+  lands on the input the player gave, not on a half-written proposal they can never return to
+  meaningfully. The writing beat is a transition, not a place.
 </aside>
 
 <p>
-  The three picks round-trip through <code>sessionStorage</code> (the client-core draft seam), so a
-  mid-flow reload re-prefills them. The draft deliberately survives synthesize → preview → rework
-  and even a preview that ages out — a <em>start over</em> or a 410 restart re-prefills the same
-  picks. Only an actual commit clears it, exactly once, from the controller.
+  Both inputs survive a reload, by different seams. The three picks round-trip through
+  <code>sessionStorage</code>; the freeform concept is held in <code>localStorage</code> and written
+  back on every keystroke, so a closed tab reopened later still holds the world the player had
+  described. The freeform text lives in the <em>controller</em>, not the screen, because the screen
+  unmounts between flow steps. Entering freeform no longer blanks the field first: whatever is there
+  is the player's own words, whether typed earlier or carried over from the rejection screen's
+  &ldquo;edit as freeform&rdquo;. Only an actual commit clears both drafts, exactly once.
 </p>
+
+<aside class="wiki-rationale">
+  <strong><code>localStorage</code> for prose, <code>sessionStorage</code> for picks</strong> — a
+  media title is cheap to retype and belongs to one sitting. A paragraph the player composed
+  themselves is the expensive artifact in this flow, and losing it to a reload or a closed tab is
+  the loss they actually feel. The storage tier follows the cost of re-creating the thing.
+</aside>
 
 <h3>Synthesize — streamed and non-charging</h3>
 
 <p>
-  Pressing <em>find my world</em> opens a one-shot stream against
-  <code>POST /api/campaigns/synthesize-preview/stream</code>. The guided screen owns the open, so
-  every pre-stream failure stays a calm inline notice right where the player can act on it; the
-  moment the 200 head arrives it hands the live stream to the controller and advances to
+  The primary action on either input screen opens a one-shot stream against
+  <code>POST /api/campaigns/synthesize-preview/stream</code>. The screen owns the open, so every
+  pre-stream failure stays a calm inline notice right where the player can act on it; the moment the
+  200 head arrives it hands the live stream to the controller and advances to
   <code>synthesizing</code>, which renders the arriving prose (a paper-register streaming block, no
   spinner). The server runs the identical guard chain, then hijacks the response into SSE:
-  <code>delta*</code> frames carry the brief's prose, and exactly one terminal frame (<code
-    >complete</code
-  >
+  <code>delta*</code> frames carry the prose, and exactly one terminal frame (<code>complete</code>
   | <code>rejected</code> | <code>error</code>) closes it. A synchronous twin,
-  <code>POST /api/campaigns/synthesize-preview</code>, returns the whole concept as a single 201 —
+  <code>POST /api/campaigns/synthesize-preview</code>, returns the whole proposal as a single 201 —
   the dev-tool panel and any non-streaming client drive that one.
 </p>
 
 <p>
-  Underneath, <code>synthesizeConcept</code> is one Sonnet call at temperature 0.9 through the
-  canonical <code>generateObject</code> wrapper, producing a <code>concept</code> string and an
-  <code>intentSummary</code> (aesthetics, themes, and an internal
-  <code>sourcesInternal</code> list). The streamed variant is its structural twin over
+  The request body is a union of the funnel's two inputs: <code>{ picks }</code> with exactly three
+  media-picks, or <code>{ concept }</code> with the player's own text bounded at 20–4000 characters
+  (the same bounds the commit route's freeform source carried). Both synthesize into the same output
+  shape, so the gate, the preview store, the wire union, and every screen downstream are identical
+  either way and never branch on which path opened the stream.
+</p>
+
+<p>
+  Underneath, <code>synthesizeConcept</code> (picks) and <code>synthesizeFromConcept</code> (prose)
+  are single Sonnet calls through the canonical <code>generateObject</code> wrapper, producing a
+  <code>title</code>, a <code>concept</code>, and an <code>intentSummary</code> (aesthetics, themes,
+  and an internal <code>sourcesInternal</code> list). Each has a structural twin over
   <code>streamObject</code> — same prompt, schema, and repair chain — deriving prose deltas from the
   growing <code>concept</code> field. The validated output, not the streamed text, is authoritative:
   a post-stream schema repair can rewrite what the player watched arrive, so the terminal frame's
-  concept wins.
+  proposal wins.
 </p>
 
 <aside class="wiki-rationale">
   <strong>The concept has a floor but no ceiling</strong> — the synthesizer schema puts a
-  <code>.min(50)</code> on the concept (a too-short brief is malformed) but deliberately <em>no</em>
-  <code>.max()</code>. A max ceiling would terminal-fail an otherwise good over-length generation
-  instead of accepting it, and the concept's destination — <code>worlds.concept</code> — is a bare
-  <code>TEXT</code> column with no length check, so nothing downstream needs a mirror. LLM prose
-  gets a floor, never a cap.
+  <code>.min(50)</code> on the concept (a too-short proposal is malformed) but deliberately
+  <em>no</em> <code>.max()</code>. A max ceiling would terminal-fail an otherwise good over-length
+  generation instead of accepting it, and the concept's destination — <code>worlds.concept</code> —
+  is a bare <code>TEXT</code> column with no length check, so nothing downstream needs a mirror. LLM
+  prose gets a floor, never a cap.
 </aside>
 
 <aside class="wiki-rationale">
   <strong>The stream is not the reconnecting SSE client</strong> — synthesis is a
-  <em>non-idempotent</em> POST: a silent reconnect would re-run Sonnet and bill a second brief. So
-  <code>startSynthesisStream</code> is its own small client (a zustand store, the StreamingFetch
+  <em>non-idempotent</em> POST: a silent reconnect would re-run Sonnet and bill a second proposal.
+  So <code>startSynthesisStream</code> is its own small client (a zustand store, the StreamingFetch
   seam — <code>EventSource</code> is banned), and a dropped connection is a terminal
   <code>failed{stream_interrupted}</code> that keeps the halted partial text on the page, never a
-  retry. The player retries deliberately, from the guided picks. This is why it doesn't reuse the
+  retry. The player retries deliberately, from their own input. This is why it doesn't reuse the
   <a href="../frontend/realtime-transport.html">reconnecting transport</a> the play and world-gen
   flows run on.
 </aside>
 
-<h3>The input gate and rejection</h3>
+<h3>Rejection</h3>
 
 <p>
-  Whatever the synthesizer produces is judged by the input gate — one Sonnet call over three axes
-  (does it fit the SRD, is it a thinly-veiled franchise clone, is it inappropriate). The gate
-  receives <code>sourcesInternal</code> too, which closes a prompt-injection path: the synthesizer's
-  own note of what it drew from is visible to the judge but never echoed to the player and never fed
-  to a later stage. An <code>allow</code> verdict parks the concept; a <code>reject</code> becomes a
-  <code>concept_rejected</code> outcome (a 422 on the synchronous route, a terminal
-  <code>rejected</code> frame on the stream — identical payloads).
+  A <code>reject</code> verdict becomes a <code>concept_rejected</code> outcome — a 422 on the
+  synchronous route, a terminal <code>rejected</code> frame on the stream, identical payloads. Both
+  arms share one emitter, which increments the rejection-storm counter, logs the model's axis
+  reasoning server-side, and shapes the response. The gate also receives
+  <code>sourcesInternal</code>, which closes a prompt-injection path: the synthesizer's own note of
+  what it drew from is visible to the judge but never echoed to the player and never fed to a later
+  stage.
 </p>
 
 <aside class="wiki-rationale">
+  <strong>Whether the judged text rides back is stated, not inferred</strong> — the emitter used to
+  decide from a <code>mode: 'freeform' | 'guided'</code> flag, on the assumption that only guided
+  rejections needed to show what was judged. The freeform path's checkpoint broke that equivalence:
+  a freeform rejection now lands on the standalone rejection <em>screen</em>, which has nothing but
+  the payload to render and to seed its &ldquo;adjust it yourself&rdquo; affordance from. So the
+  flag became an explicit <code>echoJudgedConcept</code>. It is true for every proposal-route
+  rejection on both paths, and false in the one place the caller already holds the text inline — the
+  commit route's freeform arm, which answers the very screen the concept was typed on.
+</aside>
+
+<aside class="wiki-rationale">
   <strong>The player sees a message, never the reasoning</strong> — a rejection carries a
-  server-authored <code>rejectionMessage</code> and, on the guided path, the
-  <code>synthesizedConcept</code> that was judged (so the player can adopt it as freeform and adjust
-  it themselves). The model's raw axis reasoning is logged server-side only — it never reaches the
-  response body. The rejection screen falls back to a calm generic line when the model declined to
-  author a message.
+  server-authored <code>rejectionMessage</code> and the judged concept. The model's raw axis
+  reasoning is logged server-side only; it never reaches the response body. The rejection screen
+  falls back to a calm generic line when the model declined to author a message.
 </aside>
 
 <p>
@@ -157,72 +222,83 @@
 <h3>Rework — one change, gate-pass-only</h3>
 
 <p>
-  A parked preview buys the player exactly one change. <em>Ask for one change</em> reveals a note
-  field; <code>POST /api/campaigns/preview/:previewId/rework</code> feeds the parked concept and the
-  note to <code>reviseConcept</code> (again one Sonnet call, same output contract), re-runs the
-  input gate, and — only on a pass — overwrites the stored preview, bumping
-  <code>reworkCount</code> from 0 to 1. A second attempt is a 409. The change note is capped at 800
-  characters, the same bound the synthesizer puts on a pick's "why I like it": a note is a sentence
-  or two, not an essay.
+  A parked proposal buys the player exactly one change. <em>Ask for one change</em> reveals a note
+  field; <code>POST /api/campaigns/preview/:previewId/rework</code> feeds the parked
+  <code>{ title, concept }</code> and the note to <code>reviseConcept</code> (again one Sonnet call,
+  same output contract), re-runs the input gate, and — only on a pass — overwrites the stored
+  proposal, bumping <code>reworkCount</code> from 0 to 1. A second attempt is a 409. Passing the
+  title in is what keeps a revision recognisable as the world the player was shown rather than a
+  differently-named one. The change note is capped at 800 characters, the same bound the synthesizer
+  puts on a pick's &ldquo;why I like it&rdquo;: a note is a sentence or two, not an essay.
 </p>
 
 <aside class="wiki-rationale">
   <strong>A rejected rework leaves the budget intact</strong> — nothing is persisted until the gate
-  passes. If the revised concept is rejected, the original gated preview <em>and</em>
+  passes. If the revised concept is rejected, the original gated proposal <em>and</em>
   <code>reworkCount: 0</code> survive untouched — the player still holds their one budgeted change.
   The rejection still increments the rejection-storm counter, so a loop of rejecting reworks trips
   the cooldown on the next request rather than burning Sonnet unbounded.
 </aside>
 
-<h3>Where the concept lives</h3>
+<h3>Where the proposal lives</h3>
 
 <p>
-  Between synthesis and commit the concept sits in Redis, not Postgres — a
-  <code>PreviewRecord</code> (the concept, the intent summary, the rework count) under the key
-  <code>{env}:{region}:campaign-preview:{userId}:{previewId}</code> with a 30-minute TTL. An
-  abandoned preview reaps itself; nothing accumulates. The commit reads the record but doesn't
+  Between synthesis and commit the proposal sits in Redis, not Postgres — a
+  <code>PreviewRecord</code> (the title, the concept, the intent summary, the rework count) under
+  the key <code>{env}:{region}:campaign-preview:{userId}:{previewId}</code> with a 30-minute TTL. An
+  abandoned proposal reaps itself; nothing accumulates. The commit reads the record but doesn't
   delete it — the TTL is the only cleanup.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>The user id is baked into the key — that is the whole IDOR defence</strong> — a preview is
-  keyed by the <em>authenticated</em> user, never a client-supplied id. So a stolen or guessed
+  <strong>The user id is baked into the key — that is the whole IDOR defence</strong> — a proposal
+  is keyed by the <em>authenticated</em> user, never a client-supplied id. So a stolen or guessed
   <code>previewId</code> read under a different user simply misses the key and returns the uniform
-  410 (<code>preview_expired</code>) — the same response a genuinely expired preview gives. There is
-  no surface where user B reads user A's concept.
+  410 (<code>preview_expired</code>) — the same response a genuinely expired proposal gives. There
+  is no surface where user B reads user A's concept.
 </aside>
 
-<h3>Commit — from preview to world-gen</h3>
+<h3>Commit — from proposal to world-gen</h3>
 
 <p>
   Begin calls the shared create endpoint with a wrapped
-  <code>{ mode: 'guided', previewId }</code> body. The commit loads the already-gated preview by
+  <code>{ mode: 'guided', previewId }</code> body — the wire name for &ldquo;commit what the
+  checkpoint parked&rdquo;, on either path. The commit loads the already-gated proposal by
   (authenticated user, previewId) and re-uses its concept verbatim:
-  <strong>no re-synthesis, no re-gate</strong>. The concept was synthesized and gated during preview
-  and is entirely server-authored — the client only ever held the opaque previewId — so re-gating
-  would burn Sonnet on an input the caller could not have altered. From there the commit debits one
+  <strong>no re-synthesis, no re-gate</strong>. From there it debits one
   <code>world_gen</code> credit inside an advisory-locked transaction and enqueues world generation;
   that half of the story is <a href="../runtime/world-gen.html">World gen</a>. A commit whose
-  preview has aged out returns a 410, and the flow restarts at the guided picks (which the draft
-  re-prefills).
+  proposal has aged out returns a 410, and the flow restarts at whichever input the player used,
+  re-prefilled from its draft.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Begin is double-submit-guarded, because it is the one charging click (MYT-102)</strong> —
+  pressing Begin is the only action in the whole flow that spends a credit, and
+  <code>busy</code>/<code>disabled</code> are async React state: two clicks in the same tick both
+  pass the disabled check and fire two <code>createCampaign</code> calls — two campaigns and two
+  <code>world_gen</code> debits off one impatient double-tap. The Begin CTA closes that with a
+  synchronous <code>useRef</code> latch set <em>before</em> the async state flips, so the second
+  click returns immediately (the same guard the character-creation submit uses).
+</aside>
 
 <h3>Cost and rate posture</h3>
 
 <p>
   Preview and rework never charge a credit, but they do burn Sonnet, so the same cheap guards run
-  before any model call on every preview route — synchronous, streamed, and rework alike. In order:
-  a Zod body parse (guided-only, exactly three picks), a per-user rate limit of five requests a
-  minute, a read-only rejection-storm cooldown peek, and a non-charging credit-balance peek. Only
-  then does the synthesizer fire. Because the guards run before the SSE hijack, a trip on the
-  streamed route is a plain JSON status the client handles exactly like the synchronous endpoint's
-  errors.
+  before any model call on every proposal route — synchronous, streamed, and rework alike. In order:
+  a Zod body parse (three picks, or a 20–4000-character concept), a per-user rate limit of five
+  requests a minute, a read-only rejection-storm cooldown peek, and a non-charging credit-balance
+  peek. Only then does the first Sonnet call fire. Because the guards run before the SSE hijack, a
+  trip on the streamed route is a plain JSON status the client handles exactly like the synchronous
+  endpoint's errors — which is why both input screens keep the same three inline notices (cooldown,
+  credits, transient retry) and route every gate verdict to the rejection screen instead.
 </p>
 
 <aside class="wiki-rationale">
   <strong>A zero-credit user is stopped before the first token</strong> — the credit peek is a
   <em>non-charging</em> balance check, and it runs before any LLM call even though preview itself
-  doesn't debit. There's no point letting someone synthesize and rework a concept they can never
+  doesn't debit. There's no point letting someone synthesize and rework a proposal they can never
   afford to commit; blocking at the peek keeps a zero-balance account from driving Sonnet cost at
   all.
 </aside>
@@ -247,16 +323,18 @@
   The streamed synthesis rides the SSE framing described on
   <a href="../frontend/realtime-transport.html">Realtime transport</a> and
   <a href="../runtime/pipeline-status.html">Pipeline status</a>, but deliberately as its own
-  one-shot client rather than the reconnecting one. The commit endpoint, the credit debit, and the
-  input gate on the freeform fork all belong to <a href="../runtime/world-gen.html">World gen</a>,
-  which this flow hands off to. The parked concept becomes <code>worlds.concept</code>; the campaign
-  it seeds surfaces on the <a href="./campaign-hub-payload.html">campaign hub</a>. The synchronous
+  one-shot client rather than the reconnecting one. The commit endpoint and the credit debit belong
+  to <a href="../runtime/world-gen.html">World gen</a>, which this flow hands off to; that page's
+  create route still carries a freeform arm of its own, and it is the one caller that suppresses the
+  judged-concept echo. The parked concept becomes <code>worlds.concept</code>; the campaign it seeds
+  surfaces on the <a href="./campaign-hub-payload.html">campaign hub</a>, and the world's palette is
+  picked separately by <a href="./world-color.html">world colour identity</a>. The synchronous
   preview route is one of the <a href="../runtime/dev-tool.html">dev tool</a>'s targets. The wire
   union for the stream is <code>SynthesizeStreamEvent</code> in
   <code>frontend/contract/src/events/synthesize-stream.ts</code>.
 </p>
 
-<h2>Appendix: the preview routes</h2>
+<h2>Appendix: the proposal routes</h2>
 
 <table>
   <tr>
@@ -268,27 +346,28 @@
     <td><code>POST /api/campaigns/synthesize-preview</code></td>
     <td>No</td>
     <td>
-      201 <code>{ previewId, concept }</code> · 422 <code>concept_rejected</code> · 400 / 403 / 429
+      201 <code>{ previewId, title, concept }</code> · 422 <code>concept_rejected</code> · 400 / 403
+      / 429
     </td>
   </tr>
   <tr>
     <td><code>POST /api/campaigns/synthesize-preview/stream</code></td>
     <td>No</td>
     <td>
-      <code>delta*</code> → <code>complete</code> | <code>rejected</code> | <code>error</code>;
-      guard trips are pre-hijack JSON (400 / 403 / 429)
+      <code>delta*</code> → <code>complete{previewId, title, concept}</code> |
+      <code>rejected</code> | <code>error</code>; guard trips are pre-hijack JSON (400 / 403 / 429)
     </td>
   </tr>
   <tr>
     <td><code>POST /api/campaigns/preview/:previewId/rework</code></td>
     <td>No</td>
     <td>
-      200 <code>{ previewId, concept }</code> · 409 <code>rework_exhausted</code> · 410
+      200 <code>{ previewId, title, concept }</code> · 409 <code>rework_exhausted</code> · 410
       <code>preview_expired</code> · 422 <code>concept_rejected</code>
     </td>
   </tr>
   <tr>
-    <td><code>POST /api/campaigns</code> (guided commit)</td>
+    <td><code>POST /api/campaigns</code> (proposal commit)</td>
     <td>1 <code>world_gen</code></td>
     <td>
       201 <code>{ campaignId }</code> · 410 <code>preview_expired</code> — see
@@ -298,10 +377,10 @@
 </table>
 
 <p>
-  Shared bounds and constants: picks are exactly three, each a title (1–200 chars) and a reason
-  (1–800); a rework note is 1–800 chars; the preview TTL is 30 minutes; the rate limit is five
-  requests a minute per user per route; the rejection-storm cooldown trips after more than three
-  gate rejections in an hour.
+  Both proposal routes accept either body shape: <code>{ picks }</code> (exactly three, each a title
+  of 1–200 chars and a reason of 1–800) or <code>{ concept }</code> (20–4000 chars). A rework note
+  is 1–800 chars; the preview TTL is 30 minutes; the rate limit is five requests a minute per user
+  per route; the rejection-storm cooldown trips after more than three gate rejections in an hour.
 </p>
 
 <h2>Source</h2>

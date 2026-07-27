@@ -72,7 +72,7 @@ export const structure: Section[] = [
     title: 'World & Campaign',
     pages: [
       { slug: 'index', title: 'Overview' },
-      { slug: 'guided-create', title: 'Guided create' },
+      { slug: 'guided-create', title: 'Campaign create' },
       { slug: 'world-color', title: 'World colour identity' },
       { slug: 'campaign-hub-payload', title: 'Campaign hub payload' },
     ],

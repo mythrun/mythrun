@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html" class="active">World-gen experience</a></li><li><a href="../frontend/character-creation.html">Character-creation experience</a></li><li><a href="../frontend/invites-party.html">Invites & party</a></li><li><a href="../frontend/live-play.html">Live play</a></li><li><a href="../frontend/billing-credits.html">Billing & credits</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › World-gen experience</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>frontend/src/routes/campaign-detail.tsx</code>, <code>frontend/src/routes/worldgen/</code>, <code>frontend/client-core/src/worldgen/</code>, <code>frontend/client-core/src/api/worldgen.ts</code>, <code>frontend/contract/src/events/worldgen-stages.ts</code>, <code>frontend/ui/src/components/WorldGenFog/</code>, <code>frontend/ui/src/components/WorldGenGraph/</code>, <code>frontend/ui/src/components/WorldGenStatusCard/</code>, <code>frontend/ui/src/components/WorldGenLoading/</code>, <code>frontend/ui/src/components/WorldWiki/</code>, <code>frontend/ui/src/components/FullBleedStage/</code>, <code>frontend/ui/src/components/Drawer/</code>, <code>frontend/ui/src/components/RevealTransition/</code></div>
-</div>
-
+        <article>
 <h1>World-gen experience</h1>
 
 <p class="lead">
@@ -409,23 +404,66 @@
 <p>
   Until the first entity-bearing stage runs there is nothing to draw — the early stages
   (<code>concept_intake</code>, <code>world_color</code>, <code>vocabulary_intake</code>) produce
-  registry and tone context, never a graph node. So act one is a generic
-  <code>WorldGenLoading</code> screen: the design system's <code>Spinner</code>, a flavor line
-  cycling through twenty short messages in shuffled order, and the same per-second countdown the
-  graph will carry. The split between "prep" and "entity" stages is derived once from the canonical
-  <code>WORLD_GEN_STAGES</code> taxonomy (<code>PREP_STAGES</code> vs <code>ENTITY_STAGES</code> in
-  <code>@mythrun/contract/events</code>), so a taxonomy change can never drift the boundary.
+  registry and tone context, never a graph node. So act one is the <code>WorldGenLoading</code>
+  screen, and it is a <em>calm</em> screen rather than a busy one: the player has nothing to do here,
+  so the surface holds a beat instead of simulating activity. It has four parts. An
+  <strong>accreting dither mark</strong> — a 1-bit square whose quantized fill is driven by real
+  pipeline events (completed stages and arrived entities), so structural resolution means work
+  happened and stillness means stillness. Directly under it, the <strong>wait line</strong>: a coarse
+  "ready in about N minutes," or the stalled stand-in when the estimate runs out. Below those, one
+  <strong>whisper</strong> of flavor copy at headline size, with the whispers already shown settling
+  beneath it as a faint ledger. And a closing line giving <strong>permission to leave</strong>, paired
+  with the promise that makes it credible — re-entering lands back on this wait with progress intact,
+  which is real product behavior, not reassurance.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The mark is driven by events, not by a clock</strong> — a time-driven animation cannot tell
+  "working" from "hung": it keeps swirling either way, so a player who returns to a wedged pipeline
+  sees exactly what a healthy one looks like. Filling the mark from completed stages and arrived
+  entities makes it an honest ambient progress signal — the returning player's proof of life is that
+  the mark has more ink than when they left. At zero accretion it runs a faint idle shimmer, poised at
+  the fill's origin, deliberately <em>fainter</em> than the first real accretion so the handoff never
+  reads as a reset: ink only ever accrues.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The ledger is the progress texture</strong> — a flavor line that merely swaps itself out
+  leaves no evidence that the wait has been lived through. Letting each retired whisper settle into a
+  short, age-faded ledger below the current one turns the cycle into a visible record: the column
+  grows as the minutes pass. The order is a shuffled permutation walked to exhaustion and reshuffled
+  with no repeat across the boundary, so a ten-minute wait never replays the same line twice in a row.
+  The ledger is decorative prose and is hidden from assistive tech entirely; the surface's
+  <code>aria-busy</code> and its live region carry the real state. Under
+  <code>prefers-reduced-motion</code> the cycle never advances, so the ledger simply stays empty.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Every slot is reserved from first paint</strong> — the estimate arrives late, the watch
+  affordance arrives later, and a stall notice may never arrive at all. Each of them appearing into an
+  unreserved slot shoved the composition down the screen mid-wait. So the layout reserves the height
+  for the wait line, the watch beat, and the hero whisper's second line up front: an element being
+  absent and then present is fine, but the rest of the screen moving because of it is not, on a
+  surface the player stares at for minutes.
+</aside>
 
 <p>
   The instant entities begin arriving — a first node, or an entity stage reported underway,
-  whichever lands first — the loading screen grows a "watch your world be born" button. Generation
-  keeps streaming underneath regardless; the button only <em>reveals</em> the graph. The transition
-  to act two is a deliberate press, never automatic — but only on a <em>genuine first visit</em>. A
-  refresh or reconnect that lands mid-generation with committed entities already present
-  (<code>resumedMidGen</code>: a non-empty connect-time seed on the stream's first frame) skips
-  straight to the graph act with its nodes already rehydrated, because the deliberate loading beat
-  is a one-time thing to mark, not a wall to re-cross on every reload.
+  whichever lands first — the loading screen grows a "watch your world be born" affordance in its
+  reserved slot. Generation keeps streaming underneath regardless; the button only <em>reveals</em>
+  the graph. The transition to act two is a deliberate press, never automatic — but only on a
+  <em>genuine first visit</em>. A refresh or reconnect that lands mid-generation with committed
+  entities already present (<code>resumedMidGen</code>: a non-empty connect-time seed on the stream's
+  first frame) skips straight to the graph act with its nodes already rehydrated, because the
+  deliberate loading beat is a one-time thing to mark, not a wall to re-cross on every reload. The
+  transition is also <strong>two-way</strong>: a quiet link on the act-two status card returns the
+  player to the calm wait, so watching the world assemble is something they can put down.
+</p>
+
+<p>
+  The split between "prep" and "entity" stages is derived once from the canonical
+  <code>WORLD_GEN_STAGES</code> taxonomy (<code>PREP_STAGES</code> vs <code>ENTITY_STAGES</code> in
+  <code>@mythrun/contract/events</code>), so a taxonomy change can never drift the boundary.
 </p>
 
 <aside class="wiki-rationale">
@@ -446,13 +484,110 @@
 <h3 id="act-two-the-fog-and-the-graph">Act two — the fog and the graph</h3>
 
 <p>
-  Act two is the world assembling itself. Two canvases are layered: a fog field behind and the
-  entity graph in front. As each entity streams in, its node appears with a short "trace-then-stamp"
-  arrival — a penstroke traces the node's silhouette, then it fills — and as relationships arrive
-  their edges stroke in as straight penstrokes rather than snapping. The nodes lay out under a
-  force-directed simulation that clusters the graph as edges connect it, and the whole thing is
-  draggable. The status card sits over the canvas (a fixed-count progress bar plus the ticking
-  countdown); on a phone it drops out of the canvas into a compact footer.
+  Act two is the world assembling itself. Two canvases are layered: a ground of land and weather
+  behind, and the entity graph in front. As each entity streams in its node appears as its complete
+  square ink glyph, and as relationships arrive their edges stroke in as straight penstrokes rather
+  than snapping. The nodes lay out under a force-directed simulation that clusters the graph as edges
+  connect it, and the whole thing is draggable. The status card sits over the canvas (a fixed-count
+  progress bar naming its own scope — "stage 2 of 4" — plus the wait line and the return-to-the-wait
+  link); on a phone it drops out of the canvas into a compact footer.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>An arriving node is fully drawn on its first frame</strong> — each node used to arrive with
+  a short "trace-then-stamp" beat: a penstroke outlining the silhouette before the solid ink landed.
+  At real arrival rates that read as flicker rather than ceremony, and it made an incomplete-looking
+  glyph a normal sight on a screen whose whole job is to convince the player the world is real. Edges
+  keep their penstroke draw-in — a connection genuinely <em>is</em> drawn between two places — but a
+  place simply exists.
+</aside>
+
+<h4>The ground is land, not only weather</h4>
+
+<p>
+  Behind the graph sits a <strong>static landmass field</strong>: a seeded value-noise height map with
+  a sea level, painted in the same square cells, the same dither, and the same ink as the fog. Inside
+  a landmass the cells are dense; outside it the paper is left alone, so the emptiness reads as sea
+  rather than as an unfinished render. The fog still rolls over the top of it and drains away as
+  entities arrive. Land is the world; fog is the weather that lifts off it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>One structure answered two separate complaints</strong> — a wind-advected particle field has
+  no coastline and no silhouette, so the map read as a diagonal spray of confetti signalling "pixels
+  appearing" rather than "a place"; and because the sim spawns from the wind edges, the lower stretch
+  of the canvas sat empty in every frame. Separately, the field's <em>contrast</em> was failing for a
+  reason a stylesheet check couldn't see: a solid painted cell measured well above the non-text floor,
+  but only about a quarter of the pane's pixels were painted, so the field the eye integrates measured
+  far lower. No ink change rescues a low-coverage dither — the fix has to be coverage, which means the
+  field needs somewhere it is genuinely dense. Land is that somewhere. Its coverage floor is what
+  carries the integrated contrast past the floor, and the guarantee is pinned by a test measuring
+  actually-rendered pixels rather than declared colours.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The terrain paint is a semantic token, and it diverges from the reference on purpose</strong>
+  — the reference prototype's fog quads were tuned against a dev backdrop; over the shipped page they
+  blended to nearly nothing, which made the thing the player stares at for eight minutes the faintest
+  element on the screen. The fog's own parameter record stays a verbatim copy of that prototype, but
+  the production paint takes its ink from the theme-aware
+  <a href="./index.html#design-tokens"><code>--worldgen-terrain</code></a> alias at full alpha, so the
+  painted cell is the token's own ink in both themes and the near-black node glyphs and labels still
+  out-contrast it comfortably.
+</aside>
+
+<h4>The world stays where the player saw it</h4>
+
+<p>
+  A force layout keeps annealing as arrivals and edges reheat it, which means a place the player has
+  already seen named can drift somewhere else minutes later. Two mechanisms hold it still. The
+  simulation is only re-synced when the graph's <em>content</em> actually changed — a fingerprint over
+  the folded nodes and edges — so a re-render caused by something else entirely (expanding the wiki
+  pane, selecting an entity) no longer injects reheat energy into a settled constellation. And once
+  the field has genuinely cooled, every <strong>labelled</strong> node is pinned where it sits. New
+  entities still settle freely around the pinned constellation: the world may grow; what the player
+  has watched take its place does not move.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Positional stability outranks a tidier layout</strong> — pinning costs something real: a
+  pinned node no longer migrates toward its community when later edges arrive, so the finished layout
+  crosses more lines than a fully-free one would. That trade is deliberate. For a feature sold as
+  "watch your world take shape," a place that wanders is poison — the fiction is a fixed world being
+  revealed, and a layout that keeps improving itself contradicts it. Pins are taken only below a
+  settle threshold, never mid-flight (a node pinned at its seed position would freeze the layout
+  unformed), and a node stays pinned even if its label later retires under the density budget: the
+  label tier breathes, the place must not. Dragging overrides the pin while held, and on the reveal a
+  released node flies home and re-pins where it lands.
+</aside>
+
+<p>
+  Re-entry is the other half. The live map is an unmountable surface — returning to the calm wait
+  unmounts it, and so does leaving the route — so the settled layout is kept in a
+  <strong>session-scoped layout cache</strong> keyed by campaign: the pinned placements (keyed by each
+  node's stable identity, so a later finalize swapping its display id doesn't lose the placement) and
+  the terrain seed. On re-entry the cached nodes pin straight back where they were and the same
+  coastline is drawn, so the second visit reads as the first plus accretion.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Layout is world state, not render state</strong> — while the layout lived only in component
+  refs, every re-entry re-seeded both the force simulation and the terrain's random field, so every
+  named place jumped hundreds of pixels and the continent re-rolled wholesale. "The world keeps
+  forming" became "the world keeps being regenerated," which is the opposite of the thing being sold.
+  The cache is a module map with no storage behind it, deliberately: a full page refresh restarts the
+  stream and re-snapshots the world anyway, so the fiction worth protecting is within-session
+  re-entry, and memory is bounded by campaigns visited. The seed needs no such caveat — it is derived
+  from the campaign key, so the coastline survives a refresh for free.
+</aside>
+
+<p>
+  The graph also ships a <strong>legend</strong>. Entity kind is encoded in the shape of a node's ink
+  glyph, and a symbol system nobody documents is decoration rather than information — un-named glyphs
+  read as a rendering glitch. The key is derived, not fixed: it renders one entry per kind actually
+  present in the world, in a stable vocabulary order, each only when the composing surface supplied a
+  resolved label. It also names the <em>hollow</em> glyph — an outline-only node whose name has
+  retired under the density budget — because a screenful of unexplained outlines reads as breakage too.
 </p>
 
 <aside class="wiki-rationale">
@@ -520,11 +655,26 @@
   the owner's) and lays the settled graph beside a browsable <code>WorldWiki</code> whose front door
   is the
   introduction: the world's name as the title, a few paragraphs of grounding prose, and an ordered
-  list of dig-deeper references, with the search field and the browse-by-kind index one scroll
-  below, and — since MYT-102 — a closing <strong>glossary</strong> of the world's invented
-  vocabulary (mono term over serif definition), narrowed by the same search needle. There is no
-  separate entity list — the wiki is the browse surface.
+  list of dig-deeper references, with the search field and the browse-by-kind index below it. There is
+  no separate entity list — the wiki is the browse surface.
 </p>
+
+<p>
+  A world that carries a <strong>glossary</strong> of invented vocabulary gets a second peer view
+  rather than a longer scroll. A segmented switch splits the panel into <strong>index</strong> (the
+  introduction, then search and the browse-by-kind groups) and <strong>glossary</strong> (the
+  vocabulary as a scannable list, mono term over serif definition). The switch sits above the scroll
+  region so it never scrolls away; only the active view scrolls beneath it. A world with no glossary
+  keeps the single-view landing with no switch at all — the graceful absence, not an empty tab.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>An entity page is a drill-in, not a third segment</strong> — opening an entity swaps the
+  whole landing for that page and back, and the switch's active view is owned by the shell rather than
+  the landing, so the round-trip returns the reader to the view they left. Making the entity page a
+  third segment would have implied it sits beside index and glossary as a peer, which it doesn't:
+  there is one entity page at a time and it is reached <em>from</em> a view.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The reveal waits for the introduction, not the raw graph</strong> — the boundary used to
@@ -565,6 +715,27 @@
   generation every node's identity <em>is</em> its real entity id, the same id the wiki keys on, so
   no translation is needed.
 </p>
+
+<p>
+  The wiki also has to <em>announce</em> that it is a scroll region. It is a fixed-height pane — the
+  graph half owns the row's height and the wiki half caps to it — but macOS overlay scrollbars vanish
+  at rest and nothing marked the cut edge, so a definition running past the fold read as a hard clip
+  mid-sentence rather than as "there is more." <code>WikiScrollFrame</code> supplies both halves of
+  the affordance: a quiet scrollbar styled into the ink register with a stable reserved gutter (so
+  expanding a glossary row never reflows the prose sideways), and top and bottom edge fades gated by
+  scroll position. Rendered prose also passes through a mechanical smart-quote substitution — the
+  generator writes typewriter quotes, which inside a bookish serif definition read as a typo.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The edge fade is a mask on the content, not a wash over it</strong> — the first cut painted
+  a page-coloured gradient <em>over</em> the content, which failed twice. On a panel grounded on a
+  different surface tone the wash was visibly the wrong colour, a grey smudge; and it rendered whole
+  glossary rows at intermediate alpha, which is the near-universal styling for <em>disabled</em> —
+  exactly the wrong thing to imply about a tappable term. Fading the content itself to transparent
+  with a CSS mask reveals whatever ground is genuinely behind, on any panel tone and in either theme,
+  by construction.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The prose was always on the wire; the wiki just wasn't showing it</strong> — the
@@ -640,49 +811,68 @@
 <h3 id="waiting-feedback">Waiting feedback</h3>
 
 <p>
-  Both acts carry a per-second countdown so the player always holds an expectation of the wait, but
-  they count to <em>different milestones</em> off one shared derivation. The route fetches the
-  <a href="../runtime/world-gen.html#the-stage-timings-eta-endpoint">stage-timings ETA endpoint</a>
-  once at the start; a slice-summing core sums the historical per-stage averages over a canonical
-  stage slice, intersected with the live stage statuses and minus the time already spent in the
-  running stage, and a real one-second interval re-derives it. The two public entry points differ
-  only in which slice they pass: the act-two status card's <code>remainingWaitMs</code> sums
-  <code>WATCHED_STAGES</code> and counts to the wiki <em>reveal</em>; the act-one loading screen's
-  <code>remainingPrepWaitMs</code> sums <code>PREP_STAGES</code> only and counts to
-  <em>arriving on the graph</em> — it reaches zero exactly as the first entity-emitting stage begins
-  (the watch-button beat), not at the reveal ten minutes later. Both slices derive from the same
-  canonical <code>WORLD_GEN_STAGES</code> taxonomy, so a stage reorder can't drift either target.
-  When a stage overruns, the countdown holds at its floor ("any moment now") and jumps at the next
-  stage event — an honest walk rather than a smooth lie. With no timing history yet (cold start),
-  the surfaces simply show no estimate.
+  Both acts carry a wait estimate so the player always holds an expectation of the wait, and since the
+  generating view stays mounted across the act-one → act-two swap, there is exactly
+  <strong>one budget</strong> behind both: the remaining time to the wiki reveal. The route fetches
+  the <a href="../runtime/world-gen.html#the-stage-timings-eta-endpoint">stage-timings ETA
+  endpoint</a> once at the start; a slice-summing core sums the historical per-stage averages over the
+  canonical watched-stage slice, intersected with the live stage statuses and minus the time already
+  spent in the running stage, and a one-second interval re-derives it. The slice derives from the same
+  canonical <code>WORLD_GEN_STAGES</code> taxonomy the pipeline does, so a stage reorder can't drift
+  the target.
+</p>
+
+<p>
+  What reaches the screen is three folds away from that raw number, and each fold answers a way the
+  raw number lies. It is clamped <strong>monotonic</strong> — the shown wait may hold, never climb.
+  It is <strong>damped</strong> — the first estimate is adopted whole, then the displayed value steps
+  down at most one whole minute per whisper dwell. And it is rendered <strong>coarse</strong>: a
+  minute-granular phrase, never a ticking <code>0:24</code>. When the estimate exhausts — a final
+  stage overrunning, or a wedged stage keeping the number positive well past a generous multiple of
+  the first estimate — the line degrades in <em>language</em> to a stalled reassurance rather than
+  sitting frozen on a number. With no timing history at all (a cold start) there is no line: no
+  history is not a fake instant estimate.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>The loading countdown targets the graph, not the reveal</strong> — act one is the wait
-  before there is anything to watch, so its honest promise is "when does the world start appearing,"
-  not "when is everything done." Counting the loading screen down to the full reveal would show a
-  player a two-minute number that is really the ten-minute number's tail — a smooth lie. Summing
-  only the prep slice makes the loading countdown answer the question the loading screen actually
-  raises, and the status card picks the reveal target back up once the graph is on screen.
+  <strong>Direction and cadence are separate problems, and both had to be fixed</strong> — the
+  monotonic clamp handles a number that would otherwise climb, which reads as the system losing
+  ground. It does nothing about a number that <em>falls</em> too eagerly: an early build shed two
+  minutes in forty-five seconds, because every re-estimate surfaced the instant it was computed, and
+  the result read as nervous guessing rather than an estimate. The damper fixes the cadence by pacing
+  the display to the whisper dwell; exhaustion deliberately bypasses it, because the stalled line is
+  honesty rather than display. The same reasoning kills per-second precision: a ticking countdown on a
+  ten-minute LLM pipeline is false precision plus per-second churn on a screen meant to be calm.
 </aside>
 
 <aside class="wiki-rationale">
-  <strong>The status card counts only the watched stages</strong> — its fixed bars are seeded from
-  the entity stages the player actually waits through, so the bar reaches 100% exactly at the reveal
-  moment. A card that kept counting the silent tail would strand at ~60% and then vanish when the
-  reveal fired. The player never sees API cost on this card either — spend is a dev-tool concern,
-  not a player-facing number.
+  <strong>The status card names its own scope</strong> — its bars count only the watched entity
+  stages, so the bar reaches 100% exactly at the reveal moment; a card that kept counting the silent
+  tail would strand at ~60% and then vanish when the reveal fired. But a bare stage label beside a
+  small percentage invited reading that percentage as overall progress. Each bar now carries its
+  position explicitly ("stage 2 of 4"), so stage scope and overall time can't be conflated — the
+  overall answer is the wait line's job. The player never sees API cost on this card either; spend is
+  a dev-tool concern, not a player-facing number.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>One wait vocabulary across every long wait</strong> — the estimate → stalled → hidden
+  decision, the coarse bucketing, and the damper live in a shared <code>client-core/loading</code>
+  module rather than in this surface. <a href="./character-creation.html">Character creation</a> and
+  the <a href="./live-play.html">between-sessions session-prep hold</a> read the same brain with
+  different inputs, so the three multi-minute waits in the product speak with one voice and a fix to
+  how a wait degrades lands everywhere at once.
 </aside>
 
 <h3 id="reduced-motion">Reduced motion</h3>
 
 <p>
   Every motion source honours <code>prefers-reduced-motion</code>, read once in the web layer and
-  handed to the brain as a boolean, and there are five of them: the fog's settle, the node bob, the
-  edge draw-ins, the per-node arrival traces, and the reveal-moment choreography. Under the
-  preference the fog recomputes a static settled density on each entity-count change (preserving the
-  clearing-as-progress cue rather than freezing blank), the bob stops, and edges and arrivals appear
-  finished instead of stroking in; the reveal moment collapses to a single ~300ms fade. What does
+  handed to the brain as a boolean: the fog's settle, the node bob, the edge draw-ins, the loading
+  screen's whisper cycle, and the reveal-moment choreography. Under the preference the fog recomputes
+  a static settled density on each entity-count change (preserving the clearing-as-progress cue rather
+  than freezing blank), the bob stops, edges appear finished instead of stroking in, and the whisper
+  holds on one line; the reveal moment collapses to a single ~300ms fade. What does
   <em>not</em> stop is progress: the countdown keeps ticking and the screen-reader live region keeps
   announcing. Those are content, not decoration — freezing the countdown would show a wrong number,
   and freezing the announcer would strand a non-sighted reader mid-generation.
@@ -762,10 +952,12 @@
     the loading screen appears while the prep stages run.
   </li>
   <li>
-    When the "watch your world be born" button appears, press it to enter act two and watch the fog
-    clear as entities and edges stream in. The world reveals the moment
-    <code>world_introduction</code> completes (right after the connections weave); the wiki quietly
-    reconciles as the tail finishes.
+    When the "watch your world be born" affordance appears, press it to enter act two and watch the
+    fog clear off the land as entities and edges stream in. The status card's quiet link returns you
+    to the calm wait, and going back to the map should replay the <em>same</em> coastline with every
+    named place where you left it — a re-rolled continent or a migrated place is the layout cache
+    failing. The world reveals the moment <code>world_introduction</code> completes (right after the
+    connections weave); the wiki quietly reconciles as the tail finishes.
   </li>
   <li>
     To inspect the underlying events, open the same campaign in the
@@ -851,13 +1043,19 @@
     <td>Density-aware label budgeting; the entity-count floor the fog drain divides by.</td>
   </tr>
   <tr>
+    <td><code>layout-cache.ts</code></td>
+    <td>
+      The session-scoped per-campaign layout — pinned node placements (keyed by stable identity) and
+      the derived terrain seed, so a re-entry replays the same world instead of re-rolling it.
+    </td>
+  </tr>
+  <tr>
     <td><code>stage-eta.ts</code> · <code>reveal-timing.ts</code></td>
     <td>
-      The remaining-wait countdown math — one slice-summing core with two targets (<code
-        >remainingWaitMs</code
-      >
-      → reveal, <code>remainingPrepWaitMs</code> → graph arrival); the connections-done / tail-stage
-      boundaries.
+      The remaining-wait math — a slice-summing core over the watched-stage slice, plus the
+      monotonic clamp and the estimate damper; the connections-done / tail-stage boundaries. The
+      estimate → stalled → hidden decision and the coarse bucketing are shared with every other long
+      wait in <code>client-core/loading</code>.
     </td>
   </tr>
   <tr>
@@ -886,37 +1084,52 @@
     <th>Role</th>
   </tr>
   <tr>
-    <td><code>WorldGenFogField</code></td>
     <td>
-      The fog canvas (behind) — rAF/DPR/pointer shell over <code>FogSim</code> + the Bayer draw
-      helper.
+      <code>WorldGenFogField</code> · <code>terrain-field.ts</code> · <code>terrain-ink.ts</code>
+    </td>
+    <td>
+      The ground canvas (behind) — rAF/DPR/pointer shell over <code>FogSim</code> + the Bayer draw
+      helper, plus the seeded static landmass field and its theme-aware paint.
     </td>
   </tr>
   <tr>
     <td>
-      <code>WorldGenGraph</code> · <code>GenerationAnnouncer</code> · <code>GraphNodeList</code>
+      <code>WorldGenGraph</code> · <code>graph-stability.ts</code> · <code>GraphLegend</code> ·
+      <code>GenerationAnnouncer</code> · <code>GraphNodeList</code>
     </td>
     <td>
-      The graph canvas (front) — node/edge draw, penstroke edges, trace-then-stamp arrival, drag,
-      the gated generation vs interactive reveal modes, and the fog layer it composes. Its two
-      <code>VisuallyHidden</code> helpers carry the accessibility model for the
-      <code>aria-hidden</code> canvas: the generation announcer (coalesced live region +
-      entities-so-far list) and the reveal's roving-tabindex node listbox.
+      The graph canvas (front) — node/edge draw, penstroke edges, hollow demoted glyphs, mirrored
+      label sides, drag, the gated generation vs interactive reveal modes, and the ground layer it
+      composes. <code>graph-stability</code> holds the content fingerprint that suppresses a no-op
+      re-sync and the pin-on-settle that stops a named place migrating;
+      <code>GraphLegend</code> is the derived glyph key. Its two <code>VisuallyHidden</code> helpers
+      carry the accessibility model for the <code>aria-hidden</code> canvas: the generation announcer
+      (coalesced live region + entities-so-far list) and the reveal's roving-tabindex node listbox.
     </td>
   </tr>
   <tr>
     <td><code>WorldGenStatusCard</code></td>
-    <td>The progress card — overlay on desktop, footer on a phone; fixed bars + countdown.</td>
-  </tr>
-  <tr>
-    <td><code>WorldGenLoading</code></td>
-    <td>Act one — spinner + cycling flavor lines + countdown + the watch beat.</td>
-  </tr>
-  <tr>
-    <td><code>WorldWiki</code></td>
     <td>
-      The reveal's browsable world — the introduction home, per-entity pages (facts + RELATED
-      links), search, back-navigation, and shared selection.
+      The progress card — overlay on desktop, footer on a phone; scope-naming bars, the wait line,
+      and the quiet link back to the calm wait.
+    </td>
+  </tr>
+  <tr>
+    <td><code>WorldGenLoading</code> · <code>WhisperLedger</code></td>
+    <td>
+      Act one — the accreting dither mark, the wait line under it, the whisper over its settling
+      ledger, the permission-to-leave close, and the watch beat, all in reserved slots.
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <code>WorldWiki</code> (<code>WikiViewSwitch</code> · <code>WikiSearch</code> ·
+      <code>WikiGlossary</code> · <code>WikiScrollFrame</code>)
+    </td>
+    <td>
+      The reveal's browsable world — the introduction home, the index ⊕ glossary view switch,
+      per-entity pages (prose kernel + facts + RELATED links), search, back-navigation, shared
+      selection, and the overflow-announcing scroll frame.
     </td>
   </tr>
   <tr>

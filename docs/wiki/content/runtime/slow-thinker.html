@@ -3,14 +3,20 @@
 <!-- source: backend/src/session/st-config.ts -->
 <!-- source: backend/src/llm/st-gate.ts -->
 <!-- source: backend/src/llm/st-director.ts -->
+<!-- source: backend/src/llm/st-narrative-progress.ts -->
+<!-- source: backend/src/session/converge-policy.ts -->
+<!-- source: backend/src/session/st-converge-probe.ts -->
+<!-- source: backend/src/session/st-usage.ts -->
 <!-- source: backend/src/llm/schemas/st-gate.ts -->
 <!-- source: backend/src/llm/schemas/st-director.ts -->
+<!-- source: backend/src/llm/schemas/st-narrative-progress.ts -->
 <!-- source: backend/src/llm/prompts/session/st-gate.txt -->
 <!-- source: backend/src/llm/prompts/session/st-evaluation.txt -->
+<!-- source: backend/src/llm/prompts/session/st-narrative-progress.txt -->
 <!-- source: backend/src/session/trigger-state.ts -->
 <!-- source: docs/superpowers/specs/2026-06-10-myt-69-slowthinker-design.md -->
-<!-- source-hash: sha256:bbc2245c0ea9fc238e3f6c8c8362058cbd078f3531036ceb94a8221dd155cde4 -->
-<!-- last-ticket: MYT-69 -->
+<!-- source-hash: sha256:675f5bc0ba3349ee95c4bcd1853c7f97df11b00390621d82ed861f1bc0f2fd4b -->
+<!-- last-ticket: myth-3jna1 -->
 
 <h1>Slow Thinker</h1>
 
@@ -19,8 +25,9 @@
   turn completes, a background pipeline decides whether the scene needs direction and, if so, writes
   a leak-safe stage direction the <a href="./fast-thinker.html">Fast Thinker</a> consumes on its
   next turn. It owns the running summary, gates its own expensive Opus call behind a cheap Haiku
-  classifier, and signals the session wind-down. Player-visible latency is unaffected: every turn's
-  time-to-first-token is purely the FT.
+  classifier, and owns the two signals that bring a session in to land — the myth-3jna1
+  <a href="#the-convergence-steer">convergence steer</a> and the wind-down. Player-visible latency
+  is unaffected: every turn's time-to-first-token is purely the FT.
 </p>
 
 <!-- @diagram: runtime/slow-thinker -->
@@ -32,8 +39,8 @@
   blocking the player-visible stream behind an Opus call. MYT-69 moves it <strong>after</strong> the
   turn, into a background pipeline. A flushed DM turn enqueues an <code>st-evaluation</code> job; a
   dedicated worker — the sixth in the <a href="./worker.html">worker process</a> — runs
-  <strong>policy → gate → evaluate → write</strong>, all off the hot path. Its outputs land in Redis
-  slots the <em>next</em> turn's worker reads. The
+  <strong>policy → converge probe → gate → evaluate → write</strong>, all off the hot path. Its
+  outputs land in Redis slots the <em>next</em> turn's worker reads. The
   <a href="./session-turn.html">session-turn conductor</a> no longer calls the ST at all; the
   in-turn tier seam is retired.
 </p>
@@ -94,11 +101,12 @@
 
 <p>
   Inside <code>processStEvalJob</code>, the first decision is
-  <strong>mechanical code, not a model</strong>. Two arms force an evaluation outright, skipping the
-  gate: turns-since-the-last-ST- run ≥ <code>ST_EVAL_FLOOR_TURNS</code> (the every-N-turns oversight
-  floor), or total session usage ≥ <code>WIND_DOWN_FRACTION</code> ×
-  <code>SESSION_TOKEN_BUDGET</code> (which also flips wind-down mode on). These are policy arms
-  around the gate — like a rate limit, they are ZFC-exempt mechanical thresholds, never prompt
+  <strong>mechanical code, not a model</strong>. Three arms force an evaluation outright, skipping
+  the gate: turns-since-the-last-ST-run ≥ <code>ST_EVAL_FLOOR_TURNS</code> (the every-N-turns
+  oversight floor), total session usage ≥ <code>WIND_DOWN_FRACTION</code> ×
+  <code>SESSION_TOKEN_BUDGET</code> (which also flips wind-down mode on), or the
+  <a href="#the-convergence-steer">convergence probe</a> below returning a steer. These are policy
+  arms around the gate — like a rate limit, they are ZFC-exempt mechanical thresholds, never prompt
   content.
 </p>
 
@@ -131,6 +139,98 @@
   floor guarantees an evaluation within <code>ST_EVAL_FLOOR_TURNS</code> regardless.
 </aside>
 
+<h2 id="the-convergence-steer">The convergence steer</h2>
+
+<p>
+  Wind-down at 0.9 says <em>close now</em>. That is late: by then the table may be mid-thread with
+  nothing but a farewell left to spend, and the send-off gets bolted onto whatever scene happened to
+  be running. myth-3jna1 adds the stage before it. Convergence says
+  <em>start drawing toward somewhere this can rest</em>, while there is still session left to land
+  in. Three arms now run in order across a session: <strong>converge</strong> at 0.75 (and only if
+  the story is behind), <strong>wind-down</strong> at 0.9, then the
+  <a href="./session-turn.html">turn worker</a>'s <strong>farewell</strong> auto-end at 1.0.
+</p>
+
+<p>
+  The steer needs two independent readings. The first is mechanical: cumulative spend over
+  <code>SESSION_TOKEN_BUDGET</code>, arithmetic in <code>converge-policy.ts</code>. The second is a
+  judgment — <em>how far through the prep's intended arc is this table actually?</em> — which is a
+  reading of prose against the <code>sd_playbook</code>, so per ZFC it is a model call and never a
+  beat count in code. Cheap and classification-shaped, so Haiku, the same tier as the gate. The
+  steer fires when the story sits below the spend by more than <code>CONVERGE_LAG_MARGIN</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The probe is never told how much budget is left</strong> — the whole value of the steer is
+  comparing two <em>independent</em> axes, story delivered against session spent. A probe that could
+  see the clock would anchor to it, and the comparison would collapse into a number checked against
+  itself. So <code>st-narrative-progress</code> receives the playbook, the running summary, and a
+  recent-exchange window, and nothing about the budget; the comparison happens afterwards, in code
+  that never reads prose.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Why 0.75, and why a margin</strong> — the probe costs a Haiku call per cycle, so it runs
+  only inside the <code>[CONVERGE_MECHANICAL_FLOOR, WIND_DOWN_FRACTION)</code> window: three
+  quarters of every session carries zero added spend, and once wind-down is active a converge
+  verdict could not change anything anyway. 0.75 leaves roughly a handful of late-session turns —
+  and late turns are the expensive ones, since the FT holds the whole transcript — which is enough
+  to bring a live thread somewhere it can be set down and still reach wind-down with room. Probing
+  earlier would put a quarter of every paid session into landing mode. The
+  <code>CONVERGE_LAG_MARGIN</code> exists because a 0-to-1 arc judgment from Haiku is coarse:
+  without it, "narrative 0.72 at mechanical 0.75" would trip the steer on judgment noise for a
+  session that is in fact on pace. The comparison is strictly <code>&lt;</code>, so a lag of exactly
+  the margin still reads as on-pace.
+</aside>
+
+<p>
+  A verdict <strong>forces</strong> the evaluation on the same arm wind-down uses, rather than
+  waiting for the gate or the five-turn floor. A steer that arrives with no session left to land in
+  is precisely the defect being fixed. The window is a handful of turns at the tail, so the
+  forced-Opus cost profile matches wind-down's, which already accepts it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Fail-quiet, because a spurious steer is worse than none</strong> — a probe failure returns
+  "no converge", which degrades the cycle to exactly the pre-steer behaviour: the Haiku gate decides
+  whether the ST runs, and wind-down remains the backstop. The alternative failure posture — steer
+  on no information — would spend paid session in landing mode for no reason.
+</aside>
+
+<h3>What crosses the boundary, and what does not</h3>
+
+<p>
+  The probe reads the whole <code>sd_playbook</code>; arc position is not judgeable without the
+  session goals and the revelation list. That is legal for the same reason the gate's playbook read
+  is: its output is consumed by <strong>code only</strong>. Everything that leaves the probe module
+  is a boolean and a token count. The fraction is logged (a number carries no secret, and tuning the
+  thresholds needs it); the model's <code>basis</code> field — secret-aware prose <em>about</em> the
+  playbook — is deliberately never logged and has no consumer anywhere.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The ST is told the mode, never the measurement</strong> — <code>runStDirector</code> takes
+  <code>converge</code> as a boolean, and the prompt fragment it switches on carries no number and
+  no arc position. The ST already holds the playbook, so the mode is all it needs, and keeping the
+  measurement on the code side means it can never be paraphrased into a direction. Opus then writes
+  the actual standing text in its own words, under an explicit instruction to phrase it as craft:
+  the narrator must never learn there is an arc it is behind on, or that a session has a length. So
+  what the <a href="./fast-thinker.html">Fast Thinker</a> eventually reads is a boolean-triggered
+  banner authored by the director — "bring this thread toward a place it can be set down; favour
+  what's already in play over anything new" — with no reason attached. The leak test forces the
+  probe to return a hostile output that repeats a sentinel secret verbatim, and proves a converging
+  cycle and an ordinary one produce byte-identical FT messages.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The player-facing progress number is a different number entirely</strong> — the table does
+  see how much session is left, but that readout is the
+  <a href="./session-turn.html#the-session-progress-signal">mechanical fraction</a> the turn worker
+  computes from token counters, which holds no narrative state at all. Nothing on this page reaches
+  a route, a publisher, or an FT-facing type. Two signals, two sides of the boundary, no shared
+  path.
+</aside>
+
 <h2>The Opus evaluation: the structural split</h2>
 
 <p>
@@ -141,6 +241,21 @@
   <a href="./llm.html">LLM client</a>'s <code>generateObject</code>. The output schema is the
   channel's leak bound:
 </p>
+
+<aside class="wiki-rationale">
+  <strong>On Opus 5 the director thinks, whether or not anyone asked it to</strong> — omitting the
+  <code>thinking</code> parameter used to mean no thinking; on the 5 line it means
+  <em>adaptive</em> thinking, and we omit it everywhere. This is the capability the bump was for,
+  and the director's evaluation is where deep thinking is most wanted. But it changes what
+  <code>maxOutputTokens</code> means: the cap now covers thinking and visible output
+  <em>together</em>, so a ceiling sized for the answer alone truncates mid-thought — which for a
+  structured call is a terminal failure, not a shorter answer. Hence 4000 → 16000. Raising a ceiling
+  is close to free (we are billed for tokens actually produced, and adaptive thinking spends only
+  what the task needs) while truncation costs the whole cycle; wall-clock stays bounded by
+  <code>ST_EVAL_TIMEOUT_MS</code> either way. The same reasoning raised the
+  <a href="./scribe.html">Scribe</a>'s retcon cap and the
+  <a href="./fast-thinker.html">ST-vet</a>'s.
+</aside>
 
 <ul>
   <li>
@@ -203,7 +318,7 @@
   and coarse time progression.
 </aside>
 
-<h2>The seven direction classes</h2>
+<h2>The eight direction classes</h2>
 
 <p>
   The prompt's taxonomy spans craft and content. The four classic monitors — tonal monotony, pacing
@@ -215,7 +330,10 @@
   check ride the FT's <code>roll_skill_check</code>, direct the next rung after the pass lands),
   <strong>playbook beats</strong> (secret-free behavioral events),
   <strong>secret-integrity steering</strong> (a boundary phrased <em>without</em> naming the
-  protected content), <strong>grounding step-ins</strong>, and <strong>wind-down</strong>.
+  protected content), <strong>grounding step-ins</strong>, and the two closing classes —
+  <strong>convergence</strong> and <strong>wind-down</strong>. Both of the closing pair are
+  standing-shaped rather than one-shot: aiming a session at a resting point is a constraint that has
+  to hold across scenes, not a nudge that evaporates next turn.
 </p>
 
 <aside class="wiki-rationale">
@@ -293,9 +411,34 @@
   <code>(usage + usage:st) ≥ WIND_DOWN_FRACTION × SESSION_TOKEN_BUDGET</code>, the evaluation is
   forced with the wind-down flag and the director sets a <strong>standing</strong> directive
   steering toward a natural close — resolve the current scene, open no new threads or NPCs — and
-  keeps directing toward closure on subsequent evaluations. This is the ST-side signal only; the
-  actual <code>session_end</code> orchestration and the FT-context hard cap belong to the
-  session-end issue.
+  keeps directing toward closure on subsequent evaluations. It is the second of the three closing
+  arms, after <a href="#the-convergence-steer">convergence</a> at 0.75 and before the
+  <a href="./session-turn.html">turn worker</a>'s farewell auto-end at 1.0. Wind-down and
+  convergence are mutually exclusive by construction — the worker never probes for convergence once
+  wind-down is active — which is why the probe takes the wind-down expression as an argument rather
+  than forking a second float comparison of its own.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>What the budget constant actually governs, and why it moved</strong> —
+  <code>SESSION_TOKEN_BUDGET</code> went from 400,000 to 545,000 on 2026-07-26, and that was
+  <em>not</em> a decision to make sessions longer. Sonnet 5 ships a tokenizer that spends about
+  35.6% more tokens on identical text (measured on 6KB of our own prep prompt: 1175 → 1593), and the
+  <a href="./fast-thinker.html">Fast Thinker</a> re-sends the whole transcript every turn — so
+  overnight the old 400,000 bought roughly 26% less actual story. Multiplying through restores the
+  prior session in <em>prose</em> terms rather than token terms. Worth being precise about the blast
+  radius: the three arms that read this constant are the convergence probe's window, the wind-down
+  flip, and the <a href="./session-turn.html#the-session-progress-signal">progress fraction</a>. So
+  raising it makes the DM land later and the progress bar climb slower; it is narrative pacing, not
+  an authorisation to spend more. Sessions that genuinely run long do cost more, and Sonnet 5's
+  introductory rate ends 2026-08-31 — an equal-length session is slightly cheaper than before until
+  then, and roughly 36% dearer after.
+</aside>
+
+<p>
+  This is the ST-side signal only; the <code>session_end</code> orchestration belongs to the
+  <a href="./session-reconcile.html">session-end</a> flow, and the FT-context hard cap is the
+  <a href="./fast-thinker.html">Fast Thinker</a>'s.
 </p>
 
 <aside class="wiki-rationale">
@@ -303,7 +446,9 @@
   same-campaign session started within the keys' lifetime would otherwise inherit the prior
   session's usage and a standing wind-down directive. So
   <code>POST /api/sessions/:campaignId/start</code> resets the spend keys (<code>:usage</code>,
-  <code>:usage:st</code>, <code>:summary</code>) and the ST-owned trigger-state (both direction
+  <code>:usage:st</code>, <code>:summary</code>, and — since the fraction is derived from the same
+  budget — the <code>:progress</code> floor, which never falls on its own and would otherwise open
+  the next session pinned at the last one's reading) and the ST-owned trigger-state (both direction
   slots + the turns-since-ST counter). The smoke surfaced the sibling hazard too: a stale
   <code>responded-seq</code> watermark made every new batch
   <code>(staleWatermark, max]</code> empty, so the DM never fired — the session-start reset now
@@ -350,7 +495,11 @@
   <li>
     After a turn flushes, watch the worker log for <code>st-eval gate</code> (with
     <code>needed</code> / <code>confidence</code> / <code>skip</code>) on a gated cycle, or a forced
-    evaluation when the floor or wind-down arm fired.
+    evaluation when the floor or wind-down arm fired. Past 75% of the budget you should also see
+    <code>st-eval convergence probe</code> with <code>mechanical</code> / <code>narrative</code> /
+    <code>converge</code> — those two numbers are what to watch when tuning
+    <code>CONVERGE_LAG_MARGIN</code>. Below the floor the line is absent, which is correct: the
+    probe does not run.
   </li>
   <li>
     On an intervention, inspect the slots:
@@ -440,8 +589,24 @@
     </tr>
     <tr>
       <td><code>SESSION_TOKEN_BUDGET</code> / <code>WIND_DOWN_FRACTION</code></td>
-      <td>400000 / 0.9</td>
-      <td>The session-bound proxy and the fraction at which wind-down trips.</td>
+      <td>545000 / 0.9</td>
+      <td>
+        The session-bound proxy and the fraction at which wind-down trips. 400000 → 545000 on the
+        Sonnet 5 tokenizer shift — same session length in prose, not a bigger session.
+      </td>
+    </tr>
+    <tr>
+      <td><code>CONVERGE_MECHANICAL_FLOOR</code> / <code>CONVERGE_LAG_MARGIN</code></td>
+      <td>0.75 / 0.1</td>
+      <td>
+        Where the <a href="#the-convergence-steer">convergence probe</a> starts running, and how far
+        the story must lag the spend before it steers. Both are pacing feel; real play settles them.
+      </td>
+    </tr>
+    <tr>
+      <td><code>ST_PROGRESS_MODEL</code> / <code>ST_PROGRESS_TIMEOUT_MS</code></td>
+      <td><code>HAIKU</code> / 30s</td>
+      <td>The narrative-progress probe's tier and budget — same posture as the gate.</td>
     </tr>
     <tr>
       <td><code>ST_EVAL_TIMEOUT_MS</code> / <code>ST_GATE_TIMEOUT_MS</code></td>
@@ -450,8 +615,12 @@
     </tr>
     <tr>
       <td><code>ST_EVAL_MAX_OUTPUT_TOKENS</code></td>
-      <td>4000</td>
-      <td>Reasoning + direction + a full summary rewrite is long; the SDK default truncates.</td>
+      <td>16000</td>
+      <td>
+        Reasoning + direction + a full summary rewrite is long; the SDK default truncates. Raised
+        4000 → 16000 for Opus 5, where thinking is on by default and shares this one ceiling with
+        the visible output. <code>ST_EVAL_TIMEOUT_MS</code> remains the wall-clock guard.
+      </td>
     </tr>
     <tr>
       <td><code>ST_SUMMARY_TARGET_WORDS</code></td>
@@ -537,14 +706,49 @@
     </tr>
     <tr>
       <td>
-        <code>src/llm/prompts/session/st-gate.txt</code> +
-        <code>st-evaluation.txt</code>
+        <code>src/llm/st-narrative-progress.ts</code> +
+        <code>src/llm/schemas/st-narrative-progress.ts</code>
       </td>
-      <td>The gate's spend-decision prompt and the director's multiplayer evaluation prompt.</td>
+      <td>
+        <code>runStNarrativeProgress</code> — the Haiku
+        <a href="#the-convergence-steer">arc-position judgment</a>. Errors propagate; the
+        fail-posture is the caller's to choose.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/session/converge-policy.ts</code> + <code>src/session/st-converge-probe.ts</code>
+      </td>
+      <td>
+        The deterministic half (<code>mechanicalProgress</code>,
+        <code>shouldProbeNarrativeProgress</code>, <code>isConverging</code>) and the seam that
+        joins it to the judgment (<code>probeConvergence</code>, <code>NO_CONVERGE</code>) with the
+        fail-quiet posture. Split out so the worker stays a readable ordered shell.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/st-usage.ts</code></td>
+      <td>
+        <code>usageTokens</code> — the one token-count fold, shared by the gate, the director, and
+        the probe now that three call sites accumulate into <code>:usage:st</code>.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/llm/prompts/session/st-gate.txt</code> + <code>st-evaluation.txt</code> +
+        <code>st-narrative-progress.txt</code>
+      </td>
+      <td>
+        The gate's spend-decision prompt, the director's multiplayer evaluation prompt (class H,
+        convergence, and the <code>{{converge}}</code> slot), and the arc-position probe's prompt.
+      </td>
     </tr>
     <tr>
       <td><code>src/session/st-config.ts</code></td>
-      <td>The tuning constants above (models, floor, gate floor, windows, budget, timeouts).</td>
+      <td>
+        The tuning constants above (models, floor, gate floor, windows, budget, convergence
+        thresholds, timeouts).
+      </td>
     </tr>
   </tbody>
 </table>
@@ -555,10 +759,15 @@
   <code>backend/src/session/st-evaluation-worker.ts</code>,
   <code>backend/src/session/st-eval-queue.ts</code>, <code>backend/src/session/st-config.ts</code>,
   <code>backend/src/llm/st-gate.ts</code>, <code>backend/src/llm/st-director.ts</code>,
-  <code>backend/src/llm/schemas/st-gate.ts</code>,
+  <code>backend/src/llm/st-narrative-progress.ts</code>,
+  <code>backend/src/session/converge-policy.ts</code>,
+  <code>backend/src/session/st-converge-probe.ts</code>,
+  <code>backend/src/session/st-usage.ts</code>, <code>backend/src/llm/schemas/st-gate.ts</code>,
   <code>backend/src/llm/schemas/st-director.ts</code>,
+  <code>backend/src/llm/schemas/st-narrative-progress.ts</code>,
   <code>backend/src/llm/prompts/session/st-gate.txt</code>,
   <code>backend/src/llm/prompts/session/st-evaluation.txt</code>,
+  <code>backend/src/llm/prompts/session/st-narrative-progress.txt</code>,
   <code>backend/src/session/trigger-state.ts</code>. Design spec:
   <code>docs/superpowers/specs/2026-06-10-myt-69-slowthinker-design.md</code>.
 </p>

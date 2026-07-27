@@ -16,7 +16,7 @@
 <!-- source: infra/environments/staging/main.tf -->
 <!-- source: infra/modules/serving/main.tf -->
 <!-- source: infra/modules/serving/variables.tf -->
-<!-- source-hash: sha256:ef6bcc41d68b7e813f0540193ad2c2d68320089456c0b958292e25b32b90ac5c -->
+<!-- source-hash: sha256:06653b51d4f9c681306d9cdf2382e1a391c1779b3b654066e1c4ef6aea919603 -->
 <!-- last-ticket: MYT-74a -->
 
 <h1>World-store retrieval</h1>
@@ -376,6 +376,26 @@
   (<code>embed_world_degraded</code>): rows left <code>NULL</code>, the backfill recovers. A clean
   run logs the routine info line.
 </p>
+
+<p>
+  Those events are now wired to alarms rather than merely alarm-shaped. The
+  <a href="../infra/serving.html">serving module</a> carries log-metric filters over both the API
+  and worker log groups that turn the config-class and degrade-class events into CloudWatch metrics
+  and page the environment's SNS alerts topic. Both log groups are filtered because the two surfaces
+  don't overlap — every task runs the boot probe, but only the worker runs the world-gen and
+  character-integration pipelines that emit the runtime embed events.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The alarms cover the window the boot probe cannot</strong> — the probe catches deploy-time
+  misconfiguration loudly: a config-class Voyage error throws, the task crashloops, and ECS rolls
+  the deploy back. What it cannot see is the key being revoked, re-scoped, or dimension-changed
+  while tasks are <em>already running</em>. Nothing crashes in that window — world-gen keeps
+  producing content and simply leaves every embedding <code>NULL</code>, so retrieval silently
+  degrades to whatever was embedded before the break. That is the exact failure the runtime alarms
+  exist to catch, and it is why the embed callers were made to log at error level in the first
+  place.
+</aside>
 
 <h2>Where embedding gets triggered</h2>
 

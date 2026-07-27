@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html" class="active">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › End-of-session reconciliation</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>backend/src/session/session-end.ts</code>, <code>backend/src/session/session-reconcile.ts</code>, <code>backend/src/session/reconcile/validate.ts</code>, <code>backend/src/session/reconcile/commit.ts</code>, <code>backend/src/session/post-session-analysis.ts</code>, <code>backend/src/session/analysis/containment.ts</code>, <code>backend/src/session/session-turn-queue-events.ts</code>, <code>backend/src/llm/session-reconciler.ts</code>, <code>backend/src/llm/schemas/session-reconcile.ts</code>, <code>backend/src/llm/prompts/session/session-reconciler.txt</code>, <code>backend/src/llm/post-session-analysis.ts</code>, <code>backend/src/llm/schemas/post-session-analysis.ts</code>, <code>backend/src/llm/prompts/session/post-session-analysis.txt</code>, <code>backend/src/repo/facts.ts</code>, <code>backend/src/repo/sessions.ts</code>, <code>backend/src/repo/session-messages.ts</code>, <code>backend/src/repo/entities.ts</code>, <code>backend/src/repo/worlds.ts</code>, <code>backend/src/repo/campaign-wiki-view.ts</code>, <code>backend/src/routes/campaigns.ts</code>, <code>backend/src/server-queues.ts</code>, <code>backend/migrations/027_fact_supersede.sql</code>, <code>docs/superpowers/specs/2026-06-16-myt-74a-end-of-session-reconciliation-design.md</code>, <code>docs/superpowers/specs/2026-06-17-myt-74c-campaign-wiki-promotion-design.md</code></div>
-</div>
-
+        <article>
 <h1>End-of-session reconciliation</h1>
 
 <p class="lead">
@@ -600,11 +595,11 @@
   Through a live session the <a href="./scribe.html">Scribe</a> accumulates the session's
   improvisation into a Redis working set — an append-only list of facts the Fast Thinker invented,
   each stamped with its tier (<code>known</code> / <code>discoverable</code> / <code>secret</code>)
-  and provenance (objective ground truth, or an NPC's attributed claim). That working set is
-  ephemeral: it lives in Redis (ridden onto the durable 5-minute Postgres checkpoint) and it never
-  touches the world store while the session is live. Reconciliation is the closing step that makes
-  the session's discoveries permanent — it turns the working set into canon the next session, the
-  next prep, and the wiki can read.
+  and provenance (objective ground truth, an NPC's attributed claim, or a dice-earned grant). That
+  working set is ephemeral: it lives in Redis (ridden onto the durable 5-minute Postgres checkpoint)
+  and it never touches the world store while the session is live. Reconciliation is the closing step
+  that makes the session's discoveries permanent — it turns the working set into canon the next
+  session, the next prep, and the wiki can read.
 </p>
 
 <p>
@@ -945,6 +940,18 @@
   accrete a duplicate fact every session.
 </p>
 
+<aside class="wiki-rationale">
+  <strong>A dice-earned item is rendered as canon-on-grant, not as one more claim</strong> — the
+  working set carries a third provenance alongside objective and attributed:
+  <a href="./scribe.html">dice_outcome</a>, stamped on facts asserted in a turn whose skill check
+  actually passed. The reconciler's rendering says so in as many words — "dice-earned (<em>tier</em>
+  on a resolved roll — canon-on-grant; the world conforms to it)" — because the model otherwise has
+  no way to tell a reward the system itself granted from an improvisation that happens to collide
+  with prep material, and would resolve the collision by discarding the grant. The direction of
+  reconciliation is the opposite: the world conforms to play. A collision steers future turns; it
+  does not retract something a player earned at the table.
+</aside>
+
 <p>
   The prompt makes the closing narration authoritative for how the session <em>ended</em>: any
   canon-worthy end-state it establishes is folded, matched onto an existing candidate rather than
@@ -1143,7 +1150,8 @@
   <li>
     <strong><code>summary</code> / <code>emergingThreads</code></strong> — the player-facing recap.
     Secret-free by construction: the prompt's hard rule is that these describe only what the players
-    witnessed at the table. They land in <code>sessions.summary</code> as a JSON wrapper.
+    witnessed at the table. They land in <code>sessions.summary</code> as a JSON wrapper, and reach
+    players through the <a href="./session-transport.html">recap route</a>.
   </li>
   <li>
     <strong><code>handoff</code></strong> — the <code>SessionHandoff</code>, which <em>may</em> be
@@ -1168,6 +1176,19 @@
   <em>banned as a verbatim voice or atmosphere source</em> — two different channels, and the prompt
   holds both rules at once.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The recap is paragraphed, and the paragraphs are structural only</strong> — a session with
+  three distinct movements compressed into one dense block reads as a wall, so the prompt now asks
+  for one to four short paragraphs broken where the <em>session</em> broke: a discovery, a
+  confrontation, a journey, a retreat. A session that was one continuous scene stays one paragraph.
+  Same words, same register — only the breaks are new, and they pass through as blank lines inside
+  the same single <code>summary</code> string, so the wire contract and the recap route are
+  unchanged. The prompt also pulls in <code>shared/prose-register</code> for
+  <code>summary</code> and <code>emergingThreads</code>, and explicitly exempts the handoff's
+  <code>voice</code> and <code>atmosphere</code> fields: those are quoted verbatim from the
+  transcript, and restyling a quote would destroy the thing that makes it useful.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Verbatim NPC voice is the point of the handoff</strong> — the recurring failure across

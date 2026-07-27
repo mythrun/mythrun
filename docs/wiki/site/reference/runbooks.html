@@ -55,15 +55,16 @@
   <li><a href="../runtime/worker.html#bring-up-the-worker-locally">Bring up the worker locally</a><span class="wiki-runbook-home">Runtime → Worker</span></li>
   <li><a href="../runtime/index.html#build-and-run-the-container-image-locally">Build and run the container image locally</a><span class="wiki-runbook-home">Runtime</span></li>
   <li><a href="../auth-billing/billing-metering.html#bump-model-pricing-after-a-rate-change">Bump MODEL_PRICING after a rate change</a><span class="wiki-runbook-home">Auth &amp; Billing → Billing metering</span></li>
+  <li><a href="../auth-billing/stripe-contract.html#bump-the-stripe-api-version">Bump STRIPE_API_VERSION</a><span class="wiki-runbook-home">Auth &amp; Billing → Stripe contract</span></li>
   <li><a href="../runtime/character-integration.html#check-the-cost-cap-status">Check the cost-cap status</a><span class="wiki-runbook-home">Runtime → Character integration</span></li>
   <li><a href="../runtime/session-reconcile.html#confirm-a-promotion-reached-the-wiki">Confirm a promotion reached the campaign wiki</a><span class="wiki-runbook-home">Runtime → End-of-session reconciliation</span></li>
   <li><a href="../runtime/transcript-search.html#confirm-a-search-uses-the-partial-index">Confirm a search uses the partial index</a><span class="wiki-runbook-home">Runtime → Transcript search</span></li>
   <li><a href="../runtime/session-prep.html#confirm-a-session-prep-landed">Confirm a session prep landed</a><span class="wiki-runbook-home">Runtime → Session prep</span></li>
   <li><a href="../infra/serving.html#confirm-the-alerts-email-subscription">Confirm the alerts email subscription</a><span class="wiki-runbook-home">Infra → Serving</span></li>
   <li><a href="../infra/index.html#create-the-state-bucket-in-a-new-aws-account">Create the state bucket in a new AWS account</a><span class="wiki-runbook-home">Infra</span></li>
+  <li><a href="../infra/serving.html#cut-ci-over-to-the-build-role">Cut CI over to the ECR-push-only build role</a><span class="wiki-runbook-home">Infra → Serving</span></li>
   <li><a href="../infra/dns.html#cut-dns-over-from-another-registrar">Cut DNS over from another registrar</a><span class="wiki-runbook-home">Infra → DNS</span></li>
   <li><a href="../runtime/worker.html#deploy-the-worker-to-staging">Deploy the worker to staging</a><span class="wiki-runbook-home">Runtime → Worker</span></li>
-  <li><a href="../infra/serving.html#deregister-an-old-task-definition-revision">Deregister an old task-definition revision</a><span class="wiki-runbook-home">Infra → Serving</span></li>
   <li><a href="../runtime/redis-reconnect.html#a-boot-that-should-crash-loop-but-doesnt">Diagnose a boot that hangs instead of crashing</a><span class="wiki-runbook-home">Runtime → Redis reconnection</span></li>
   <li><a href="../runtime/dm-trigger.html#diagnose-a-dm-that-never-fires">Diagnose a DM that never fires (or fires too eagerly)</a><span class="wiki-runbook-home">Runtime → DM trigger</span></li>
   <li><a href="../auth-billing/stripe-contract.html#diagnose-a-failed-billing-probe">Diagnose a failed billing probe</a><span class="wiki-runbook-home">Auth &amp; Billing → Stripe contract</span></li>
@@ -91,7 +92,9 @@
   <li><a href="../runtime/world-gen.html#force-a-paint-job-rejection">Force a paint-job rejection</a><span class="wiki-runbook-home">Runtime → World gen</span></li>
   <li><a href="../data/migrations.html#inspect-a-migration-run-in-cloudwatch">Inspect a migration run in CloudWatch</a><span class="wiki-runbook-home">Data → Migrations</span></li>
   <li><a href="../infra/frontend-hosting.html#open-the-site-at-launch">Open the site at launch</a><span class="wiki-runbook-home">Infra → Frontend hosting</span></li>
+  <li><a href="../infra/serving.html#pin-the-oidc-trust-to-workflow-files">Pin the OIDC trust to specific workflow files</a><span class="wiki-runbook-home">Infra → Serving</span></li>
   <li><a href="../data/world-store-retrieval.html#populate-the-voyage-key">Populate the Voyage API key (staging)</a><span class="wiki-runbook-home">Data → World-store retrieval</span></li>
+  <li><a href="../infra/serving.html#deregister-an-old-task-definition-revision">Prune orphan task-definition revisions (quarterly)</a><span class="wiki-runbook-home">Infra → Serving</span></li>
   <li><a href="../runtime/character-integration.html#re-run-a-failed-integration">Re-run a failed integration</a><span class="wiki-runbook-home">Runtime → Character integration</span></li>
   <li><a href="../runtime/session-prep.html#re-run-a-failed-session-prep">Re-run a failed session prep</a><span class="wiki-runbook-home">Runtime → Session prep</span></li>
   <li><a href="../runtime/session-reconcile.html#re-run-a-stuck-post-session-analysis">Re-run a stuck post-session analysis</a><span class="wiki-runbook-home">Runtime → End-of-session reconciliation</span></li>
@@ -114,6 +117,7 @@
   <li><a href="../runtime/character-creation.html#reset-a-stale-processing-concept-player-self-serve">Reset a stale-processing concept (player self-serve)</a><span class="wiki-runbook-home">Runtime → Character creation</span></li>
   <li><a href="../auth-billing/onboarding.html#reset-a-stuck-username-during-onboarding">Reset a stuck username during onboarding</a><span class="wiki-runbook-home">Auth &amp; Billing → Onboarding &amp; invites</span></li>
   <li><a href="../runtime/index.html#reset-the-local-data-stack">Reset the local data stack</a><span class="wiki-runbook-home">Runtime</span></li>
+  <li><a href="../auth-billing/identity.html#respond-to-a-cognito-throttling-alarm">Respond to a Cognito throttling alarm</a><span class="wiki-runbook-home">Auth &amp; Billing → Identity</span></li>
   <li><a href="../infra/ci-cd.html#roll-a-tf-env-var-change-into-the-live-service">Roll a TF env-var or secret-reference change into the live service</a><span class="wiki-runbook-home">Infra → CI/CD</span></li>
   <li><a href="../infra/dns.html#roll-back-a-broken-cutover">Roll back a broken cutover</a><span class="wiki-runbook-home">Infra → DNS</span></li>
   <li><a href="../infra/ci-cd.html#roll-back-to-a-previous-revision">Roll back to a previous revision</a><span class="wiki-runbook-home">Infra → CI/CD</span></li>
@@ -147,6 +151,7 @@
   <li><a href="../runtime/session-prep.html#trigger-or-reset-a-session-prep-over-http">Trigger or reset a session prep over HTTP</a><span class="wiki-runbook-home">Runtime → Session prep</span></li>
   <li><a href="../runtime/world-gen.html#trigger-the-repair-chain">Trigger the repair chain on a streaming stage</a><span class="wiki-runbook-home">Runtime → World gen</span></li>
   <li><a href="../auth-billing/identity.html#verify-a-sign-in-flow-click-through">Verify a sign-in flow click-through</a><span class="wiki-runbook-home">Auth &amp; Billing → Identity</span></li>
+  <li><a href="../infra/index.html#verify-an-alerts-topic-delivers">Verify an alerts topic actually delivers</a><span class="wiki-runbook-home">Infra</span></li>
   <li><a href="../auth-billing/jwt-middleware.html#verify-the-deploy-gate-rejects-bypass">Verify the deploy gate rejects bypass</a><span class="wiki-runbook-home">Auth &amp; Billing → JWT middleware</span></li>
   <li><a href="../runtime/pipeline-status.html#verify-the-subscriber-survived-a-redis-blip">Verify the subscriber survived a Redis blip</a><span class="wiki-runbook-home">Runtime → Pipeline status</span></li>
   <li><a href="../frontend/live-play.html#walk-a-live-session-end-to-end-dev">Walk a live session end-to-end (dev)</a><span class="wiki-runbook-home">Frontend → Live play</span></li>

@@ -25,297 +25,384 @@
       <aside class="wiki-sidebar"><ul><li><a href="../infra/index.html">Overview</a></li><li><a href="../infra/network.html">Network</a></li><li><a href="../infra/data.html">Data plane</a></li><li><a href="../infra/dns.html">DNS</a></li><li><a href="../infra/serving.html" class="active">Serving</a></li><li><a href="../infra/frontend-hosting.html">Frontend hosting</a></li><li><a href="../infra/ci-cd.html">CI/CD</a></li><li><a href="../infra/smoke-testing.html">Smoke testing</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Infra › Serving</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>infra/modules/serving/</code>, <code>infra/environments/shared/main.tf</code>, <code>infra/environments/shared/outputs.tf</code>, <code>infra/environments/staging/main.tf</code>, <code>infra/environments/staging/outputs.tf</code>, <code>infra/environments/staging/variables.tf</code></div>
-</div>
-
+        <article>
 <h1>Serving</h1>
 
 <p class="lead">
-  The compute platform that runs the API and the Worker. A shared ECR repo, an ECS cluster, and the
-  ALB on one side; per-env task definitions, services, target groups, and the GitHub-Actions deploy
-  role on the other.
+  The compute platform that runs the API and the Worker. A shared ECR repo, an ECS cluster, the ALB
+  and the GitHub-Actions build role on one side; per-env task definitions, services, target groups,
+  the scoped deploy role, the alerts topic, and the alarms that watch this environment on the other.
 </p>
 
 <figure class="wiki-diagram">
   
-<svg width="1327pt" height="633pt"
- viewBox="14.00 14.00 1313.00 618.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 614.4)">
+<svg width="1598pt" height="959pt"
+ viewBox="14.00 14.00 1584.00 944.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 940.21)">
 <title>serving</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-600 1294.63,-600 1294.63,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-925.81 1565.47,-925.81 1565.47,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_shared</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="997.44,-115 997.44,-378 1282.63,-378 1282.63,-115 997.44,-115"/>
-<text xml:space="preserve" text-anchor="middle" x="1140.03" y="-364.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">shared workspace</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1122.56,-118.81 1122.56,-482.81 1546.87,-482.81 1546.87,-118.81 1122.56,-118.81"/>
+<text xml:space="preserve" text-anchor="middle" x="1334.72" y="-468.91" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">shared workspace</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_staging</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="202.1,-164 202.1,-520 901.43,-520 901.43,-164 202.1,-164"/>
-<text xml:space="preserve" text-anchor="middle" x="551.77" y="-506.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">staging workspace</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="202.1,-482.81 202.1,-913.81 1553.47,-913.81 1553.47,-482.81 202.1,-482.81"/>
+<text xml:space="preserve" text-anchor="middle" x="877.79" y="-899.91" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">staging workspace</text>
 </g>
 <!-- ecr -->
 <g id="node1" class="node">
 <title>ecr</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1098.43,-294.84 1020.54,-294.84 1020.54,-251.16 1098.43,-251.16 1098.43,-294.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1059.49" y="-276.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ECR</text>
-<text xml:space="preserve" text-anchor="middle" x="1059.49" y="-263.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1523.77,-236.65 1445.88,-236.65 1445.88,-192.97 1523.77,-192.97 1523.77,-236.65"/>
+<text xml:space="preserve" text-anchor="middle" x="1484.82" y="-218.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ECR</text>
+<text xml:space="preserve" text-anchor="middle" x="1484.82" y="-204.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun</text>
 </g>
 <!-- oidc -->
 <g id="node2" class="node">
 <title>oidc</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1111.63,-356.84 1007.34,-356.84 1007.34,-313.16 1111.63,-313.16 1111.63,-356.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1059.49" y="-338.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GitHub OIDC</text>
-<text xml:space="preserve" text-anchor="middle" x="1059.49" y="-325.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">provider</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1259.86,-250.65 1155.56,-250.65 1155.56,-206.97 1259.86,-206.97 1259.86,-250.65"/>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-232.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GitHub OIDC</text>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-218.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">provider</text>
 </g>
 <!-- cluster -->
 <g id="node3" class="node">
 <title>cluster</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1121.53,-233.44 997.44,-233.44 997.44,-176.56 1121.53,-176.56 1121.53,-233.44"/>
-<text xml:space="preserve" text-anchor="middle" x="1059.49" y="-214.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ECS cluster</text>
-<text xml:space="preserve" text-anchor="middle" x="1059.49" y="-201.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun</text>
-<text xml:space="preserve" text-anchor="middle" x="1059.49" y="-188.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(Fargate only)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1269.76,-325.25 1145.66,-325.25 1145.66,-268.37 1269.76,-268.37 1269.76,-325.25"/>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-306.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ECS cluster</text>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-293.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun</text>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-280.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(Fargate only)</text>
 </g>
 <!-- alb -->
 <g id="node4" class="node">
 <title>alb</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1111.63,-158.84 1007.34,-158.84 1007.34,-115.16 1111.63,-115.16 1111.63,-158.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1059.49" y="-140.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ALB</text>
-<text xml:space="preserve" text-anchor="middle" x="1059.49" y="-127.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;alb</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1259.86,-386.65 1155.56,-386.65 1155.56,-342.97 1259.86,-342.97 1259.86,-386.65"/>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-368.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ALB</text>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-354.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;alb</text>
 </g>
 <!-- listener -->
 <g id="node5" class="node">
 <title>listener</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1282.63,-171.44 1158.53,-171.44 1158.53,-114.56 1282.63,-114.56 1282.63,-171.44"/>
-<text xml:space="preserve" text-anchor="middle" x="1220.58" y="-152.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">HTTPS listener</text>
-<text xml:space="preserve" text-anchor="middle" x="1220.58" y="-139.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">:443</text>
-<text xml:space="preserve" text-anchor="middle" x="1220.58" y="-126.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">TLS13&#45;1&#45;2</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1546.87,-175.25 1422.78,-175.25 1422.78,-118.37 1546.87,-118.37 1546.87,-175.25"/>
+<text xml:space="preserve" text-anchor="middle" x="1484.82" y="-156.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">HTTPS listener</text>
+<text xml:space="preserve" text-anchor="middle" x="1484.82" y="-143.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">:443</text>
+<text xml:space="preserve" text-anchor="middle" x="1484.82" y="-130.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">TLS13&#45;1&#45;2</text>
 </g>
 <!-- alb&#45;&gt;listener -->
 <!-- redirect -->
 <g id="node6" class="node">
 <title>redirect</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1276.03,-232.84 1165.13,-232.84 1165.13,-189.16 1276.03,-189.16 1276.03,-232.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1220.58" y="-214.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">:80 → :443</text>
-<text xml:space="preserve" text-anchor="middle" x="1220.58" y="-201.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">redirect</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1540.27,-386.65 1429.38,-386.65 1429.38,-342.97 1540.27,-342.97 1540.27,-386.65"/>
+<text xml:space="preserve" text-anchor="middle" x="1484.82" y="-368.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">:80 → :443</text>
+<text xml:space="preserve" text-anchor="middle" x="1484.82" y="-354.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">redirect</text>
 </g>
 <!-- alb&#45;&gt;redirect -->
-<!-- api_td -->
+<!-- build_role -->
 <g id="node7" class="node">
+<title>build_role</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1292.86,-188.85 1122.56,-188.85 1122.56,-118.77 1292.86,-118.77 1292.86,-188.85"/>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-170.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GH Actions BUILD role</text>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-157.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;github&#45;</text>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-143.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">actions&#45;build</text>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-130.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(ECR push only)</text>
+</g>
+<!-- build_role&#45;&gt;ecr -->
+<g id="edge27" class="edge">
+<title>build_role&#45;&gt;ecr</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1293.5,-172.61C1340.61,-183.06 1397.47,-195.66 1436.7,-204.36"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1436.15,-206.75 1443.51,-205.87 1437.21,-201.96 1436.15,-206.75"/>
+<text xml:space="preserve" text-anchor="middle" x="1356.17" y="-198.08" font-family="Courier,monospace" font-size="10.00">push :sha</text>
+</g>
+<!-- kms -->
+<g id="node8" class="node">
+<title>kms</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1289.56,-461.25 1125.86,-461.25 1125.86,-404.37 1289.56,-404.37 1289.56,-461.25"/>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-442.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">KMS</text>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-429.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">alias/mythrun&#45;alerts</text>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-416.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(customer&#45;managed)</text>
+</g>
+<!-- api_td -->
+<g id="node9" class="node">
 <title>api_td</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="891.53,-308.04 734.43,-308.04 734.43,-237.96 891.53,-237.96 891.53,-308.04"/>
-<text xml:space="preserve" text-anchor="middle" x="812.98" y="-289.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">API task def</text>
-<text xml:space="preserve" text-anchor="middle" x="812.98" y="-276.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;staging&#45;api</text>
-<text xml:space="preserve" text-anchor="middle" x="812.98" y="-263.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(TF: :placeholder,</text>
-<text xml:space="preserve" text-anchor="middle" x="812.98" y="-249.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CI: real digest)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="954.24,-817.85 797.14,-817.85 797.14,-747.77 954.24,-747.77 954.24,-817.85"/>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-799.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">API task def</text>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-786.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;staging&#45;api</text>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-772.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(TF: :placeholder,</text>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-759.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">CI: real digest)</text>
 </g>
 <!-- api_td&#45;&gt;ecr -->
 <g id="edge3" class="edge">
 <title>api_td&#45;&gt;ecr</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M892.01,-273C931.27,-273 977.56,-273 1011.35,-273"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1011.28,-275.45 1018.28,-273 1011.28,-270.55 1011.28,-275.45"/>
-<text xml:space="preserve" text-anchor="middle" x="949.43" y="-276" font-family="Courier,monospace" font-size="10.00">image base</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M954.72,-764.93C967.4,-758.67 979.04,-750.22 987.24,-738.81 1008.74,-708.9 997.8,-443.88 1005.24,-407.81 1034.89,-264.03 998.86,-181.81 1119.26,-97.81 1183.74,-52.82 1221.31,-73.76 1296.16,-97.81 1358.64,-117.88 1359.42,-150.88 1416.18,-183.81 1422.9,-187.71 1430.21,-191.5 1437.45,-195"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1436.23,-197.13 1443.61,-197.91 1438.32,-192.7 1436.23,-197.13"/>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-100.81" font-family="Courier,monospace" font-size="10.00">image base</text>
 </g>
 <!-- worker_td -->
-<g id="node8" class="node">
+<g id="node10" class="node">
 <title>worker_td</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="901.43,-498.44 724.52,-498.44 724.52,-441.56 901.43,-441.56 901.43,-498.44"/>
-<text xml:space="preserve" text-anchor="middle" x="812.98" y="-479.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Worker task def</text>
-<text xml:space="preserve" text-anchor="middle" x="812.98" y="-466.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;staging&#45;worker</text>
-<text xml:space="preserve" text-anchor="middle" x="812.98" y="-453.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">image :placeholder</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="964.14,-539.25 787.24,-539.25 787.24,-482.37 964.14,-482.37 964.14,-539.25"/>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-520.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Worker task def</text>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-507.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;staging&#45;worker</text>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-494.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">image :placeholder</text>
 </g>
 <!-- worker_td&#45;&gt;ecr -->
 <g id="edge4" class="edge">
 <title>worker_td&#45;&gt;ecr</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M889.88,-441.01C893.92,-438.52 897.8,-435.85 901.43,-433 957.64,-388.86 942.79,-350.07 997.44,-304 1002.06,-300.1 1007.26,-296.53 1012.62,-293.31"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1013.53,-295.61 1018.41,-290.03 1011.11,-291.34 1013.53,-295.61"/>
-<text xml:space="preserve" text-anchor="middle" x="949.43" y="-417.74" font-family="Courier,monospace" font-size="10.00">image base</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M964.84,-513.37C1105.29,-516.56 1367.25,-518.51 1398.18,-489.81 1423.75,-466.07 1405.33,-366.98 1416.18,-333.81 1426.83,-301.2 1446.99,-267.52 1462.53,-244.35"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1464.46,-245.88 1466.38,-238.71 1460.41,-243.12 1464.46,-245.88"/>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-518.1" font-family="Courier,monospace" font-size="10.00">image base</text>
 </g>
 <!-- exec_role -->
-<g id="node9" class="node">
+<g id="node11" class="node">
 <title>exec_role</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="875.02,-369.84 750.93,-369.84 750.93,-326.16 875.02,-326.16 875.02,-369.84"/>
-<text xml:space="preserve" text-anchor="middle" x="812.98" y="-351.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">task&#45;execution</text>
-<text xml:space="preserve" text-anchor="middle" x="812.98" y="-338.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">role</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="937.73,-729.65 813.64,-729.65 813.64,-685.97 937.73,-685.97 937.73,-729.65"/>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-711.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">task&#45;execution</text>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-697.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">role</text>
 </g>
 <!-- task_role -->
-<g id="node10" class="node">
+<g id="node12" class="node">
 <title>task_role</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="858.52,-424 767.43,-424 767.43,-388 858.52,-388 858.52,-424"/>
-<text xml:space="preserve" text-anchor="middle" x="812.98" y="-402.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">task role</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="921.23,-667.81 830.14,-667.81 830.14,-631.81 921.23,-631.81 921.23,-667.81"/>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-646.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">task role</text>
 </g>
 <!-- api_svc -->
-<g id="node11" class="node">
+<g id="node13" class="node">
 <title>api_svc</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="610.51,-333.04 453.41,-333.04 453.41,-262.96 610.51,-262.96 610.51,-333.04"/>
-<text xml:space="preserve" text-anchor="middle" x="531.96" y="-314.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ECS service</text>
-<text xml:space="preserve" text-anchor="middle" x="531.96" y="-301.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">api</text>
-<text xml:space="preserve" text-anchor="middle" x="531.96" y="-288.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">desired=1</text>
-<text xml:space="preserve" text-anchor="middle" x="531.96" y="-274.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">BOOT_GATE_ENABLED=1</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="650.12,-695.85 493.02,-695.85 493.02,-625.77 650.12,-625.77 650.12,-695.85"/>
+<text xml:space="preserve" text-anchor="middle" x="571.57" y="-677.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ECS service</text>
+<text xml:space="preserve" text-anchor="middle" x="571.57" y="-664.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">api</text>
+<text xml:space="preserve" text-anchor="middle" x="571.57" y="-650.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">desired=1</text>
+<text xml:space="preserve" text-anchor="middle" x="571.57" y="-637.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">BOOT_GATE_ENABLED=1</text>
 </g>
 <!-- api_svc&#45;&gt;cluster -->
 <g id="edge5" class="edge">
 <title>api_svc&#45;&gt;cluster</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M542.23,-262.23C554.75,-221.3 581.17,-155.38 628.51,-120 663.43,-93.91 681.17,-104.47 724.52,-100 837.57,-88.35 894.87,-44.09 979.44,-120 996.39,-135.22 982.89,-150.46 997.44,-168 997.94,-168.61 998.45,-169.2 998.98,-169.79"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="997.06,-171.34 1003.74,-174.56 1000.53,-167.87 997.06,-171.34"/>
-<text xml:space="preserve" text-anchor="middle" x="812.98" y="-103" font-family="Courier,monospace" font-size="10.00">runs in</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M629.9,-625.31C637.55,-618.6 644.63,-611.07 650.12,-602.81 668.38,-575.34 649.59,-558.1 668.12,-530.81 776.03,-371.82 1016.99,-320.1 1136.59,-303.88"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1136.57,-306.35 1143.19,-303.01 1135.93,-301.49 1136.57,-306.35"/>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-436.39" font-family="Courier,monospace" font-size="10.00">runs in</text>
 </g>
 <!-- api_svc&#45;&gt;api_td -->
 <g id="edge11" class="edge">
 <title>api_svc&#45;&gt;api_td</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M611.05,-291C646.58,-287.82 688.73,-284.04 725.24,-280.77"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="725.34,-283.22 732.09,-280.16 724.9,-278.34 725.34,-283.22"/>
-<text xml:space="preserve" text-anchor="middle" x="667.52" y="-292.2" font-family="Courier,monospace" font-size="10.00">uses</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M650.66,-695.48C656.56,-697.99 662.42,-700.46 668.12,-702.81 707.61,-719.12 751.73,-736.35 789.02,-750.61"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="787.76,-752.76 795.17,-752.96 789.51,-748.18 787.76,-752.76"/>
+<text xml:space="preserve" text-anchor="middle" x="707.12" y="-735.28" font-family="Courier,monospace" font-size="10.00">uses</text>
 </g>
 <!-- api_svc&#45;&gt;exec_role -->
 <g id="edge12" class="edge">
 <title>api_svc&#45;&gt;exec_role</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M611.05,-311.99C652.06,-319.34 701.9,-328.27 741.69,-335.4"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="741.17,-337.8 748.49,-336.62 742.03,-332.98 741.17,-337.8"/>
-<text xml:space="preserve" text-anchor="middle" x="667.52" y="-331.95" font-family="Courier,monospace" font-size="10.00">uses</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M650.76,-672.97C698.23,-680.36 758.32,-689.71 804.3,-696.86"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="803.92,-699.28 811.22,-697.93 804.68,-694.44 803.92,-699.28"/>
+<text xml:space="preserve" text-anchor="middle" x="707.12" y="-690.12" font-family="Courier,monospace" font-size="10.00">uses</text>
 </g>
 <!-- api_svc&#45;&gt;task_role -->
 <g id="edge13" class="edge">
 <title>api_svc&#45;&gt;task_role</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M603.24,-333.72C611.69,-337.67 620.25,-341.52 628.51,-345 670.23,-362.58 681.55,-364.76 724.52,-379 735.57,-382.66 747.45,-386.43 758.79,-389.96"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="757.78,-392.21 765.19,-391.94 759.23,-387.53 757.78,-392.21"/>
-<text xml:space="preserve" text-anchor="middle" x="667.52" y="-375.98" font-family="Courier,monospace" font-size="10.00">uses</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M650.76,-657.96C704.26,-656.01 773.78,-653.48 821.07,-651.76"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="820.91,-654.22 827.82,-651.52 820.73,-649.32 820.91,-654.22"/>
+<text xml:space="preserve" text-anchor="middle" x="707.12" y="-660.25" font-family="Courier,monospace" font-size="10.00">uses</text>
 </g>
 <!-- tg -->
-<g id="node13" class="node">
+<g id="node15" class="node">
 <title>tg</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="894.83,-220.44 731.13,-220.44 731.13,-163.56 894.83,-163.56 894.83,-220.44"/>
-<text xml:space="preserve" text-anchor="middle" x="812.98" y="-201.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Target group</text>
-<text xml:space="preserve" text-anchor="middle" x="812.98" y="-188.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;staging&#45;api</text>
-<text xml:space="preserve" text-anchor="middle" x="812.98" y="-175.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">health /health/ready</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="957.54,-892.25 793.84,-892.25 793.84,-835.37 957.54,-835.37 957.54,-892.25"/>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-873.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Target group</text>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-860.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;staging&#45;api</text>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-847.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">health /health/ready</text>
 </g>
 <!-- api_svc&#45;&gt;tg -->
 <g id="edge9" class="edge">
 <title>api_svc&#45;&gt;tg</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M611.05,-268.33C647.33,-254.55 690.52,-238.14 727.55,-224.08"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="727.98,-226.53 733.65,-221.76 726.24,-221.95 727.98,-226.53"/>
-<text xml:space="preserve" text-anchor="middle" x="667.52" y="-263.69" font-family="Courier,monospace" font-size="10.00">load&#45;balancer</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M604.87,-696.51C640.5,-733.91 701.19,-791.95 764.13,-826.81 770.83,-830.52 777.96,-833.94 785.25,-837.07"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="784.13,-839.26 791.53,-839.67 786,-834.73 784.13,-839.26"/>
+<text xml:space="preserve" text-anchor="middle" x="707.12" y="-815.71" font-family="Courier,monospace" font-size="10.00">load&#45;balancer</text>
+</g>
+<!-- logs -->
+<g id="node19" class="node">
+<title>logs</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="987.24,-614.25 764.13,-614.25 764.13,-557.37 987.24,-557.37 987.24,-614.25"/>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-595.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Log groups</text>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-582.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/mythrun/staging/{api,worker}</text>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-569.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">30&#45;day retention</text>
+</g>
+<!-- api_svc&#45;&gt;logs -->
+<g id="edge15" class="edge">
+<title>api_svc&#45;&gt;logs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M650.76,-641.4C682.57,-633.5 720.04,-624.2 755.14,-615.49"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="755.56,-617.91 761.77,-613.84 754.38,-613.15 755.56,-617.91"/>
+<text xml:space="preserve" text-anchor="middle" x="707.12" y="-639.55" font-family="Courier,monospace" font-size="10.00">writes</text>
 </g>
 <!-- worker_svc -->
-<g id="node12" class="node">
+<g id="node14" class="node">
 <title>worker_svc</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="584.11,-423.44 479.82,-423.44 479.82,-366.56 584.11,-366.56 584.11,-423.44"/>
-<text xml:space="preserve" text-anchor="middle" x="531.96" y="-404.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ECS service</text>
-<text xml:space="preserve" text-anchor="middle" x="531.96" y="-391.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worker</text>
-<text xml:space="preserve" text-anchor="middle" x="531.96" y="-378.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">desired=0</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="623.71,-594.25 519.42,-594.25 519.42,-537.37 623.71,-537.37 623.71,-594.25"/>
+<text xml:space="preserve" text-anchor="middle" x="571.57" y="-575.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ECS service</text>
+<text xml:space="preserve" text-anchor="middle" x="571.57" y="-562.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">worker</text>
+<text xml:space="preserve" text-anchor="middle" x="571.57" y="-549.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">desired=1</text>
 </g>
 <!-- worker_svc&#45;&gt;cluster -->
 <g id="edge6" class="edge">
 <title>worker_svc&#45;&gt;cluster</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M584.64,-368.48C594.61,-361.17 603.97,-352.34 610.51,-342 637.93,-298.65 603.86,-272.98 628.51,-228 655.9,-178.02 671.23,-163.2 724.52,-143 830.52,-102.82 876.38,-103.8 979.44,-151 989.44,-155.58 988.68,-161.33 997.44,-168 998.77,-169.01 1000.13,-170.02 1001.51,-171.03"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="999.96,-172.93 1007.1,-174.94 1002.77,-168.91 999.96,-172.93"/>
-<text xml:space="preserve" text-anchor="middle" x="812.98" y="-146" font-family="Courier,monospace" font-size="10.00">runs in</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M587.21,-536.68C604.15,-502.1 632.03,-442.37 650.12,-388.81 660.95,-356.74 641.86,-336.17 668.12,-314.81 737.92,-258.04 1006.84,-276.41 1136.29,-289.06"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1135.97,-291.49 1143.18,-289.74 1136.46,-286.62 1135.97,-291.49"/>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-285.96" font-family="Courier,monospace" font-size="10.00">runs in</text>
 </g>
 <!-- worker_svc&#45;&gt;worker_td -->
 <g id="edge14" class="edge">
 <title>worker_svc&#45;&gt;worker_td</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M584.79,-408.93C621.43,-418.78 671.65,-432.28 715.55,-444.08"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="714.81,-446.42 722.2,-445.87 716.08,-441.69 714.81,-446.42"/>
-<text xml:space="preserve" text-anchor="middle" x="667.52" y="-444.42" font-family="Courier,monospace" font-size="10.00">uses</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M624.16,-556.42C666.31,-548.74 727.05,-537.69 778.17,-528.38"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="778.38,-530.83 784.82,-527.17 777.5,-526.01 778.38,-530.83"/>
+<text xml:space="preserve" text-anchor="middle" x="707.12" y="-551.02" font-family="Courier,monospace" font-size="10.00">uses</text>
+</g>
+<!-- worker_svc&#45;&gt;logs -->
+<g id="edge16" class="edge">
+<title>worker_svc&#45;&gt;logs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M624.16,-569.22C660.02,-571.6 709.35,-574.86 754.75,-577.87"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="754.52,-580.31 761.66,-578.33 754.84,-575.42 754.52,-580.31"/>
+<text xml:space="preserve" text-anchor="middle" x="707.12" y="-580.01" font-family="Courier,monospace" font-size="10.00">writes</text>
 </g>
 <!-- tg&#45;&gt;alb -->
 <g id="edge8" class="edge">
 <title>tg&#45;&gt;alb</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M895.39,-173.69C929.05,-166.12 967.36,-157.5 998.39,-150.52"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="998.88,-152.92 1005.17,-148.99 997.8,-148.14 998.88,-152.92"/>
-<text xml:space="preserve" text-anchor="middle" x="949.43" y="-170.79" font-family="Courier,monospace" font-size="10.00">registered</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M958.25,-849.1C969.45,-843.78 979.68,-836.57 987.24,-826.81 1022.29,-781.54 986.96,-624.06 1005.24,-569.81 1034.76,-482.19 1046.54,-452.91 1119.26,-395.81 1127.37,-389.44 1136.9,-384.31 1146.63,-380.21"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1147.51,-382.5 1153.13,-377.66 1145.72,-377.93 1147.51,-382.5"/>
+<text xml:space="preserve" text-anchor="middle" x="1053.25" y="-572.81" font-family="Courier,monospace" font-size="10.00">registered</text>
+</g>
+<!-- alarms -->
+<g id="node20" class="node">
+<title>alarms</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1296.16,-614.25 1119.26,-614.25 1119.26,-557.37 1296.16,-557.37 1296.16,-614.25"/>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-595.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Alarms</text>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-582.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">api&#45;down · target&#45;5xx</text>
+<text xml:space="preserve" text-anchor="middle" x="1207.71" y="-569.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">billing · retrieval</text>
+</g>
+<!-- tg&#45;&gt;alarms -->
+<g id="edge18" class="edge">
+<title>tg&#45;&gt;alarms</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M958.03,-841.96C968.25,-837.68 978.26,-832.67 987.24,-826.81 1072.82,-771.04 1146.83,-674.1 1183.04,-621.77"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1184.93,-623.35 1186.87,-616.19 1180.89,-620.58 1184.93,-623.35"/>
+<text xml:space="preserve" text-anchor="middle" x="1053.25" y="-826.73" font-family="Courier,monospace" font-size="10.00">HealthyHostCount</text>
+<text xml:space="preserve" text-anchor="middle" x="1053.25" y="-814.73" font-family="Courier,monospace" font-size="10.00">Target 5XX</text>
 </g>
 <!-- rule -->
-<g id="node14" class="node">
+<g id="node16" class="node">
 <title>rule</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="329.5,-234.04 212,-234.04 212,-163.96 329.5,-163.96 329.5,-234.04"/>
-<text xml:space="preserve" text-anchor="middle" x="270.75" y="-215.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Listener rule</text>
-<text xml:space="preserve" text-anchor="middle" x="270.75" y="-202.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">host =</text>
-<text xml:space="preserve" text-anchor="middle" x="270.75" y="-189.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">staging&#45;api.</text>
-<text xml:space="preserve" text-anchor="middle" x="270.75" y="-175.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun.com</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="349.3,-552.85 231.81,-552.85 231.81,-482.77 349.3,-482.77 349.3,-552.85"/>
+<text xml:space="preserve" text-anchor="middle" x="290.55" y="-534.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">Listener rule</text>
+<text xml:space="preserve" text-anchor="middle" x="290.55" y="-521.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">host =</text>
+<text xml:space="preserve" text-anchor="middle" x="290.55" y="-507.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">staging&#45;api.</text>
+<text xml:space="preserve" text-anchor="middle" x="290.55" y="-494.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun.com</text>
 </g>
 <!-- rule&#45;&gt;listener -->
 <g id="edge7" class="edge">
 <title>rule&#45;&gt;listener</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M294.97,-163.42C335.46,-106.18 424.87,0 530.96,0 530.96,0 530.96,0 1060.49,0 1124.25,0 1174.04,-64.32 1199.93,-106.69"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1197.71,-107.75 1203.4,-112.5 1201.91,-105.24 1197.71,-107.75"/>
-<text xml:space="preserve" text-anchor="middle" x="812.98" y="-3" font-family="Courier,monospace" font-size="10.00">attaches to</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M293.99,-482.14C304.06,-365.81 352.85,-4.81 570.57,-4.81 570.57,-4.81 570.57,-4.81 1208.71,-4.81 1293.59,-4.81 1325.13,14.43 1398.18,-28.81 1429.7,-47.47 1452.95,-82.74 1467.21,-109.88"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1464.99,-110.91 1470.35,-116.04 1469.35,-108.69 1464.99,-110.91"/>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-7.81" font-family="Courier,monospace" font-size="10.00">attaches to</text>
 </g>
 <!-- alias -->
-<g id="node15" class="node">
+<g id="node17" class="node">
 <title>alias</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="329.5,-295.84 212,-295.84 212,-252.16 329.5,-252.16 329.5,-295.84"/>
-<text xml:space="preserve" text-anchor="middle" x="270.75" y="-277.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">R53 A&#45;alias</text>
-<text xml:space="preserve" text-anchor="middle" x="270.75" y="-264.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">staging&#45;api .</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="349.3,-614.65 231.81,-614.65 231.81,-570.97 349.3,-570.97 349.3,-614.65"/>
+<text xml:space="preserve" text-anchor="middle" x="290.55" y="-596.11" font-family="Courier,monospace" font-size="11.00" fill="#231b12">R53 A&#45;alias</text>
+<text xml:space="preserve" text-anchor="middle" x="290.55" y="-582.91" font-family="Courier,monospace" font-size="11.00" fill="#231b12">staging&#45;api .</text>
 </g>
 <!-- alias&#45;&gt;alb -->
 <g id="edge10" class="edge">
 <title>alias&#45;&gt;alb</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M321.81,-251.54C327.77,-248.73 333.74,-245.84 339.4,-243 470.29,-177.35 489.16,-129.98 628.51,-85 776.95,-37.08 833.3,-25.47 979.44,-80 997.01,-86.56 1014.19,-98.12 1028.02,-109.13"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1026.15,-110.77 1033.12,-113.32 1029.26,-106.98 1026.15,-110.77"/>
-<text xml:space="preserve" text-anchor="middle" x="667.52" y="-88" font-family="Courier,monospace" font-size="10.00">A&#45;alias</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M349.93,-573.59C359.74,-569.94 369.74,-565.96 379.01,-561.81 557.14,-482.06 575.06,-399.21 764.13,-350.81 897.15,-316.76 1060,-337.04 1146.3,-352.41"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1145.81,-354.81 1153.13,-353.65 1146.68,-349.99 1145.81,-354.81"/>
+<text xml:space="preserve" text-anchor="middle" x="707.12" y="-386.68" font-family="Courier,monospace" font-size="10.00">A&#45;alias</text>
 </g>
 <!-- gh_role -->
-<g id="node16" class="node">
+<g id="node18" class="node">
 <title>gh_role</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="336.1,-423.44 205.4,-423.44 205.4,-366.56 336.1,-366.56 336.1,-423.44"/>
-<text xml:space="preserve" text-anchor="middle" x="270.75" y="-404.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GH Actions role</text>
-<text xml:space="preserve" text-anchor="middle" x="270.75" y="-391.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;github&#45;</text>
-<text xml:space="preserve" text-anchor="middle" x="270.75" y="-378.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">actions&#45;staging</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="379.01,-689.25 202.1,-689.25 202.1,-632.37 379.01,-632.37 379.01,-689.25"/>
+<text xml:space="preserve" text-anchor="middle" x="290.55" y="-670.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GH Actions DEPLOY role</text>
+<text xml:space="preserve" text-anchor="middle" x="290.55" y="-657.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;github&#45;</text>
+<text xml:space="preserve" text-anchor="middle" x="290.55" y="-644.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">actions&#45;staging</text>
 </g>
 <!-- gh_role&#45;&gt;ecr -->
-<g id="edge17" class="edge">
+<g id="edge23" class="edge">
 <title>gh_role&#45;&gt;ecr</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M326.08,-424.08C437.82,-479.77 699.83,-588.97 901.43,-507 946.27,-488.77 957.53,-474.16 979.44,-431 1005.24,-380.16 964.27,-350.37 997.44,-304 1001.43,-298.43 1006.71,-293.79 1012.51,-289.95"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1013.72,-292.09 1018.51,-286.43 1011.23,-287.86 1013.72,-292.09"/>
-<text xml:space="preserve" text-anchor="middle" x="667.52" y="-538.35" font-family="Courier,monospace" font-size="10.00">push :sha</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M368.6,-631.62C372.25,-629.2 375.75,-626.6 379.01,-623.81 390.53,-613.95 388,-607.02 397.01,-594.81 632.86,-275 731.67,-155.44 1119.26,-67.81 1241.01,-40.28 1314.4,-8.27 1398.18,-100.81 1423.51,-128.79 1392.52,-154.4 1416.18,-183.81 1421.88,-190.9 1429.56,-196.44 1437.71,-200.74"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1436.27,-202.76 1443.64,-203.56 1438.38,-198.34 1436.27,-202.76"/>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-214.07" font-family="Courier,monospace" font-size="10.00">push :sha</text>
+<text xml:space="preserve" text-anchor="middle" x="875.69" y="-202.07" font-family="Courier,monospace" font-size="10.00">(until cutover)</text>
 </g>
 <!-- gh_role&#45;&gt;api_svc -->
-<g id="edge18" class="edge">
+<g id="edge24" class="edge">
 <title>gh_role&#45;&gt;api_svc</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M336.83,-370.65C369.59,-358.39 409.74,-343.36 445.01,-330.16"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="445.52,-332.59 451.22,-327.84 443.81,-328 445.52,-332.59"/>
-<text xml:space="preserve" text-anchor="middle" x="396.41" y="-363.86" font-family="Courier,monospace" font-size="10.00">UpdateService</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M379.45,-660.81C412.74,-660.81 450.59,-660.81 483.77,-660.81"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="483.73,-663.26 490.73,-660.81 483.73,-658.36 483.73,-663.26"/>
+<text xml:space="preserve" text-anchor="middle" x="436.01" y="-663.81" font-family="Courier,monospace" font-size="10.00">UpdateService</text>
 </g>
 <!-- gh_role&#45;&gt;worker_svc -->
-<g id="edge19" class="edge">
+<g id="edge25" class="edge">
 <title>gh_role&#45;&gt;worker_svc</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M336.83,-395C377.9,-395 430.59,-395 470.71,-395"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="470.51,-397.45 477.51,-395 470.51,-392.55 470.51,-397.45"/>
-<text xml:space="preserve" text-anchor="middle" x="396.41" y="-398" font-family="Courier,monospace" font-size="10.00">UpdateService</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M377.16,-631.66C420.38,-616.94 471.76,-599.45 510.7,-586.19"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="511.25,-588.59 517.09,-584.02 509.67,-583.96 511.25,-588.59"/>
+<text xml:space="preserve" text-anchor="middle" x="436.01" y="-627.61" font-family="Courier,monospace" font-size="10.00">UpdateService</text>
+</g>
+<!-- logs&#45;&gt;alarms -->
+<g id="edge17" class="edge">
+<title>logs&#45;&gt;alarms</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M987.96,-585.81C1027.54,-585.81 1071.74,-585.81 1110,-585.81"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1109.76,-588.26 1116.76,-585.81 1109.76,-583.36 1109.76,-588.26"/>
+<text xml:space="preserve" text-anchor="middle" x="1053.25" y="-588.81" font-family="Courier,monospace" font-size="10.00">metric filters</text>
 </g>
 <!-- sns -->
-<g id="node17" class="node">
+<g id="node21" class="node">
 <title>sns</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="339.4,-498.44 202.1,-498.44 202.1,-441.56 339.4,-441.56 339.4,-498.44"/>
-<text xml:space="preserve" text-anchor="middle" x="270.75" y="-479.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SNS topic</text>
-<text xml:space="preserve" text-anchor="middle" x="270.75" y="-466.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;staging&#45;</text>
-<text xml:space="preserve" text-anchor="middle" x="270.75" y="-453.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">alerts</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1553.47,-566.25 1416.18,-566.25 1416.18,-509.37 1553.47,-509.37 1553.47,-566.25"/>
+<text xml:space="preserve" text-anchor="middle" x="1484.82" y="-547.71" font-family="Courier,monospace" font-size="11.00" fill="#231b12">SNS topic</text>
+<text xml:space="preserve" text-anchor="middle" x="1484.82" y="-534.51" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mythrun&#45;staging&#45;</text>
+<text xml:space="preserve" text-anchor="middle" x="1484.82" y="-521.31" font-family="Courier,monospace" font-size="11.00" fill="#231b12">alerts</text>
+</g>
+<!-- alarms&#45;&gt;sns -->
+<g id="edge19" class="edge">
+<title>alarms&#45;&gt;sns</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1296.89,-570.42C1332.39,-564.23 1372.95,-557.15 1407.19,-551.18"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1407.49,-553.61 1413.96,-550 1406.65,-548.79 1407.49,-553.61"/>
+<text xml:space="preserve" text-anchor="middle" x="1356.17" y="-569.11" font-family="Courier,monospace" font-size="10.00">publish</text>
+</g>
+<!-- sns&#45;&gt;kms -->
+<g id="edge20" class="edge">
+<title>sns&#45;&gt;kms</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1415.86,-511.87C1378.66,-497.67 1332.24,-479.95 1292.77,-464.89"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1294.09,-462.77 1286.68,-462.57 1292.34,-467.35 1294.09,-462.77"/>
+<text xml:space="preserve" text-anchor="middle" x="1356.17" y="-506.85" font-family="Courier,monospace" font-size="10.00">encrypted with</text>
 </g>
 <!-- github -->
-<g id="node18" class="node">
+<g id="node22" class="node">
 <title>github</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="124.1,-511.44 0,-511.44 0,-454.56 124.1,-454.56 124.1,-511.44"/>
-<text xml:space="preserve" text-anchor="middle" x="62.05" y="-492.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">GitHub Actions</text>
-<text xml:space="preserve" text-anchor="middle" x="62.05" y="-479.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">main branch</text>
-<text xml:space="preserve" text-anchor="middle" x="62.05" y="-466.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">+ staging env</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="124.1,-219.25 0,-219.25 0,-162.37 124.1,-162.37 124.1,-219.25"/>
+<text xml:space="preserve" text-anchor="middle" x="62.05" y="-200.71" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">GitHub Actions</text>
+<text xml:space="preserve" text-anchor="middle" x="62.05" y="-187.51" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">main branch</text>
+<text xml:space="preserve" text-anchor="middle" x="62.05" y="-174.31" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">+ staging env</text>
 </g>
 <!-- github&#45;&gt;oidc -->
-<g id="edge15" class="edge">
+<g id="edge21" class="edge">
 <title>github&#45;&gt;oidc</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M103.59,-512.14C143.75,-538.1 208.02,-572 269.75,-572 269.75,-572 269.75,-572 813.98,-572 898.34,-572 923.76,-542.37 979.44,-479 1009.85,-444.39 1033.36,-396.11 1046.57,-365.2"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1048.71,-366.43 1049.16,-359.03 1044.19,-364.53 1048.71,-366.43"/>
-<text xml:space="preserve" text-anchor="middle" x="531.96" y="-587" font-family="Courier,monospace" font-size="10.00">OIDC</text>
-<text xml:space="preserve" text-anchor="middle" x="531.96" y="-575" font-family="Courier,monospace" font-size="10.00">AssumeRole</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M124.57,-190.81C170.13,-190.81 233.71,-190.81 289.55,-190.81 289.55,-190.81 289.55,-190.81 876.69,-190.81 971.35,-190.81 1080.29,-206.43 1146.28,-217.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1145.8,-220.04 1153.12,-218.81 1146.63,-215.21 1145.8,-220.04"/>
+<text xml:space="preserve" text-anchor="middle" x="571.57" y="-205.81" font-family="Courier,monospace" font-size="10.00">OIDC</text>
+<text xml:space="preserve" text-anchor="middle" x="571.57" y="-193.81" font-family="Courier,monospace" font-size="10.00">AssumeRole</text>
+</g>
+<!-- github&#45;&gt;build_role -->
+<g id="edge26" class="edge">
+<title>github&#45;&gt;build_role</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M124.38,-165.36C169.31,-149.01 232.19,-130.81 289.55,-130.81 289.55,-130.81 289.55,-130.81 876.69,-130.81 956.66,-130.81 1047.28,-137.61 1113.3,-143.82"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1113.03,-146.26 1120.23,-144.48 1113.49,-141.38 1113.03,-146.26"/>
+<text xml:space="preserve" text-anchor="middle" x="571.57" y="-145.81" font-family="Courier,monospace" font-size="10.00">assumes</text>
+<text xml:space="preserve" text-anchor="middle" x="571.57" y="-133.81" font-family="Courier,monospace" font-size="10.00">after cutover</text>
 </g>
 <!-- github&#45;&gt;gh_role -->
-<g id="edge16" class="edge">
+<g id="edge22" class="edge">
 <title>github&#45;&gt;gh_role</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M124.79,-456.72C147.44,-447.07 173.31,-436.06 196.85,-426.04"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="197.59,-428.38 203.07,-423.39 195.67,-423.88 197.59,-428.38"/>
-<text xml:space="preserve" text-anchor="middle" x="163.1" y="-449.88" font-family="Courier,monospace" font-size="10.00">assumes</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M64.31,-219.89C69.13,-296.04 92.22,-503.62 202.1,-623.81 202.85,-624.63 203.62,-625.43 204.42,-626.22"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="202.62,-627.9 209.48,-630.71 205.87,-624.24 202.62,-627.9"/>
+<text xml:space="preserve" text-anchor="middle" x="163.1" y="-598.59" font-family="Courier,monospace" font-size="10.00">assumes</text>
 </g>
 </g>
 </svg>
@@ -330,10 +417,11 @@
 <p>
   Serving splits along the same shared-vs-per-env line the rest of the infra does. The shared
   workspace owns the resources that would be wasteful or confusing to duplicate — one ECR repo, one
-  GitHub OIDC provider, one ECS cluster, one ALB, one HTTPS listener. The per-env workspace (today
-  only <code>staging/</code>) consumes those through <code>terraform_remote_state</code>
-  and adds everything that has to exist twice by nature: task definitions, services, a target group,
-  a listener rule, a DNS A-alias, a scoped GitHub Actions IAM role, and an SNS alerts topic.
+  GitHub OIDC provider, one ECS cluster, one ALB, one HTTPS listener, one image-build IAM role. The
+  per-env workspace (today only <code>staging/</code>) consumes those through
+  <code>terraform_remote_state</code> and adds everything that has to exist twice by nature: task
+  definitions, services, a target group, a listener rule, a DNS A-alias, a scoped GitHub Actions
+  deploy role, an SNS alerts topic, and the alarms whose subject is this environment.
 </p>
 
 <h2 id="shared-compute-platform">Shared compute platform</h2>
@@ -414,10 +502,20 @@
 <p>
   The <code>serving</code> module produces the per-env surface: two CloudWatch log groups
   (<code>/mythrun/&lt;env&gt;/api</code>, <code>/mythrun/&lt;env&gt;/worker</code>), two IAM roles,
-  two task definitions, a target group, a listener rule, two ECS services, and a Route 53 A-alias
-  record. Every resource is named <code>mythrun-&lt;env&gt;-*</code> so staging and production never
-  collide.
+  two task definitions, a target group, a listener rule, two ECS services, a Route 53 A-alias
+  record, and the alarms that watch them. Every resource is named <code>mythrun-&lt;env&gt;-*</code>
+  so staging and production never collide.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Staging keeps 30 days of logs, not the module's 14</strong> — two weeks is shorter than
+  the interval at which a subtle bug gets noticed, so an incident that opens with &ldquo;when did
+  this start?&rdquo; runs out of logs before it runs out of questions. At roughly a gigabyte a month
+  the difference is cents; the production composition should pass 90. The 14-day default stays as
+  the conservative floor for a bring-up, and the staging workspace holds its value in one local so a
+  future bump moves every log group it owns together. The migrate task's group is deliberately
+  outside that: its lifetime is a schema history, not an incident window.
+</aside>
 
 <p>
   Two IAM roles sit behind each task: the <em>task-execution role</em> is what ECS uses
@@ -601,7 +699,7 @@
   already owns it.
 </p>
 
-<h2 id="the-github-actions-deploy-role">The GitHub Actions deploy role</h2>
+<h2 id="the-github-actions-deploy-role">The GitHub Actions roles</h2>
 
 <p>
   <code>mythrun-github-actions-staging</code> is the role CI assumes to push images and update
@@ -647,47 +745,223 @@
 </aside>
 
 <p>
-  The permissions policy grants exactly what a deploy needs: an account-wide
-  <code>ecr:GetAuthorizationToken</code> (AWS doesn't let it be ARN-scoped), the ECR push/pull verbs
-  scoped to both the <code>mythrun</code> repo and the <code>ecr-public/*</code> pull-through cache
-  prefix, <code>ecr:CreateRepository</code> + <code>ecr:BatchImportUpstreamImage</code> scoped to
-  <code>ecr-public/*</code> (so the first pull through a previously-unseen upstream can auto-create
-  the cache repo and trigger the import), ECS <code>UpdateService</code> /
-  <code>DescribeServices</code> / <code>DescribeTasks</code> / <code>ListTasks</code> conditioned on
-  the <code>mythrun</code> cluster, <code>RegisterTaskDefinition</code> and
-  <code>DeregisterTaskDefinition</code> scoped to the <code>mythrun-staging-*</code> family, and
-  <code>iam:PassRole</code> on the two task roles conditioned on
-  <code>iam:PassedToService = ecs-tasks.amazonaws.com</code>. Two further statements (added with the
-  <a href="frontend-hosting.html">frontend-hosting</a> module) let the same role drive the frontend
-  deploy: S3 object verbs scoped to the <code>mythrun-staging-frontend</code> bucket ARN and its
-  <code>/*</code>, and <code>cloudfront:Create/GetInvalidation</code> scoped to the distribution
-  ARN. Production snapshot permissions (<code>rds:CreateDBSnapshot</code>) are deliberately absent;
-  they belong to the future production role.
+  A sixth condition is written but switched off. <code>pin_job_workflow_ref</code> adds a
+  <code>job_workflow_ref</code> equality check against an enumerated list of workflow files, so only
+  those files can assume the role rather than anything merged to <code>main</code> inside the
+  staging environment. The list is derived from every workflow that names the staging role — today
+  <code>deploy.yml</code>, the reusable <code>_db-migrate-job.yml</code>,
+  <code>deploy-frontend.yml</code>, and <code>bootstrap-db-build.yml</code>.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Single role for build + deploy, for now</strong> — ideally the build and deploy jobs would
-  assume distinct roles (build needs ECR push, deploy needs ECS mutate; no job needs both).
-  Splitting them is a pre-production hardening item — a follow-up bead tracks the split before the
-  prod job is appended.
+  <strong>The workflow pin defaults to <em>off</em></strong> — a wrong ref string doesn't degrade,
+  it locks every deploy job out of AWS until someone reverts, and the claim's exact value can't be
+  confirmed from outside a real workflow run. The safe order is: decode the OIDC token in a
+  throwaway workflow step, compare it against the enumerated list, then flip and watch the next run.
+  A reusable workflow is the subtle case — its jobs report <em>their own</em> file as
+  <code>job_workflow_ref</code>, not the caller's, so the caller's entry does not cover it.
+</aside>
+
+<h3 id="the-build-deploy-split">The build / deploy split</h3>
+
+<p>
+  The image-build half of CI has its own role, <code>mythrun-github-actions-build</code>, declared
+  in the shared workspace. It can authenticate to ECR, push to the <code>mythrun</code> and
+  <code>mythrun-bootstrap-db</code> repositories, and create + import through the
+  <code>ecr-public/*</code> pull-through cache prefix. It has no ECS authority and no
+  <code>iam:PassRole</code> at all.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A compromised build should be able to push an image and nothing more</strong> — the build
+  job's whole purpose is to run third-party code with AWS credentials in the environment: a pinned
+  action, a <code>pnpm</code> postinstall script, a Dockerfile's <code>RUN</code> lines. On the
+  single-role shape, anything that compromises one of those steps inherits the authority to roll a
+  new task definition into the running cluster. Split, a compromised build produces a bad image and
+  something still has to choose to deploy it. For staging alone the blast radius made the single
+  role acceptable; for production it does not, which is why the split lands before the production
+  deploy job is enabled.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The build role is shared, the deploy roles are per-env</strong> — it is
+  environment-agnostic by construction: it pushes to the two shared ECR repositories, and the images
+  it produces are the same images every environment deploys. Declaring it in the shared workspace
+  means the production composition inherits one build role instead of minting a second with
+  identical permissions.
+</aside>
+
+<p>
+  The cutover is deliberately sequenced and gated rather than done in one commit, because it spans
+  Terraform, GitHub settings, and workflow files. Applying the shared workspace creates the role and
+  changes nothing — no workflow assumes it yet. A <code>build</code> GitHub Environment has to exist
+  (with its own <code>AWS_ACCOUNT_ID</code> variable, since variables are environment-scoped and
+  come back empty under a new one), the build jobs have to point at the new role and go green, and
+  only then does <code>github_build_role_cutover = true</code> on the staging workspace strip ECR
+  write from the deploy role. Doing those out of order breaks every image push, which is what the
+  gate variable exists to keep separately revertible.
+</p>
+
+<p>
+  The deploy role's permissions policy grants exactly what a deploy needs: an account-wide
+  <code>ecr:GetAuthorizationToken</code> (AWS doesn't let it be ARN-scoped), ECR <em>read</em> on
+  the <code>mythrun</code> and <code>mythrun-bootstrap-db</code> repositories, ECS
+  <code>UpdateService</code> / <code>DescribeServices</code> / <code>DescribeTasks</code> /
+  <code>ListTasks</code> conditioned on the <code>mythrun</code> cluster,
+  <code>RegisterTaskDefinition</code> and <code>DeregisterTaskDefinition</code> scoped to the
+  <code>mythrun-staging-*</code> family, and <code>iam:PassRole</code> on the two task roles
+  conditioned on <code>iam:PassedToService = ecs-tasks.amazonaws.com</code>. Two further statements
+  (added with the <a href="frontend-hosting.html">frontend-hosting</a> module) let the same role
+  drive the frontend deploy: S3 object verbs scoped to the
+  <code>mythrun-staging-frontend</code> bucket ARN and its <code>/*</code>, and
+  <code>cloudfront:Create/GetInvalidation</code> scoped to the distribution ARN. The ECR
+  <em>write</em> and pull-through-cache statements are still on this role today, wrapped in the
+  cutover gate, and move wholesale to the build role when it flips. Production snapshot permissions
+  (<code>rds:CreateDBSnapshot</code>) are deliberately absent; they belong to the future production
+  role.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>ECR read stays on the deploy role after the cutover</strong> — the deploy jobs don't pull
+  images themselves (the task-execution role does that), but the migrate workflow resolves a SHA to
+  a digest before running its task, and an operator debugging a deploy shouldn't be blocked on a
+  role they don't hold. Read is not the permission that made the single role uncomfortable.
 </aside>
 
 <h2 id="sns-alerts-topic">SNS alerts topic</h2>
 
 <p>
-  <code>mythrun-staging-alerts</code> is the SNS topic that CloudWatch alarms will eventually
-  publish to. It lands with a single email subscription to <code>dev@mythrun.com</code> and is
-  encrypted at rest with the AWS-managed <code>alias/aws/sns</code> key. The email subscription
-  starts in <code>PendingConfirmation</code> and stays there until the recipient clicks the AWS-sent
+  <code>mythrun-staging-alerts</code> is the SNS topic this environment's alarms publish to: the
+  billing and retrieval log-metric alarms from the serving module, the API health and 5xx alarms,
+  and the Cognito throttling alarms from the auth module. Alarms on resources every environment
+  shares — the RDS instance, Redis, the ALB itself, the wildcard certificate, the NAT gateway — go
+  to a separate <code>mythrun-shared-alerts</code> topic in the shared workspace instead, so a
+  future production composition inherits one alarm per shared resource rather than a second copy of
+  each. Both topics carry a single email subscription to <code>dev@mythrun.com</code>, which starts
+  in <code>PendingConfirmation</code> and stays there until the recipient clicks the AWS-sent
   confirmation link — that confirmation is not a Terraform-managed attribute, so re-running
   <code>apply</code> while pending is a no-op.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Topic now, alarms later</strong> — MYT-30 stops at the topic and subscription so
-  first-deploy surfaces (ECS CircuitBreaker rollbacks, task failures) have a destination the day
-  they're wired up. The actual alarm resources live in the Observability milestone.
+  <strong>A customer-managed KMS key, not <code>alias/aws/sns</code></strong> — the AWS-managed key
+  looks like the free, obvious choice, and it silently breaks every alarm. Encrypting a published
+  message requires the publisher to reach <code>kms:GenerateDataKey</code>, and the AWS-managed
+  key's policy grants that only to principals inside the account. A CloudWatch alarm publishes as
+  the service principal <code>cloudwatch.amazonaws.com</code>, which is not one, and an AWS-managed
+  key's policy cannot be edited to add it. The alarm still turns red; the notification is simply
+  never delivered, leaving one line in the alarm's History tab as the only evidence. Both topics
+  therefore use the customer-managed <code>alias/mythrun-alerts</code> key from the shared
+  workspace, whose policy names both <code>cloudwatch.amazonaws.com</code> and
+  <code>budgets.amazonaws.com</code>.
 </aside>
+
+<p>
+  The topic also carries an explicit resource policy. SNS's default policy allows
+  <code>sns:Publish</code> from any principal in the account; declaring a policy replaces it
+  outright, leaving only <code>cloudwatch.amazonaws.com</code> and
+  <code>budgets.amazonaws.com</code> able to publish from the resource side. Nothing about
+  administration changes — same-account access is satisfied by an identity policy <em>or</em> a
+  resource policy, so Terraform and anyone holding <code>sns:*</code> continue to manage the topic
+  normally.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Budgets is pre-authorized even though nothing publishes budget notifications here</strong>
+  — the account cost budget notifies by email today. AWS Budgets fails closed
+  <em>and silently</em> against a policy that omits it: notifications simply stop, with no error
+  surfaced anywhere. Granting it up front turns a future wiring change into one that works rather
+  than one that appears to. The two statements carry different conditions on purpose — the Budgets
+  one is AWS-published verbatim (including a region-less <code>arn:aws:budgets::</code> source-ARN
+  pattern), while the CloudWatch one carries only <code>aws:SourceAccount</code>, because pinning a
+  source ARN is undocumented for CloudWatch and an unpopulated condition key denies the publish,
+  producing exactly the silent non-delivery this hardening exists to prevent.
+</aside>
+
+<p>
+  Because a green <code>apply</code> proves nothing about delivery, each topic is smoke-tested once
+  after it is wired:
+  <code
+    >aws cloudwatch set-alarm-state --alarm-name mythrun-staging-api-down --state-value ALARM
+    --state-reason "delivery smoke test"</code
+  >
+  should produce an email.
+</p>
+
+<h2 id="what-watches-this-environment">What watches this environment</h2>
+
+<p>
+  The serving module carries its own alarms, in three files beside the resources they watch. Two are
+  metric alarms on the ALB's view of this environment's target group; the other two files are
+  log-metric-filters over the API and worker log groups, turning structured pino events into
+  CloudWatch metrics with alarms on top. All of them publish to
+  <code>alerts_topic_arn</code>, and all of them are skipped entirely when that input is empty, so a
+  fresh environment can apply before its topic exists.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Alarms live in the module, not the environment root</strong> — they sit beside the log
+  group or target group they watch, so a future production composition inherits them by
+  construction. An alarm that has to be remembered per-environment is an alarm that will be missing
+  in the environment that matters. The counterpart rule holds too: alarms whose subject is a
+  <em>shared</em> resource live in the shared workspace, so one database gets one alarm rather than
+  one per environment.
+</aside>
+
+<p>
+  <strong><code>mythrun-&lt;env&gt;-api-down</code></strong> watches
+  <code>HealthyHostCount</code> on the target group, firing when no load-balancer node can see a
+  healthy target for a minute. It is the only liveness signal available without Container Insights,
+  and it is the better one anyway: it reports whether the API is answering
+  <code>/health/ready</code>, not merely whether a container process exists. It wires an OK action
+  as well as an alarm action — recovery is exactly the edge an operator mid-incident wants
+  confirmed.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Missing data is <em>breaching</em>, and the statistic is Maximum</strong> — a target group
+  with zero registered targets stops emitting <code>HealthyHostCount</code> altogether rather than
+  emitting a zero, so &ldquo;no data&rdquo; <em>is</em> the outage; any other setting sleeps through
+  the worst case. Maximum reads backwards until you know Min/Max here are computed across the load
+  balancer's nodes, not across time: Minimum would page whenever any single node briefly reports
+  zero, while Maximum below one means no node can see a healthy target anywhere. A partial failure
+  surfaces through the 5xx alarm instead of as a false &ldquo;everything is down&rdquo; at 3am.
+</aside>
+
+<p>
+  <strong><code>mythrun-&lt;env&gt;-api-target-5xx</code></strong> fires on more than fifty
+  <code>HTTPCode_Target_5XX_Count</code> responses in five minutes — errors the <em>application</em>
+  produced. The load balancer's own 502/503/504s are a property of the shared ALB and are alarmed
+  once in the shared workspace. Both exist because they point at different people: one at the code,
+  one at the platform.
+</p>
+
+<p>
+  <strong>The retrieval alarms</strong> cover the Voyage embedding dependency after boot. The boot
+  probe already makes deploy-time misconfiguration loud — the task crashloops and ECS rolls the
+  deploy back — but it cannot cover a key revoked, re-scoped, or dimension-changed while tasks are
+  already running. In that window nothing crashes: world-gen keeps producing content and leaves
+  every embedding NULL, so retrieval quietly degrades to whatever was embedded before the break. Two
+  alarms split it by operator response: a <em>misconfigured</em> class that never self-heals and
+  needs a corrected key or realigned model, and an <em>unavailable</em> class that is usually
+  transient.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Both log groups feed the same metric, and the transient alarm needs two windows</strong> —
+  the API task runs the boot probe, but only the worker runs the world-gen and character-integration
+  pipelines where the runtime embed events come from, so two filters write one metric name in one
+  namespace. That is deliberate: one metric, one alarm, one page, whichever task noticed first;
+  triage by log group and event name from there. The unavailable alarm requires two of three
+  five-minute windows because a single failed embed during a Voyage blip is expected and self-heals,
+  and the partial-degradation event that the backfill recovers on its own is excluded from the
+  filter entirely — alarming on it would page for the system working as designed.
+</aside>
+
+<p>
+  <strong>The billing alarms</strong> are the fourth group, described with their metric filters in
+  the appendix below.
+</p>
 
 <h2 id="operating-this-piece">Operating this piece</h2>
 
@@ -706,6 +980,58 @@
     confirmation link.
   </li>
   <li>Re-run the same command; the ARN should now be the full subscription ARN.</li>
+</ol>
+
+<h3 id="cut-ci-over-to-the-build-role">Cut CI over to the ECR-push-only build role</h3>
+
+<p>
+  Four steps, in this order. Each is separately revertible; doing them out of order breaks every
+  image push.
+</p>
+
+<ol>
+  <li>
+    Apply the shared workspace. <code>mythrun-github-actions-build</code> appears and nothing
+    changes — CI keeps using the staging role.
+  </li>
+  <li>
+    In GitHub, create an Environment named <code>build</code>. No required reviewers (it gates
+    nothing; it exists to scope the OIDC <code>environment</code> claim). Restrict its deployment
+    branch to <code>main</code> and add an <code>AWS_ACCOUNT_ID</code> <em>variable</em> —
+    environment variables are environment-scoped, so a new environment that lacks it hands the job
+    an empty string.
+  </li>
+  <li>
+    Point the build jobs at the new environment and role: the <code>build</code> job in
+    <code>deploy.yml</code> and <code>build-and-push</code> in <code>bootstrap-db-build.yml</code>.
+    Push and confirm a real run goes green.
+  </li>
+  <li>
+    Only now set <code>github_build_role_cutover = true</code> on the staging workspace and apply.
+    That strips ECR write and pull-through-cache creation from the deploy role.
+  </li>
+</ol>
+
+<h3 id="pin-the-oidc-trust-to-workflow-files">Pin the OIDC trust to specific workflow files</h3>
+
+<ol>
+  <li>
+    Add a temporary step to one workflow that fetches and base64-decodes the OIDC token (<code
+      >$ACTIONS_ID_TOKEN_REQUEST_URL</code
+    >
+    with <code>audience=sts.amazonaws.com</code>), and read the real
+    <code>job_workflow_ref</code> off a live run. The value cannot be confirmed any other way.
+  </li>
+  <li>
+    Compare it against <code>local.staging_job_workflow_refs</code> in the staging workspace (and
+    the equivalent list in <code>github-actions-build-role.tf</code>). Every workflow that names the
+    role must appear, reusable workflows included — a reusable workflow's jobs report their own
+    file, not the caller's.
+  </li>
+  <li>
+    Set <code>pin_job_workflow_ref = true</code>, apply, and watch the next run. If deploys start
+    failing at the role assume, revert the variable and re-apply; nothing else is affected.
+  </li>
 </ol>
 
 <h3 id="rotate-the-manual-secret-values">Rotate a manual secret value</h3>
@@ -731,22 +1057,55 @@
   </li>
 </ol>
 
-<h3 id="deregister-an-old-task-definition-revision">Deregister an old task-definition revision</h3>
+<h3 id="deregister-an-old-task-definition-revision">
+  Prune orphan task-definition revisions (quarterly)
+</h3>
+
+<p>
+  Revisions accumulate from two directions and are never adopted from one of them. Every CI deploy
+  registers a revision and points its service at it; every Terraform edit that touches a task
+  definition registers one too, but <code>ignore_changes = [task_definition]</code> on the services
+  means Terraform's revision sits unused until the next CI deploy supersedes it. ECR has a lifecycle
+  policy for images; task definitions have no equivalent, so nothing prunes them. They cost nothing
+  and break nothing — this is housekeeping, run about once a quarter, not an incident response.
+</p>
+
 <ol>
   <li>
-    AWS never deletes task-def revisions, only marks them <code>INACTIVE</code>. Old revisions
-    accumulate but cost nothing.
-  </li>
-  <li>
-    To prune:
-    <code>aws ecs list-task-definitions --family-prefix mythrun-&lt;env&gt;-api</code> then
+    For each family — <code>api</code>, <code>worker</code>, <code>migrate</code>,
+    <code>smoke-prep-pipeline</code>, <code>bootstrap-db</code> — find what is actually in use.
+    Service-backed families answer directly:
     <code
-      >aws ecs deregister-task-definition --task-definition mythrun-&lt;env&gt;-api:&lt;N&gt;</code
+      >aws ecs describe-services --cluster mythrun --services mythrun-&lt;env&gt;-api --query
+      'services[].taskDefinition'</code
     >.
   </li>
   <li>
-    Do not deregister the revision currently pinned to a running service — describe the service
-    first to confirm the revision numbers don't overlap.
+    The families with no service (<code>migrate</code>, <code>smoke-prep-pipeline</code>,
+    <code>bootstrap-db</code>) are invoked by <code>run-task</code> against whatever revision is
+    latest at invocation time, so keep the newest and treat the rest as prunable.
+  </li>
+  <li>
+    List the active revisions:
+    <code
+      >aws ecs list-task-definitions --family-prefix mythrun-&lt;env&gt;-api --status ACTIVE</code
+    >.
+  </li>
+  <li>
+    Deregister each revision that is neither in use nor the newest:
+    <code
+      >aws ecs deregister-task-definition --task-definition mythrun-&lt;env&gt;-api:&lt;N&gt;</code
+    >. Keep a few recent ones — they are the fastest rollback path if a deploy goes bad.
+  </li>
+  <li>
+    Never deregister the revision a running service is pinned to. ECS will not stop the running
+    tasks, but the service can no longer scale or replace them, and the failure surfaces later as an
+    unexplained inability to recover.
+  </li>
+  <li>
+    Deregistering is reversible in effect but not in identity: revisions go
+    <code>INACTIVE</code> rather than being deleted, and AWS does eventually remove INACTIVE
+    revisions on its own schedule. Do not plan to re-activate one.
   </li>
 </ol>
 
@@ -801,6 +1160,23 @@
       <td>From the shared workspace.</td>
     </tr>
     <tr>
+      <td><code>alb_arn_suffix</code></td>
+      <td><code>&quot;&quot;</code></td>
+      <td>
+        The ALB's <code>arn_suffix</code> (<code>app/mythrun-alb/&lt;id&gt;</code>), not its ARN —
+        the form CloudWatch wants for the <code>LoadBalancer</code> dimension. Passed explicitly
+        rather than derived from <code>alb_arn</code> by string surgery.
+      </td>
+    </tr>
+    <tr>
+      <td><code>alerts_topic_arn</code></td>
+      <td><code>&quot;&quot;</code></td>
+      <td>
+        SNS topic every alarm in the module publishes to. Empty disables alarm creation entirely
+        (metric filters are still created, so the metrics exist and alarms can attach later).
+      </td>
+    </tr>
+    <tr>
       <td><code>dns_zone_id</code>, <code>dns_zone_name</code></td>
       <td>—</td>
       <td>From the shared workspace's DNS module.</td>
@@ -834,7 +1210,10 @@
     <tr>
       <td><code>log_retention_days</code></td>
       <td><code>14</code></td>
-      <td>Production should pass <code>30</code>.</td>
+      <td>
+        Applies to the api + worker log groups. Staging passes <code>30</code>; production should
+        pass <code>90</code>.
+      </td>
     </tr>
     <tr>
       <td><code>extra_env</code></td>
@@ -909,6 +1288,18 @@
       <td>Listeners</td>
       <td>HTTPS :443 with wildcard cert; HTTP :80 redirect</td>
     </tr>
+    <tr>
+      <td>GH Actions build role</td>
+      <td><code>mythrun-github-actions-build</code> (ECR push only; not yet wired)</td>
+    </tr>
+    <tr>
+      <td>Alerts KMS key</td>
+      <td><code>alias/mythrun-alerts</code> (customer-managed, rotation on)</td>
+    </tr>
+    <tr>
+      <td>SNS topic</td>
+      <td><code>mythrun-shared-alerts</code> (shared-resource alarms)</td>
+    </tr>
   </tbody>
 </table>
 
@@ -922,16 +1313,62 @@
   </thead>
   <tbody>
     <tr>
-      <td>GH Actions role</td>
+      <td>GH Actions deploy role</td>
       <td><code>mythrun-github-actions-staging</code></td>
     </tr>
     <tr>
       <td>SNS topic</td>
-      <td><code>mythrun-staging-alerts</code></td>
+      <td>
+        <code>mythrun-staging-alerts</code> (shared CMK, explicit topic policy, email subscription)
+      </td>
     </tr>
     <tr>
       <td>Hostname</td>
       <td><code>staging-api.mythrun.com</code></td>
+    </tr>
+    <tr>
+      <td>Cutover gates</td>
+      <td>
+        <code>github_build_role_cutover</code>, <code>pin_job_workflow_ref</code> — both
+        <code>false</code>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="per-environment-alarms">Per-environment alarms</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Alarm</th>
+      <th>Signal</th>
+      <th>Condition</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>&lt;env&gt;-api-down</code></td>
+      <td><code>AWS/ApplicationELB HealthyHostCount</code></td>
+      <td>Max &lt; 1 for 1 min; missing data breaches; OK action wired</td>
+    </tr>
+    <tr>
+      <td><code>&lt;env&gt;-api-target-5xx</code></td>
+      <td><code>AWS/ApplicationELB HTTPCode_Target_5XX_Count</code></td>
+      <td>Sum &gt; 50 in 5 min; missing data does not breach</td>
+    </tr>
+    <tr>
+      <td><code>&lt;env&gt;-voyage-misconfigured</code></td>
+      <td>Log filter → <code>Mythrun/&lt;env&gt;/Retrieval</code></td>
+      <td>
+        Any boot-probe or pipeline <em>misconfigured</em> event on either log group. Never
+        self-heals; fix the key or realign model + dimension, then redeploy
+      </td>
+    </tr>
+    <tr>
+      <td><code>&lt;env&gt;-voyage-unavailable</code></td>
+      <td>Log filter → <code>Mythrun/&lt;env&gt;/Retrieval</code></td>
+      <td>2 of 3 five-minute windows with an unreachable / failed embed</td>
     </tr>
   </tbody>
 </table>
@@ -962,7 +1399,9 @@
         <code>billing.probe_failed</code>, <code>billing.probe_portal_failed</code>,
         <code>billing.probe_webhook_version_failed</code>
       </td>
-      <td>Stripe config drifted; the task is crashlooping and ECS is rolling back. Fix the Dashboard.</td>
+      <td>
+        Stripe config drifted; the task is crashlooping and ECS is rolling back. Fix the Dashboard.
+      </td>
     </tr>
     <tr>
       <td><code>billing-probe-auth-failure</code></td>
@@ -989,19 +1428,17 @@
 </table>
 
 <aside class="wiki-rationale">
-  <strong>Alarms live in the module, not the environment root</strong> — they sit beside the log
-  group they filter, so a future production composition inherits them by construction. An alarm that
-  has to be remembered per-environment is an alarm that will be missing in the environment that
-  matters. Each metric transformation sets <code>default_value = 0</code> so the alarms hold a real
-  OK state and self-recover rather than parking in <code>INSUFFICIENT_DATA</code>, and alarm
-  creation is skipped entirely when <code>alerts_topic_arn</code> is empty so a fresh environment can
-  apply before its topic exists.
+  <strong>Every metric transformation sets <code>default_value = 0</code></strong> — without it a
+  log-derived metric emits nothing in a quiet window, and the alarm parks in
+  <code>INSUFFICIENT_DATA</code> instead of holding a real OK state. Zero-filling means these alarms
+  self-recover and their green is meaningful.
 </aside>
 
 <h2 id="source">Source</h2>
 
 <p>
   <code>infra/modules/serving/</code>, <code>infra/environments/shared/main.tf</code>,
+  <code>infra/environments/shared/github-actions-build-role.tf</code>,
   <code>infra/environments/staging/main.tf</code>.
 </p>
 </article>
@@ -1009,7 +1446,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#shared-compute-platform">Shared compute platform</a></li><li style="padding-left:0"><a href="#per-env-task-definitions-and-services">Per-env task definitions and services</a></li><li style="padding-left:0"><a href="#alb-routing-and-dns">ALB routing and DNS</a></li><li style="padding-left:0"><a href="#the-github-actions-deploy-role">The GitHub Actions deploy role</a></li><li style="padding-left:0"><a href="#sns-alerts-topic">SNS alerts topic</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#confirm-the-alerts-email-subscription">Confirm the alerts email subscription</a></li><li style="padding-left:12px"><a href="#rotate-the-manual-secret-values">Rotate a manual secret value</a></li><li style="padding-left:12px"><a href="#deregister-an-old-task-definition-revision">Deregister an old task-definition revision</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#module-inputs">Module inputs</a></li><li style="padding-left:12px"><a href="#module-outputs">Module outputs</a></li><li style="padding-left:12px"><a href="#shared-workspace-additions">Shared workspace additions</a></li><li style="padding-left:12px"><a href="#staging-workspace-additions">Staging-workspace additions</a></li><li style="padding-left:12px"><a href="#billing-alarms">Billing alarms</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#shared-compute-platform">Shared compute platform</a></li><li style="padding-left:0"><a href="#per-env-task-definitions-and-services">Per-env task definitions and services</a></li><li style="padding-left:0"><a href="#alb-routing-and-dns">ALB routing and DNS</a></li><li style="padding-left:0"><a href="#the-github-actions-deploy-role">The GitHub Actions roles</a></li><li style="padding-left:12px"><a href="#the-build-deploy-split">The build / deploy split</a></li><li style="padding-left:0"><a href="#sns-alerts-topic">SNS alerts topic</a></li><li style="padding-left:0"><a href="#what-watches-this-environment">What watches this environment</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#confirm-the-alerts-email-subscription">Confirm the alerts email subscription</a></li><li style="padding-left:12px"><a href="#cut-ci-over-to-the-build-role">Cut CI over to the ECR-push-only build role</a></li><li style="padding-left:12px"><a href="#pin-the-oidc-trust-to-workflow-files">Pin the OIDC trust to specific workflow files</a></li><li style="padding-left:12px"><a href="#rotate-the-manual-secret-values">Rotate a manual secret value</a></li><li style="padding-left:12px"><a href="#deregister-an-old-task-definition-revision">Prune orphan task-definition revisions (quarterly)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#module-inputs">Module inputs</a></li><li style="padding-left:12px"><a href="#module-outputs">Module outputs</a></li><li style="padding-left:12px"><a href="#shared-workspace-additions">Shared workspace additions</a></li><li style="padding-left:12px"><a href="#staging-workspace-additions">Staging-workspace additions</a></li><li style="padding-left:12px"><a href="#per-environment-alarms">Per-environment alarms</a></li><li style="padding-left:12px"><a href="#billing-alarms">Billing alarms</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

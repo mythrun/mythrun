@@ -3,7 +3,7 @@
 <!-- source: backend/src/worker/bullmq-config.ts -->
 <!-- source: backend/.env.development.example -->
 <!-- source: backend/package.json -->
-<!-- source-hash: sha256:439a2678f2d770b5868210049e245307d1ead80303012af32eb25a7af77100a3 -->
+<!-- source-hash: sha256:4d049a710d867e3d1b32ab8b555a89dc4be2161c0092401b6c477af27b55750c -->
 <!-- last-ticket: MYT-72 -->
 
 <h1>LLM client</h1>
@@ -79,8 +79,8 @@
   <code>OPUS</code> — each constructed from <code>anthropic(modelId)</code> wrapped by
   <code>wrapLanguageModel</code> with the logging middleware. The IDs are pinned in this file and
   this file alone: <code>claude-haiku-4-5-20251001</code>, <code>claude-sonnet-5</code>,
-  <code>claude-opus-5</code>. Every other call site in the codebase imports a tier constant by
-  name; no file outside <code>models.ts</code> mentions a model ID string.
+  <code>claude-opus-5</code>. Every other call site in the codebase imports a tier constant by name;
+  no file outside <code>models.ts</code> mentions a model ID string.
 </p>
 
 <aside class="wiki-rationale">

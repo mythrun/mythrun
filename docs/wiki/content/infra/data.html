@@ -1,7 +1,7 @@
 <!-- source: infra/modules/data/ -->
 <!-- source: infra/scripts/bootstrap-databases.sh -->
 <!-- source: infra/scripts/README.md -->
-<!-- source-hash: sha256:d3fa13bb7274da7946d0539b4305b757e79dacd8081c6ab71a50019da4363204 -->
+<!-- source-hash: sha256:e78396769d915b9610e229255fd6c7465f7c0d679b5b1ca78c99d10fadce9453 -->
 <!-- last-ticket: MYT-25 -->
 
 <h1>Data plane</h1>
@@ -66,11 +66,45 @@
 <h2>Redis</h2>
 
 <p>
-  Redis 7.1 on <code>cache.t4g.micro</code>, single-node replication group. Encrypted at rest, TLS
-  required on the wire (<code>transit_encryption_mode = required</code>), AUTH token required on
-  every connection. <code>maxmemory-policy</code> is <code>volatile-lru</code> — the app is expected
-  to set TTLs on anything cacheable and leave session state without TTL so it isn't evicted.
+  Redis 7.1 on <code>cache.t4g.micro</code>, a replication group of
+  <code>redis_num_cache_clusters</code> nodes (one today: the primary, with automatic failover off).
+  Encrypted at rest, TLS required on the wire (<code>transit_encryption_mode = required</code>),
+  AUTH token required on every connection.
 </p>
+
+<aside class="wiki-rationale">
+  <strong><code>maxmemory-policy</code> is <code>noeviction</code></strong> — BullMQ requires it.
+  Under <code>volatile-lru</code> or any other evicting policy, Redis can drop queue and job keys
+  under memory pressure and lose work silently; BullMQ logs a startup warning when it finds a policy
+  that would. The trade is that a full node has no graceful degradation: it stops evicting and
+  starts <em>refusing writes</em>, so every enqueue in the system fails at once. That is why memory
+  is alarmed at 80% rather than left to the ops dashboard.
+</aside>
+
+<p>
+  The node count is a variable rather than a literal, and the module derives the members' names
+  (<code>mythrun-redis-001</code>, <code>-002</code>, …) from it. ElastiCache also reports those
+  names back as a computed attribute, but the derived list is what the alarms fan out over.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Derived member names, guarded by a <code>check</code> block</strong> — the memory alarms
+  use <code>for_each</code> over the member list, and <code>for_each</code> keys must be known at
+  plan time. Reading ElastiCache's computed <code>member_clusters</code> attribute would make a
+  fresh-account <code>terraform plan</code> fail outright with &ldquo;the for_each value depends on
+  resource attributes that cannot be determined until apply&rdquo;. Deriving the names instead means
+  a naming change at AWS would leave those alarms pointed at metrics that don't exist — which fails
+  silently, parking them in <code>INSUFFICIENT_DATA</code> forever. A <code>check</code> block
+  asserts the derived list against the real one and surfaces any divergence as a plan warning, so
+  the failure becomes loud instead of invisible.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Raising the node count is not a one-line change</strong> — the production sizing adds a
+  read replica, and a replication group with more than one node also needs
+  <code>automatic_failover_enabled = true</code>. That is a separate, deliberate decision, so the
+  variable does not imply it.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>No <code>rename-commands</code> hardening</strong> — the MYT-25 apply tried three variants
@@ -112,6 +146,19 @@
     password with a placeholder.
   </li>
 </ul>
+
+<h2>What watches it</h2>
+
+<p>
+  Both engines are shared, so their alarms are declared once in the shared workspace and publish to
+  <code>mythrun-shared-alerts</code> rather than to any environment's topic — see
+  <a href="index.html#alerting-and-spend">Alerting and spend</a> for the split and the full
+  inventory. Postgres is watched on CPU and free storage; Redis is watched on per-node memory. The
+  module exports the CloudWatch dimension values those alarms need, which is the whole reason it has
+  outputs beyond the connection details: the RDS instance identifier, its currently-allocated
+  storage (so a composition can sanity-check that an absolute byte threshold is still a sensible
+  fraction of the volume), and the member cluster IDs.
+</p>
 
 <h2>Operating this piece</h2>
 
@@ -171,9 +218,12 @@
 
 <p>
   The <a href="network.html">Network</a> module provides the private subnets and the
-  <code>rds</code>/<code>redis</code> security groups this module attaches to. The app's repository
-  layer (not yet built) reads the per-env <code>rds-password</code> secret and the shared
-  <code>redis-auth</code> secret to connect.
+  <code>rds</code>/<code>redis</code> security groups this module attaches to. The app's
+  <a href="../data/repository.html">repository layer</a> reads the per-env
+  <code>rds-password</code> secret and the shared <code>redis-auth</code> secret to connect;
+  <a href="serving.html">Serving</a> is what injects both into the running tasks. The alarms on
+  these two engines live with the rest of the shared-resource alarms on the
+  <a href="index.html#alerting-and-spend">Infra overview</a>.
 </p>
 
 <h2>Appendix: inputs &amp; outputs</h2>
@@ -219,6 +269,10 @@
       <td><code>redis_engine_version</code></td>
       <td><code>7.1</code></td>
     </tr>
+    <tr>
+      <td><code>redis_num_cache_clusters</code></td>
+      <td><code>1</code> (primary; validated &ge; 1)</td>
+    </tr>
   </tbody>
 </table>
 
@@ -254,6 +308,21 @@
     <tr>
       <td><code>redis_auth_secret_arn</code></td>
       <td>string (sensitive)</td>
+    </tr>
+    <tr>
+      <td><code>rds_instance_identifier</code></td>
+      <td>string — the <code>DBInstanceIdentifier</code> alarm dimension</td>
+    </tr>
+    <tr>
+      <td><code>rds_allocated_storage_gb</code></td>
+      <td>number — lets a composition sanity-check the free-storage threshold</td>
+    </tr>
+    <tr>
+      <td><code>redis_member_cluster_ids</code></td>
+      <td>
+        list of string — the <code>CacheClusterId</code> alarm dimension. Derived, so it is known at
+        plan time; paired with the constant <code>CacheNodeId</code> <code>0001</code>
+      </td>
     </tr>
   </tbody>
 </table>

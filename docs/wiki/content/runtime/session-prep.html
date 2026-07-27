@@ -15,8 +15,8 @@
 <!-- source: backend/migrations/034_session_opening.sql -->
 <!-- source: backend/src/contract/pipeline-jobs.ts -->
 <!-- source: backend/src/worker/bullmq-config.ts -->
-<!-- source-hash: sha256:6c0b33ce2dada7b93df8b62307b11f82a263aea70b80f1d2a7f30310b3c3ee3a -->
-<!-- last-ticket: myth-vb2ov -->
+<!-- source-hash: sha256:34e55b9432e0b4d63a1d01f6890d29646d8578f776590e736c2b575cb5735a12 -->
+<!-- last-ticket: myth-xbdkq -->
 
 <h1>Session prep</h1>
 
@@ -138,6 +138,19 @@
   <a href="#keeping-prep-bounded">this page's story, below</a>.
 </p>
 
+<aside class="wiki-rationale">
+  <strong>A depth marker is conduct, never an announcement that a mystery exists</strong> — the
+  prompt's NPC depth markers tell the <a href="./fast-thinker.html">Fast Thinker</a> to play someone
+  with weight without saying what the weight is. Written as an assertion — "there is more to her
+  than meets the eye" — the FT reads it as a licence to nudge and renders it as winking prose, which
+  is the opposite of the intent. The template now demands observable behaviour instead: what she
+  does with her hands, what she lets go by, when she changes the subject. The prompt also pulls in
+  <code>shared/prose-register</code> for the player-experienced prose only — the sensory sections of
+  <code>ft_context</code> and the <code>opening</code>. The <code>sd_playbook</code> is explicitly
+  exempt: it is a terse condition-→-action switchboard, and writing it in a literary register would
+  make it worse at its job.
+</aside>
+
 <p>
   On success the processor
   <a href="#consuming-the-prior-session-handoff"
@@ -165,13 +178,24 @@
   document delivered verbatim to the table. So before the insert, the processor runs the opening
   through the <a href="./scribe.html">secret tripwire</a> (<code>runSecretTripwire</code>), checking
   it against this <em>same generation's</em> <code>sd_playbook</code> — the complete secret surface
-  the opening was drawn from. The check is recall-biased, like the scribe's per-turn breach
-  detector: any breached verdict, regardless of confidence, fails the stage. The failure is
-  retryable — it re-throws as a non-terminal error, so BullMQ re-runs the job and a fresh generation
-  may pass — and it persists nothing: the vet runs <em>before</em> <code>insert</code>, so a tripped
-  opening takes the whole prep down with it. There is no half-written prep with a leaky opening; the
-  row is all-or-nothing.
+  the opening was drawn from — grounded on the <code>ft_context</code> it was generated alongside,
+  since a detail the opening shares with its own briefing is public rather than a leak. The gate is
+  <strong>strict</strong>: any severity other than <code>none</code> fails the stage, including the
+  <code>soft_consistency</code> verdict the scribe's per-turn path deliberately treats as fine. The
+  failure is retryable — it re-throws as a non-terminal error, so BullMQ re-runs the job and a fresh
+  generation may pass — and it persists nothing: the vet runs <em>before</em> <code>insert</code>,
+  so a tripped opening takes the whole prep down with it. There is no half-written prep with a leaky
+  opening; the row is all-or-nothing.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Strict here, proportionate there — because the remedies cost different things</strong> —
+  the <a href="./scribe.html#severity-not-a-boolean">severity split</a> exists to stop a
+  <em>live, player-facing</em> correction firing over an in-character detail: the remedy is
+  disruptive, so it has to be earned. The opening has no such cost. It is generated once, before any
+  player has seen a word, and a soft-brushy one is simply regenerated. When rejecting costs a retry
+  and shipping costs a leak, there is no reason to ship one.
+</aside>
 
 <aside class="wiki-rationale">
   <strong
@@ -470,6 +494,22 @@
   telemetry; the persisted documents and the <code>prep-*</code> phase events are the durable
   output, and neither depends on a prose delta landing.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The stream is drained unconditionally — the sink was accidentally load-bearing</strong> —
+  the stage used to drain the partial stream only when a delta sink was supplied, then await the
+  final object. That looked like an optimisation and was a nine-minute time bomb:
+  <code>streamObject(...).object</code>
+  <em>never settles unless something first consumes the stream</em>. A caller that passed no sink
+  would therefore hang for the whole <code>SESSION_PREP_TIMEOUT_MS</code> and then fail. Verified
+  against the real API on two Opus versions — awaiting <code>.object</code> alone hangs past 90
+  seconds, drain-then-await returns in about 2.5 — so it is an SDK contract, not a model behaviour.
+  It never bit only because the one production caller happens to pass a sink. The drain is now
+  unconditional and the sink is optional <em>to it</em>: with no sink the loop degenerates to a pump
+  that consumes and discards. The regression test is mutation-verified (it times out without the
+  fix), and it needed a faithful stream mock, because the suite's existing scripted helper resolves
+  <code>.object</code> eagerly — which is exactly why every test was blind to this.
+</aside>
 
 <h3>Cost is recorded, not capped</h3>
 

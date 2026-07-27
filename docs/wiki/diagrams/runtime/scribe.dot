@@ -4,12 +4,16 @@ digraph scribe {
   // FT [[WORLD_DELTA]] fact-delta, and this turn's ST-vet injections. A seventh
   // BullMQ worker processes it OFF the hot path: it embeds the proposed facts
   // into the in-session working set (a Redis list), runs the per-turn Haiku
-  // secret tripwire over the prose against the prep's sd_playbook, and — on a
-  // core-secret breach — authors (Opus) a secret-preserving retcon Z and
-  // delivers it through a player-less `correction`-kind turn. ENFORCED
-  // IGNORANCE: the secret sd_playbook is read ONLY on the secret side (the
-  // tripwire + the retcon-author, through the narrow ScribeRepo); the FT reads
-  // the working set only through the ST-vet relay, never directly.
+  // secret tripwire over the prose against the prep's sd_playbook, and routes by
+  // the verdict's SEVERITY (myth-retprop): a hard_reveal citing a real handle
+  // authors (Opus) a secret-preserving retcon Z delivered through a player-less
+  // `correction`-kind turn; a soft_consistency gets a SILENT st-evaluation nudge
+  // and no player-facing correction at all. myth-g4hf3 splits the playbook into
+  // handled secrets vs consistency material, grounds the tripwire on the PUBLIC
+  // ft_context + the turn's resolved dice outcomes, and persists every verdict.
+  // ENFORCED IGNORANCE: the secret sd_playbook is read ONLY on the secret side
+  // (the tripwire + the retcon-author, through the narrow ScribeRepo); the FT
+  // reads the working set only through the ST-vet relay, never directly.
   rankdir=LR;
   compound=true;
   nodesep=0.4;
@@ -22,7 +26,7 @@ digraph scribe {
     fontcolor="ember";
 
     ctrl [label="SessionController\nenqueueScribeJob()\n(flushed success ·\n NOT correction turns)", color="ember", fontcolor="ember"];
-    payload [label="ScribeJobPayload\nprose · worldDelta · injections\nworldId · turnId"];
+    payload [label="ScribeJobPayload\nprose · worldDelta · injections\nskillChecks (resolved outcomes)\nworldId · turnId"];
   }
 
   subgraph cluster_batch {
@@ -37,9 +41,11 @@ digraph scribe {
     color="ember";
     fontcolor="ember";
 
-    proc [label="processScribeJob (TOTAL)\nembed → tripwire → (breach) retcon", color="ember", fontcolor="ember"];
+    proc [label="processScribeJob (TOTAL)\nembed → tripwire → route by SEVERITY", color="ember", fontcolor="ember"];
     embed [label="embed-on-append\nVoyage embedDocuments\n(boot-probed embedder)"];
-    trip [label="secret tripwire (Haiku)\nprose vs sd_playbook →\n{breached, confidence, secretRef}\nOPAQUE control signal", color="ember", fontcolor="ember"];
+    split [label="splitPlaybook\nsecret sections → [SECRET-n] handles\neverything else → CONSISTENCY (soft path only)"];
+    trip [label="secret tripwire (Haiku)\nprose vs secrets, GROUNDED on\nthe PUBLIC ft_context + resolved dice →\n{severity, confidence, secretRef}\nOPAQUE control signal", color="ember", fontcolor="ember"];
+    gate [label="hard-reveal HANDLE GATE\nhard_reveal AND a recognized [SECRET-n]\n→ open retcon; anything else → soft"];
     retcon [label="retcon-author (Opus)\nsecret-preserving Z\n(reasons over the secret;\n redactRawText)", color="ember", fontcolor="ember"];
   }
 
@@ -53,21 +59,28 @@ digraph scribe {
   subgraph cluster_pg {
     label="Postgres";
     style="dashed";
-    prep [label="session_preps.sd_playbook\n(the SECRET)\nnarrow ScribeRepo.sessionPreps.getBy", color="ember", fontcolor="ember"];
+    prep [label="session_preps\nsd_playbook (the SECRET) +\nft_context (PUBLIC — the grounding floor)\nnarrow ScribeRepo.sessionPreps.getBy", color="ember", fontcolor="ember"];
+    verdicts [label="tripwire_verdicts (mig 037)\none row per verdict\nHANDLE-ONLY, sanitized before insert"];
   }
 
   ft [label="FT lookup tools\nsearch_lore / graph walks\nworking-set ∪ canon read-merge\n(via the ST-vet relay)", color="ember", fontcolor="ember"];
   q_corr [label="queue: session-turn\nplayer-less `correction` turn\ntrigger.kind:'correction'\ncorrectionText: Z", color="ember", fontcolor="ember"];
+  q_st [label="queue: st-evaluation\nSILENT steer — no player-facing text\ndedup-collapsed per campaign", color="ember", fontcolor="ember"];
 
   ctrl -> payload [label="assemble"];
   payload -> q_scribe [label="enqueueScribe"];
   q_scribe -> proc [label="BLPOP-style"];
 
-  proc -> embed [label="1. embed proposals"];
+  proc -> embed [label="1. embed proposals\n(dice_outcome provenance\n on a passing check)"];
   embed -> ws [label="RPUSH + evict"];
-  proc -> prep [label="2. read secret\n(fail loud if empty)"];
-  proc -> trip [label="3. prose vs secret"];
-  trip -> retcon [label="breached:true\n→ escalate", color="ember"];
+  proc -> prep [label="2. read secret + public\n(fail loud on an empty playbook)"];
+  prep -> split [label="split on section seams"];
+  split -> trip [label="secrets + consistency"];
+  proc -> trip [label="3. prose, grounded"];
+  trip -> verdicts [label="persist verdict\n(own try/catch)", style=dotted];
+  trip -> gate [label="4. route"];
+  gate -> retcon [label="hard_reveal + known handle", color="ember"];
+  gate -> q_st [label="soft_consistency, or a hard\nverdict with no known handle", style=dashed];
   retcon -> q_corr [label="enqueue correction\n(secret-free Z)", color="ember"];
   retcon -> ws [label="append `retcon` supersede\n(Z + secretRef only)", color="ember"];
 

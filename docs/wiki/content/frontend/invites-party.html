@@ -7,7 +7,7 @@
 <!-- source: frontend/src/platform/web/use-foreground-refetch.ts -->
 <!-- source: frontend/ui/src/components/InvitePanel/ -->
 <!-- source: frontend/ui/src/components/JoinPreview/ -->
-<!-- source-hash: sha256:5b3abaabf2a864033f607e6cf46ba4e6ce79d126bb576f99d63b6c4216a4a1b4 -->
+<!-- source-hash: sha256:ba12e2ca6b2512a37ea316538c16e1bf48b62eb87280c0ed57cc7d773540765b -->
 <!-- last-ticket: MYT-91 -->
 
 <h1>Invites &amp; party</h1>
@@ -52,6 +52,27 @@
   component taking resolved props and neutral callbacks. Terse lifecycle only — a single link, never
   an invite dashboard.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Replace asks once before it strands a link</strong> — replacing revokes the code the owner
+  may already have pasted into a group chat, and the first version fired that on a single press
+  sitting next to Copy. The panel now arms a <strong>one-beat inline confirm</strong>: the first press
+  swaps the row for a prose question plus a confirm and a cancel, and only the confirm calls
+  <code>onRevoke</code>. It stays inline prose rather than a modal — the calm paper register — and the
+  confirm's open/closed is ephemeral component state, since no consumer needs to observe it.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The same panel appears at two weights, because the invite isn't always the point</strong> —
+  on the <a href="./campaign-hub.html">campaign page</a> the invite <em>is</em> the primary action, so
+  Copy carries the brand accent fill. Mounted under a character reveal or a party roster it is
+  secondary to that screen's own hero, so the panel takes <code>prominence="quiet"</code> and Copy
+  drops to a bordered secondary — a page spends its one filled accent on its real primary action, and
+  a demoted invite must not be it. The route wrapper adds a second lever for those placements,
+  <code>collapsible</code>: the panel starts as a single quiet "invite a friend" line that expands on
+  demand. The link is still resolved on mount, so expanding is instant, and a pending notice always
+  overrides the collapse — an error must never hide behind an affordance.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Native share is progressive enhancement over a clipboard copy</strong> — the panel offers a
@@ -181,7 +202,8 @@
 <ol>
   <li>
     As the owner, open a campaign and copy the primary link from the invite panel. "Replace link"
-    revokes and re-mints — the old link then previews <code>valid: false</code>.
+    arms an inline confirm; confirming revokes and re-mints — the old link then previews
+    <code>valid: false</code>. Cancelling leaves the current link untouched.
   </li>
   <li>
     In a second browser identity (signed out), open <code>/join/:code</code>. You should see the
@@ -271,7 +293,7 @@
     <td><code>routes/campaign-invite-panel.tsx</code></td>
     <td>
       The owner-gated wired panel — link resolution, copy/share/revoke, the StrictMode mounted-ref
-      reset.
+      reset, and the <code>prominence</code> / <code>collapsible</code> placement levers.
     </td>
   </tr>
   <tr>
@@ -280,7 +302,11 @@
   </tr>
   <tr>
     <td><code>platform/web/share.ts</code></td>
-    <td><code>canWebShare</code> / <code>webShare</code> / <code>copyText</code> — the web-global carve-out.</td>
+    <td>
+      <code>canWebShare</code> / <code>webShare</code> / <code>copyText</code> / <code>absoluteUrl</code>
+      — the web-global carve-out (<code>absoluteUrl</code> resolves an app-relative path against the
+      page origin, so a route that hands out a link never reaches <code>window</code> itself).
+    </td>
   </tr>
   <tr>
     <td><code>platform/web/use-foreground-refetch.ts</code></td>
@@ -288,7 +314,10 @@
   </tr>
   <tr>
     <td><code>ui/…/InvitePanel</code> · <code>ui/…/JoinPreview</code></td>
-    <td>The presentational share panel and public join card.</td>
+    <td>
+      The presentational share panel (two prominences, the one-beat replace confirm) and the public
+      join card.
+    </td>
   </tr>
 </table>
 

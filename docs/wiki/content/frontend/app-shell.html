@@ -18,7 +18,7 @@
 <!-- source: frontend/src/routes/landing.tsx -->
 <!-- source: frontend/src/platform/web/oauth-state-store.ts -->
 <!-- source: frontend/src/platform/web/navigation.ts -->
-<!-- source-hash: sha256:13d8ae7b254aac0f453c65c14a737b31f2c4759ffc26fb288546aa6936146310 -->
+<!-- source-hash: sha256:47dfccbf6927104bb64ee19f18238f61dea693ce392f6e5b253f1fe69ce31b02 -->
 <!-- last-ticket: MYT-102 -->
 
 <h1>App shell &amp; data layer</h1>
@@ -104,6 +104,28 @@
   <code>ContractValidationError</code> rather than rendering subtly-wrong data. Backend
   <em>outbound</em> validation is intentionally out of scope (it would risk a live 5xx on a
   mismatch); the client-side parse is the drift catch.
+</aside>
+
+<p>
+  The REST surface keeps growing the same way. The campaign-create contract's proposal body is now a
+  <strong>union</strong> of two inputs — three media picks (the brainstorm path) or the player's own
+  concept text (the freeform path) — because both funnel paths synthesize into the same proposal, so
+  the response, the SSE frames, and the proposal screen are shape-identical whichever opened it; the
+  proposal's response gained a <code>title</code> so the screen can headline the world's name instead
+  of leaving it buried in the prose. And a new <code>session-recap</code> schema models the
+  player-facing close-out of a session.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A wire name that no longer describes its producer, kept and documented</strong> — the
+  commit body's <code>'guided'</code> arm means "commit what the proposal checkpoint parked," and
+  since the freeform path also commits a parked proposal, the name no longer names a path. Renaming it
+  is a five-surface ripple with no behavioural gain, so the literal stayed and the contract comment
+  carries the meaning. The recap schema draws a different kind of line and draws it strictly: it
+  models only the secret-free <code>summary</code> and open threads the post-session analysis writes
+  from player-witnessed material. The secret-aware handoff and the Slow Thinker's running summary live
+  in a column the recap endpoint does not read and are not modelled here at all, so enforced ignorance
+  holds at the wire rather than at the renderer.
 </aside>
 
 <p>
@@ -427,12 +449,12 @@
 <p>
   The route tree is a plain <code>RouteObject[]</code> (so tests drive the same array through a
   memory router) with two branches under one error boundary. The <strong>public</strong> branch
-  resolves pre-auth — landing, the auth screens, the invite-join link, the shareable recap. The
+  resolves pre-auth — landing, the auth screens, the invite-join link. The
   <strong>authed</strong> branch sits behind <code>&lt;RequireAuth&gt;</code> and renders inside the
   <strong>quiet brand frame</strong>: a minimal Parchment-&amp;-Ink header (wordmark · display name
-  · credit balance · a gear settings affordance) wrapping the content <code>&lt;Outlet/&gt;</code>,
-  composed from <a href="./design-system.html">mythrunUI</a> only. The frame recedes so the
-  narrative/combat content is the focus. The public auth screens — sign-in, callback, onboard — are
+  · credit balance · a buy action · a gear settings affordance) over the content
+  <code>&lt;Outlet/&gt;</code>, composed from <a href="./design-system.html">mythrunUI</a> only. The
+  frame recedes so the narrative/combat content is the focus. The public auth screens — sign-in, callback, onboard — are
   now wired end-to-end (the <a href="#oauth-flow">OAuth flow</a> above); the remaining player-facing
   screens are thin i18n'd stubs the flow tickets fill, except the
   <strong><a href="./campaign-hub.html">campaign hub</a></strong
@@ -444,8 +466,59 @@
   variant of the frame, the public <a href="./invites-party.html">join</a> route on the public branch,
   and the <a href="./billing-credits.html">Sessions &amp; Billing</a> settings screen and
   checkout-return routes — and it made the header's credit balance a real quick-buy into that billing
-  surface rather than an interim stub.
+  surface rather than an interim stub. The <a href="./live-play.html">session recap</a> then moved
+  from the public branch into the authed one: the read it renders is membership-gated, so it belongs
+  inside the frame. A tokenized public share link would be a separate surface, not this campaign-id
+  read.
 </p>
+
+<h3>The header, and what each slot owes</h3>
+
+<p>
+  The header carries five things and each earns its place. The <strong>wordmark</strong> is the brand
+  anchor at roughly half the bar's height — and it is the home link on every surface, the universal
+  "click the logo to get home" affordance the play screen was a dead end without. It is an
+  <code>unstyled</code> Link so the lockup stays in ink rather than taking the link accent, and a
+  plain navigation with no confirm, because leaving mid-session destroys nothing (sessions persist
+  server-side). The <strong>display name</strong> is the player's real name read from
+  <code>/me</code>, not a copy key. The <strong>credit readout</strong> is labelled (see
+  <a href="./billing-credits.html">billing</a>). The <strong>buy</strong> action carries a word rather
+  than a glyph. The <strong>settings</strong> gear is icon-only. The bar's bottom edge is a single
+  quiet <code>Divider</code> hairline rather than a four-sided border box — that box read as a stark
+  white line against the dark page.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The name is data, so it comes from the API — the key was printing itself</strong> — the
+  display name had been an i18n key holding an interpolation token, rendered with no values supplied,
+  so the header printed the literal token in caps to every signed-in player. A name is not copy; it is
+  a read. The slot now calls <code>useMe()</code> directly — which means it must not be able to take
+  the frame down with it.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>One <code>HeaderSlot</code> for both suspense-reading slots</strong> — the frame is always
+  present and now reads two suspense queries inside it, so each sits in a shared slot owning a
+  <code>&lt;Suspense&gt;</code> and a local error boundary: the frame itself never suspends, and a
+  failed fetch drops that one slot to nothing instead of throwing up to the router boundary and
+  tearing down the route. The wrapper renders no DOM element of its own, so a slot stays a direct flex
+  child of the header row and keeps its shrink and truncation behaviour. It was extracted from the
+  original credits boundary rather than duplicated — and it doubles as what keeps the frame renderable
+  in harnesses that omit the API provider.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The buy action is a labelled word, and it stands down twice</strong> — a lone "+" reads as
+  "new" and collided with create-a-campaign, so the top-up control carries its label and no leading
+  glyph: topping up is not creating an object, and the plus is reserved for campaign creation. It
+  hides below the <code>sm</code> step, where the labelled balance and the gear already fill the row
+  and the gear <em>is</em> the billing entry — the considered arrangement, not a squeeze, and with the
+  button gone there is no header "+" on phones at all. It also stands down entirely on the full-bleed
+  <a href="./live-play.html">play</a> stage: the balance readout stays, but the purchase action
+  retreats behind the gear rather than hawking concessions during the overture. The display name
+  likewise collapses below <code>sm</code>, giving the wordmark, balance, and actions room instead of
+  squeezing a name down to a two-letter stub.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The header stays one quiet row at phone width</strong> — MYT-83's mobile audit deferred a
@@ -487,7 +560,30 @@
   branches on the typed errors above: a <code>401 HttpError</code> resets the session to
   <code>unauthenticated</code> and bounces to sign-in; a <code>ContractValidationError</code> shows
   a dev-facing "contract drift" message; everything else falls through to a generic retryable screen
-  with a retry affordance. The <strong>404</strong> is the brand's stepped Bayer
+  with a retry affordance.
+</p>
+
+<p>
+  That generic screen <strong>escalates</strong> rather than repeating itself. The first couple of
+  failures offer a plain try-again; once retries keep re-failing the copy stops implying that a
+  moment's patience will help, names the likely cause, offers a harder reset, and surfaces a terse
+  support reference carrying the server's error code. Every time the screen renders it also mirrors
+  the underlying error to the console with the attempt count — the boundary swallows the failure
+  visually, so that log is the only place a silently-looping failure can be inspected.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The retry count is persisted out-of-band, because the retry is a full reload</strong> —
+  screens throw from suspense queries rather than loaders, so a soft revalidate can't clear the cached
+  error; the retry does a full route reload, which resets React state and would reset an in-component
+  counter with it. So the count lives in a small web-platform tracker the boundary reads on each fresh
+  mount: a burst that keeps failing climbs past the threshold and escalates, and a burst that stops
+  resets itself. Without it the screen would offer the same optimistic line forever to a player whose
+  network is simply gone.
+</aside>
+
+<p>
+  The <strong>404</strong> is the brand's stepped Bayer
   <a href="./design-system.html">Dither</a> in its first product use — a full-screen dark dead end
   where the Dither is a real transition (the cream page-top grading down into a reversed dark
   surface that fills the viewport), not decoration.
@@ -596,7 +692,10 @@
   <code>routes</code> array in a memory router at a seeded entry, pre-seeds the session store to
   <code>ready</code> (so authed screens clear <code>&lt;RequireAuth&gt;</code>) and the React-Query
   cache (so a suspense hook resolves without a network call), and can override an i18n key to feed
-  an adversarial-length display name. A <code>screen-story-coverage</code> forcing function
+  adversarial-length copy. Because the header now reads the display name on <em>every</em> authed
+  route, the harness seeds the <code>['me']</code> cache too — every story gets a representative
+  default, and a story that needs an adversarial-length name seeds one as data rather than swapping a
+  copy key. A <code>screen-story-coverage</code> forcing function
   (<code>frontend/scripts/screen-story-coverage.mjs</code>) fails CI if any <code>routes/*</code>
   screen — or the assembled app-frame / 404 screen — lacks a co-located story, so a new screen can't
   dodge the gate.
@@ -607,10 +706,11 @@
   composition bug, so the gate has to drive the composition. Seeding the session and cache up front
   means the authed screens actually render their content; a bad seed shape would hang a suspense
   query forever, so each story's <code>play</code> asserts the screen's root testid and fails loud
-  instead of timing out as a flake. And because the display name is an i18n key rather than a prop,
-  the only way to exercise a too-long name is to override the key — which is exactly what the
-  adversarial home-hub story does, reproducing the original overflow and proving the gate would have
-  caught it.
+  instead of timing out as a flake. That failure mode is exactly why the <code>['me']</code> seed is
+  unconditional: with the header reading identity on every authed route, an unseeded story would
+  suspend-hang rather than fail with a useful message. The adversarial home-hub story feeds a
+  too-long name through the same seam, reproducing the original overflow and proving the gate would
+  have caught it.
 </aside>
 
 <h2 id="talking-to-the-api">Talking to the API</h2>

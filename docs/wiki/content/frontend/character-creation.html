@@ -16,7 +16,7 @@
 <!-- source: frontend/ui/src/components/CharacterLoadingBeat/ -->
 <!-- source: frontend/ui/src/components/CharacterSheetReveal/ -->
 <!-- source: frontend/ui/src/components/PartyRoster/ -->
-<!-- source-hash: sha256:db11018b8c782898f753af27d334ab890d69d2f33a7deb68ce7040c7cf468944 -->
+<!-- source-hash: sha256:b288a3a98c3d446ce6eb7052c53e8b7cd3b8dde3d16d3bdae98cb042cffab6d0 -->
 <!-- last-ticket: MYT-102 -->
 
 <h1>Character-creation experience</h1>
@@ -278,6 +278,50 @@
   canonical names, and the grounding whisper collects the second field exactly as freeform does.
 </p>
 
+<h3>The player's own words are durable</h3>
+
+<p>
+  Everything the player types — the freeform concept and grounding, the guided picks, the pronoun
+  answer — is written to a <strong>draft</strong> as they go, so a failed generation, a
+  <em>Start over</em>, a reload, or any other return to the flow never costs them their words. It
+  mirrors the campaign create flow's own guided draft, with one deliberate difference: the character
+  draft's web realization is <code>localStorage</code>-backed rather than tab-scoped, because
+  character creation is a higher-investment surface and the words should survive a closed tab or a
+  crash, not just a refresh.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The store is injected per route, not configured once globally</strong> — the DOM-free brain
+  reaches storage through the same generic capability port the rest of the client uses, and the
+  character routes hand it their store rather than binding one at boot. That keeps the seam out of the
+  boot wiring entirely and makes it trivially test-isolated: each test supplies its own fake store,
+  with no global to reset between cases. The draft's own schema is deliberately loose — an
+  in-progress draft is any partial of free strings, including empty ones. It guards
+  <em>structure</em> when reading back a possibly-corrupt or foreign payload; the wire's length floors
+  belong at submit time, not to a scratch draft.
+</aside>
+
+<h3>The pronoun ask</h3>
+
+<p>
+  Both paths ask, quietly and optionally, how the DM should refer to the character — the freeform
+  path on its concept step, the guided path on its notes step, from one shared composition so the two
+  cannot drift into asking the same question two different ways. It rides each screen's aside slot,
+  between the answer field and the action row: present and impossible to miss on the way to the
+  button, without competing with the step's real question.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A choice, not a sentence — and the default is a real answer</strong> — the answer is pinned
+  deterministically on the server over the model's own echo, and a pin is only meaningful against
+  tokens the server itself defines, so free text would not survive the round-trip as an instruction.
+  The default is "let the description decide," which is a genuine selectable answer rather than an
+  empty state: it sends <em>nothing</em>, and its absence is what tells the chargen prompt to read the
+  description and fall back to they/them instead of guessing. So the UI offers five options and the
+  wire carries four. The ask exists because a real playtest produced "he/his" for a character whose
+  description never specified anything.
+</aside>
+
 <aside class="wiki-rationale">
   <strong>The flatten emits canonical English, not display copy</strong> — the concept text the
   backend LLM reads is composed from the SRD catalog's canonical English names
@@ -390,7 +434,11 @@
   renders <code>CharacterSheetReveal</code>: the name;
   a mono identity line; an AC / HP / Proficiency / Hit-Die / Speed stripe; six square ability tiles;
   one or two paragraphs of connection prose; and "what they can do / carry / cast" panels — the spells
-  panel appearing only for casters. Three actions ride it: <em>This is me</em> persists
+  panel appearing only for casters. Two details on that stripe repay a newcomer. At full health the HP
+  cell reads as a single number rather than "25 / 25" — current-over-max is mid-combat state, and the
+  slash earns its place once damage exists. And a caster's ability tiles mark <em>which</em> ability
+  powers their spells, because nothing else on the sheet tells a new player why the WIS 18 is the one
+  that matters. Three actions ride it: <em>This is me</em> persists
   <code>confirmed_at</code> and routes to staging; <em>See full sheet</em> is a pure client expansion
   of data already in props (skills, saving throws, the full kit — no network, no LLM call); and
   <em>Start over</em> calls the concept-reset route and returns to create (which does cost a fresh
@@ -406,7 +454,18 @@
   pattern-match <a href="../runtime/character-creation.html">ZFC</a> forbids. The connection prose is
   <em>assembled</em>, not generated — the concept stage's own already-authored fields (physical
   description, personality sentences, the player's grounding text) concatenated in order, degrading to
-  a shorter panel when a field is blank.
+  a shorter panel when a field is blank. The caster mark is the same shape of pinned SRD mechanics as
+  the saving throws: a class→ability map consulted in deterministic code, gated on the sheet actually
+  carrying spells, so a spell-less low-level paladin never shows it and an unresolvable freeform class
+  degrades to no mark rather than a guess.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Each stat cell carries a structural key beside its display label</strong> — the
+  <a href="./live-play.html#the-in-session-sheet">in-session sheet</a> swaps a live HP value into this
+  same stripe, and it needs to find the HP cell. Matching on the visible label would make a copy
+  change quietly take the live overlay down with it, so the view-model emits a stable key per cell and
+  the overlay keys on that. The label is then free to be styled, renamed, or translated.
 </aside>
 
 <h3>Party staging and Begin</h3>
@@ -419,8 +478,10 @@
   <a href="./invites-party.html">MYT-91</a> the roster is <strong>live</strong>: the shell's earlier
   blind poll is replaced by <code>useLiveRoster</code> (the campaign status SSE folds a teammate's
   <code>character_creation_complete</code> into an in-place refetch, with a window-focus + slow-poll
-  fallback), and the invite affordance is the wired <code>CampaignInvitePanel</code> on the campaign
-  page, not a no-op seam. In the <strong>solo</strong> case (launch-critical) the roster shows the
+  fallback), and the invite affordance is the wired <code>CampaignInvitePanel</code>, mounted here in
+  its <a href="./invites-party.html">demoted form</a> — collapsed to one quiet line and with its Copy
+  action dropped to a bordered secondary, so the screen's one filled accent stays on Begin. In the
+  <strong>solo</strong> case (launch-critical) the roster shows the
   one-person party plus a dashed invite slot and a "begin the adventure" control. In a
   <strong>party</strong>, the owner-only Begin is enabled once the owner's own
   concept is ready; it fans in every currently-<code>completed</code> concept through
@@ -508,7 +569,8 @@
   <li>
     Choose a path on <code>/campaigns/:id/character/new</code>. Freeform collects two prompts; the
     guided builder walks Class → (Subclass) → Species → Background → Notes, then the grounding whisper.
-    Submit.
+    Both paths offer the optional pronoun ask in the prompt's aside. Before submitting, reload the
+    page — everything you typed should still be there; that is the draft. Then submit.
   </li>
   <li>
     Return to <code>/campaigns/:id</code> to watch the loading beat fill in, then the reveal. Press
@@ -579,8 +641,18 @@
     <td>The <code>~N left</code> countdown math — a canonical stage-slice mirror of the backend order, over the shared world-gen remaining-wait core; <code>null</code> on a cold start.</td>
   </tr>
   <tr>
+    <td><code>character-draft.ts</code> · <code>pronouns.ts</code></td>
+    <td>
+      The durable draft of everything the player typed (over the injected storage port), and the
+      pronoun choice vocabulary — five UI options over four wire tokens, the default sending nothing.
+    </td>
+  </tr>
+  <tr>
     <td><code>srd/</code></td>
-    <td>The SRD-2014 catalog — classes, species, backgrounds, <code>SUBCLASS_LEVEL</code>, <code>CLASS_SAVES</code>.</td>
+    <td>
+      The SRD-2014 catalog — classes, species, backgrounds, <code>SUBCLASS_LEVEL</code>,
+      <code>CLASS_SAVES</code>, <code>CASTING_ABILITY</code>.
+    </td>
   </tr>
   <tr>
     <td><code>api/characters.ts</code> · <code>api/starting-level.ts</code></td>
@@ -643,8 +715,12 @@
     <td>Maps the decided kind to a redirect or a mounted beat (loading / reveal / staging / hold / failure / play).</td>
   </tr>
   <tr>
-    <td><code>character-new.tsx</code> · <code>path-chooser.tsx</code> · <code>freeform-path.tsx</code> · <code>guided-path.tsx</code></td>
-    <td>The discrete create route — the chooser and the two paths driving the create-machine + guided reducer.</td>
+    <td><code>character-new.tsx</code> · <code>path-chooser.tsx</code> · <code>freeform-path.tsx</code> · <code>guided-path.tsx</code> · <code>guided-screens.tsx</code> · <code>pronoun-aside.tsx</code></td>
+    <td>
+      The discrete create route — the chooser and the two paths driving the create-machine + guided
+      reducer, with the guided path's builder-less screens (notes, grounding) split out so the driver
+      stays a readable controller, and the one shared pronoun ask both paths mount.
+    </td>
   </tr>
   <tr>
     <td><code>worldgen/situation-pick.tsx</code> · <code>character-new/level-pick.tsx</code></td>

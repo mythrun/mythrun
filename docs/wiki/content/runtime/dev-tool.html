@@ -35,8 +35,8 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:4ba26e99035e2ec5ccbfcbceadb9b183d8bb184a4ad0c78c52382036a8f6dbd1 -->
-<!-- last-ticket: MYT-66 -->
+<!-- source-hash: sha256:2196ea21a3eedaa2a9c996d6eac46e6e20cf01209bbc76b9b7e5f6d7924eaf94 -->
+<!-- last-ticket: myth-lhp99 -->
 
 <h1>Dev tool</h1>
 
@@ -228,7 +228,10 @@
       <td><code>System</code></td>
       <td>
         Health (liveness) / Health (ready) / WS ticket / Session start / Session active / Session
-        messages / Fire turn (dev-only DM-turn trigger) / Combat inspector (the
+        messages / Session recap (the player-facing close-out of the campaign's most-recent ended
+        session, including its <code>pending</code> state while the async
+        <a href="./session-reconcile.html">post-session analysis</a> is still writing) / Fire turn
+        (dev-only DM-turn trigger) / Combat inspector (the
         <a href="../combat/single-shot-combat.html">combat L1</a> mode flips +
         <code>combat_started</code> / <code>combat_resolved</code> events with a resume button — the
         stand-in for the player combat screen).
@@ -891,8 +894,8 @@
       <td><code>System</code></td>
       <td>No</td>
       <td>
-        Health (liveness + ready) / WS ticket / session start + active + messages / fire turn
-        (dev-only DM-turn trigger).
+        Health (liveness + ready) / WS ticket / session start + active + messages + recap / fire
+        turn (dev-only DM-turn trigger) / combat inspector.
       </td>
     </tr>
   </tbody>

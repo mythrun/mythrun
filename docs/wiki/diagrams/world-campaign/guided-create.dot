@@ -1,10 +1,10 @@
 digraph guided_create {
-  // The guided campaign-creation flow. The SPA walks fork → guided picks → a
-  // streamed synthesis → preview/rework. Each backend step is gated by Sonnet
-  // and parked (NON-charging) in Redis under a user-scoped previewId. The credit
-  // is charged only at commit (POST /api/campaigns), which loads the already-gated
-  // preview and hands off to the world-gen pipeline. The freeform fork skips the
-  // preview store entirely and is gated at commit instead.
+  // Campaign creation. Two inputs — the player's own prose, or three things they
+  // love — and ONE proposal checkpoint they both pass through. Every step before
+  // the commit is non-charging: the proposal is parked in Redis under a
+  // user-scoped previewId and the credit is spent only at POST /api/campaigns.
+  // The gate sits in a different place on each path: freeform judges the
+  // player's raw words BEFORE synthesizing, brainstorm judges what it wrote.
   rankdir=LR;
   compound=true;
 
@@ -13,47 +13,58 @@ digraph guided_create {
     style="dashed";
 
     fork [label="fork\nan idea | build from what you love"];
+    freeform [label="freeform\nown prose · draft in localStorage"];
     guided [label="guided\n3 picks · draft in sessionStorage"];
-    synth [label="synthesizing\nthe brief writes itself"];
+    synth [label="synthesizing\nthe proposal writes itself"];
     preview [label="preview\nBegin · one change · start over"];
     reject [label="rejection\nmessage — never raw reasoning"];
-    freeform [label="freeform\nidea prose"];
   }
 
   subgraph cluster_routes {
-    label="preview routes  (non-charging)";
+    label="proposal routes  (non-charging)";
     style="dashed";
     color="ember";
     fontcolor="ember";
 
-    rsynth [label="POST synthesize-preview[/stream]"];
+    rsynth [label="POST synthesize-preview[/stream]\n{picks} | {concept}"];
     rrework [label="POST preview/:id/rework\nsingle-shot"];
   }
 
-  sonnet [label="synthesize / revise concept\n(Sonnet · temp 0.9)", color="ember", fontcolor="ember"];
-  gate [label="input gate (Sonnet)\n3-axis · allow | reject", color="ember", fontcolor="ember"];
+  gate_raw [label="input gate (Sonnet)\non the player's OWN words", color="ember", fontcolor="ember"];
+  sonnet [label="synthesize / revise\n(Sonnet) → title + concept", color="ember", fontcolor="ember"];
+  gate [label="input gate (Sonnet)\non what was written", color="ember", fontcolor="ember"];
 
-  store [label="Redis preview store\ncampaign-preview:{user}:{id}\n30-min TTL · reworkCount", shape=cylinder];
+  store [label="Redis preview store\ncampaign-preview:{user}:{id}\n30-min TTL · title · reworkCount", shape=cylinder];
 
   create [label="POST /api/campaigns\nload preview · debit 1 credit"];
   worldgen [label="world-gen pipeline"];
 
-  fork -> guided;
   fork -> freeform;
-  guided -> rsynth [label="find my world (SSE open)"];
-  rsynth -> sonnet;
-  sonnet -> gate;
+  fork -> guided;
+
+  freeform -> rsynth [label="send it (SSE open)"];
+  guided -> rsynth [label="weave it together (SSE open)"];
+
+  rsynth -> gate_raw [label="freeform: gate FIRST"];
+  gate_raw -> sonnet [label="allow"];
+  rsynth -> sonnet [label="brainstorm: write FIRST"];
+  sonnet -> gate [label="brainstorm only"];
+
   rsynth -> synth [style="dashed", label="prose deltas"];
   gate -> store [label="allow → park"];
-  store -> preview [label="previewId + concept"];
+  sonnet -> store [label="freeform: already gated"];
+  store -> preview [label="previewId + title + concept"];
   synth -> preview [label="complete"];
+
+  gate_raw -> reject [label="reject (422)"];
   gate -> reject [label="reject (422)"];
   synth -> reject [style="dashed", label="rejected"];
+
   preview -> rrework [label="ask for one change"];
   rrework -> sonnet;
   rrework -> store [label="gate-pass → overwrite (reworkCount:1)"];
+
   preview -> create [label="Begin"];
-  freeform -> create [label="commit (gated here)"];
   store -> create [label="load (auth, id) · 410 if gone"];
   create -> worldgen [label="enqueue"];
 }

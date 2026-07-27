@@ -1,7 +1,9 @@
 digraph serving {
-  // Compute platform: shared ECR + OIDC + ECS cluster + ALB + HTTPS listener
-  // on one side, per-env task defs + services + target group + GH deploy role
-  // on the other. Arrows show which shared resources each per-env piece reads.
+  // Compute platform: shared ECR + OIDC + ECS cluster + ALB + HTTPS listener +
+  // the image-build role on one side, per-env task defs + services + target
+  // group + scoped deploy role + alerts topic + alarms on the other. Arrows show
+  // which shared resources each per-env piece reads. The build role is created
+  // but NOT yet assumed by any workflow — the dashed CI edge is the cutover.
   rankdir=LR;
   compound=true;
 
@@ -17,6 +19,8 @@ digraph serving {
     alb      [label="ALB\nmythrun-alb"];
     listener [label="HTTPS listener\n:443\nTLS13-1-2"];
     redirect [label=":80 → :443\nredirect"];
+    build_role [label="GH Actions BUILD role\nmythrun-github-\nactions-build\n(ECR push only)"];
+    kms      [label="KMS\nalias/mythrun-alerts\n(customer-managed)"];
   }
 
   subgraph cluster_staging {
@@ -30,11 +34,13 @@ digraph serving {
     exec_role  [label="task-execution\nrole"];
     task_role  [label="task role"];
     api_svc    [label="ECS service\napi\ndesired=1\nBOOT_GATE_ENABLED=1"];
-    worker_svc [label="ECS service\nworker\ndesired=0"];
+    worker_svc [label="ECS service\nworker\ndesired=1"];
     tg         [label="Target group\nmythrun-staging-api\nhealth /health/ready"];
     rule       [label="Listener rule\nhost =\nstaging-api.\nmythrun.com"];
     alias      [label="R53 A-alias\nstaging-api ."];
-    gh_role    [label="GH Actions role\nmythrun-github-\nactions-staging"];
+    gh_role    [label="GH Actions DEPLOY role\nmythrun-github-\nactions-staging"];
+    logs       [label="Log groups\n/mythrun/staging/{api,worker}\n30-day retention"];
+    alarms     [label="Alarms\napi-down · target-5xx\nbilling · retrieval"];
     sns        [label="SNS topic\nmythrun-staging-\nalerts"];
   }
 
@@ -59,10 +65,20 @@ digraph serving {
   api_svc   -> task_role  [label="uses"];
   worker_svc -> worker_td [label="uses"];
 
+  // alerting path
+  api_svc -> logs   [label="writes"];
+  worker_svc -> logs [label="writes"];
+  logs    -> alarms [label="metric filters"];
+  tg      -> alarms [label="HealthyHostCount\nTarget 5XX"];
+  alarms  -> sns    [label="publish"];
+  sns     -> kms    [label="encrypted with"];
+
   // CI path
   github  -> oidc    [label="OIDC\nAssumeRole"];
   github  -> gh_role [label="assumes"];
-  gh_role -> ecr     [label="push :sha"];
+  gh_role -> ecr     [label="push :sha\n(until cutover)"];
   gh_role -> api_svc [label="UpdateService"];
   gh_role -> worker_svc [label="UpdateService"];
+  github  -> build_role [style="dashed", label="assumes\nafter cutover"];
+  build_role -> ecr [style="dashed", label="push :sha"];
 }

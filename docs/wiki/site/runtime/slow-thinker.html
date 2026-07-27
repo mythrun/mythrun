@@ -33,283 +33,323 @@
   turn completes, a background pipeline decides whether the scene needs direction and, if so, writes
   a leak-safe stage direction the <a href="./fast-thinker.html">Fast Thinker</a> consumes on its
   next turn. It owns the running summary, gates its own expensive Opus call behind a cheap Haiku
-  classifier, and signals the session wind-down. Player-visible latency is unaffected: every turn's
-  time-to-first-token is purely the FT.
+  classifier, and owns the two signals that bring a session in to land — the myth-3jna1
+  <a href="#the-convergence-steer">convergence steer</a> and the wind-down. Player-visible latency
+  is unaffected: every turn's time-to-first-token is purely the FT.
 </p>
 
 <figure class="wiki-diagram">
   
-<svg width="2065pt" height="739pt"
- viewBox="14.00 14.00 2050.00 724.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 720.48)">
+<svg width="2066pt" height="879pt"
+ viewBox="14.00 14.00 2051.00 864.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 860.36)">
 <title>slow_thinker</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-706.08 2032,-706.08 2032,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-845.96 2033,-845.96 2033,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_batch</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="178,-387.24 178,-465.32 420,-465.32 420,-387.24 178,-387.24"/>
-<text xml:space="preserve" text-anchor="middle" x="299" y="-451.42" font-family="Courier,monospace" font-size="11.00">redisBatch</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="692,-524.72 692,-602.8 934,-602.8 934,-524.72 692,-524.72"/>
+<text xml:space="preserve" text-anchor="middle" x="813" y="-588.9" font-family="Courier,monospace" font-size="11.00">redisBatch</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_worker</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="469,-241.96 469,-694.08 1082,-694.08 1082,-241.96 469,-241.96"/>
-<text xml:space="preserve" text-anchor="middle" x="775.5" y="-680.18" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Worker process &#160;— &#160;6th BullMQ Worker (concurrency 2)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1060,-241.96 1060,-833.96 1673,-833.96 1673,-241.96 1060,-241.96"/>
+<text xml:space="preserve" text-anchor="middle" x="1366.5" y="-820.06" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Worker process &#160;— &#160;6th BullMQ Worker (concurrency 2)</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_pg</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-118.88 8,-196.96 768,-196.96 768,-118.88 8,-118.88"/>
-<text xml:space="preserve" text-anchor="middle" x="388" y="-183.06" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Postgres (the ST&#39;s OWN narrow StEvalRepo — never widens TurnWorkerRepo)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1261,-118.88 1261,-196.96 2021,-196.96 2021,-118.88 1261,-118.88"/>
+<text xml:space="preserve" text-anchor="middle" x="1641" y="-183.06" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Postgres (the ST&#39;s OWN narrow StEvalRepo — never widens TurnWorkerRepo)</text>
 </g>
 <g id="clust4" class="cluster">
 <title>cluster_realtime</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="797,-125.48 797,-190.36 2020,-190.36 2020,-125.48 797,-125.48"/>
-<text xml:space="preserve" text-anchor="middle" x="1408.5" y="-176.46" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Redis (realtime cluster)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-125.48 8,-190.36 1231,-190.36 1231,-125.48 8,-125.48"/>
+<text xml:space="preserve" text-anchor="middle" x="619.5" y="-176.46" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Redis (realtime cluster)</text>
 </g>
 <!-- turn -->
 <g id="node1" class="node">
 <title>turn</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="440.26,-567.2 157.74,-567.2 157.74,-510.32 440.26,-510.32 440.26,-567.2"/>
-<text xml:space="preserve" text-anchor="middle" x="299" y="-548.66" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">turn worker (post&#45;turn finally)</text>
-<text xml:space="preserve" text-anchor="middle" x="299" y="-535.46" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">flushed&#45;success ONLY · own try/catch</text>
-<text xml:space="preserve" text-anchor="middle" x="299" y="-522.26" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">enqueueStEval({campaignId, sessionId})</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="993.26,-707.08 710.74,-707.08 710.74,-650.2 993.26,-650.2 993.26,-707.08"/>
+<text xml:space="preserve" text-anchor="middle" x="852" y="-688.54" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">turn worker (post&#45;turn finally)</text>
+<text xml:space="preserve" text-anchor="middle" x="852" y="-675.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">flushed&#45;success ONLY · own try/catch</text>
+<text xml:space="preserve" text-anchor="middle" x="852" y="-662.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">enqueueStEval({campaignId, sessionId})</text>
 </g>
 <!-- q -->
 <g id="node2" class="node">
 <title>q</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="420.46,-444.12 177.54,-444.12 177.54,-387.24 420.46,-387.24 420.46,-444.12"/>
-<text xml:space="preserve" text-anchor="middle" x="299" y="-425.58" font-family="Courier,monospace" font-size="11.00" fill="#231b12">queue: st&#45;evaluation</text>
-<text xml:space="preserve" text-anchor="middle" x="299" y="-412.38" font-family="Courier,monospace" font-size="11.00" fill="#231b12">dedup id st&#45;eval:{cId} · NO ttl</text>
-<text xml:space="preserve" text-anchor="middle" x="299" y="-399.18" font-family="Courier,monospace" font-size="11.00" fill="#231b12">single&#45;flight per campaign</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="934.46,-581.6 691.54,-581.6 691.54,-524.72 934.46,-524.72 934.46,-581.6"/>
+<text xml:space="preserve" text-anchor="middle" x="813" y="-563.06" font-family="Courier,monospace" font-size="11.00" fill="#231b12">queue: st&#45;evaluation</text>
+<text xml:space="preserve" text-anchor="middle" x="813" y="-549.86" font-family="Courier,monospace" font-size="11.00" fill="#231b12">dedup id st&#45;eval:{cId} · NO ttl</text>
+<text xml:space="preserve" text-anchor="middle" x="813" y="-536.66" font-family="Courier,monospace" font-size="11.00" fill="#231b12">single&#45;flight per campaign</text>
 </g>
 <!-- turn&#45;&gt;q -->
 <g id="edge1" class="edge">
 <title>turn&#45;&gt;q</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M299,-509.68C299,-492.87 299,-471.32 299,-453.2"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="301.45,-453.43 299,-446.43 296.55,-453.43 301.45,-453.43"/>
-<text xml:space="preserve" text-anchor="middle" x="356.01" y="-476.32" font-family="Courier,monospace" font-size="10.00">add (dedup, no ttl)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M824.56,-649.48C819,-642.13 813.96,-633.83 810.98,-625.2 807.27,-614.43 806.5,-602.19 807.03,-590.94"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="809.47,-591.15 807.56,-583.99 804.58,-590.78 809.47,-591.15"/>
+<text xml:space="preserve" text-anchor="middle" x="867.99" y="-616.2" font-family="Courier,monospace" font-size="10.00">add (dedup, no ttl)</text>
 </g>
 <!-- active -->
 <g id="node3" class="node">
 <title>active</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="784.76,-672.88 469.24,-672.88 469.24,-629.2 784.76,-629.2 784.76,-672.88"/>
-<text xml:space="preserve" text-anchor="middle" x="627" y="-654.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">active&#45;session check</text>
-<text xml:space="preserve" text-anchor="middle" x="627" y="-641.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(queued job for an ended session → no&#45;op)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1375.76,-812.76 1060.24,-812.76 1060.24,-769.08 1375.76,-769.08 1375.76,-812.76"/>
+<text xml:space="preserve" text-anchor="middle" x="1218" y="-794.22" font-family="Courier,monospace" font-size="11.00" fill="#231b12">active&#45;session check</text>
+<text xml:space="preserve" text-anchor="middle" x="1218" y="-781.02" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(queued job for an ended session → no&#45;op)</text>
 </g>
 <!-- q&#45;&gt;active -->
 <g id="edge2" class="edge">
 <title>q&#45;&gt;active</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M194.83,-444.85C116.89,-470.97 31.04,-513.82 76.99,-567.2 125.78,-623.89 316.93,-642.31 460.28,-648.01"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="459.88,-650.45 466.97,-648.27 460.07,-645.55 459.88,-650.45"/>
-<text xml:space="preserve" text-anchor="middle" x="109.99" y="-535.76" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M734.85,-582.25C667.35,-610.73 586.94,-657.54 629.99,-707.08 657.46,-738.69 886.89,-763.54 1050.88,-777.48"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1050.63,-779.92 1057.81,-778.07 1051.04,-775.04 1050.63,-779.92"/>
+<text xml:space="preserve" text-anchor="middle" x="662.99" y="-675.64" font-family="Courier,monospace" font-size="10.00">BLPOP&#45;style</text>
 </g>
 <!-- policy -->
 <g id="node4" class="node">
 <title>policy</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1082.27,-567.2 733.73,-567.2 733.73,-510.32 1082.27,-510.32 1082.27,-567.2"/>
-<text xml:space="preserve" text-anchor="middle" x="908" y="-548.66" font-family="Courier,monospace" font-size="11.00" fill="#231b12">DETERMINISTIC POLICY (code)</text>
-<text xml:space="preserve" text-anchor="middle" x="908" y="-535.46" font-family="Courier,monospace" font-size="11.00" fill="#231b12">turns&#45;since&#45;ST ≥ FLOOR → evaluate</text>
-<text xml:space="preserve" text-anchor="middle" x="908" y="-522.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">usage ≥ 0.9 × BUDGET → evaluate (wind&#45;down)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1673.27,-707.08 1324.73,-707.08 1324.73,-650.2 1673.27,-650.2 1673.27,-707.08"/>
+<text xml:space="preserve" text-anchor="middle" x="1499" y="-688.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">DETERMINISTIC POLICY (code)</text>
+<text xml:space="preserve" text-anchor="middle" x="1499" y="-675.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">turns&#45;since&#45;ST ≥ FLOOR → evaluate</text>
+<text xml:space="preserve" text-anchor="middle" x="1499" y="-662.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">usage ≥ 0.9 × BUDGET → evaluate (wind&#45;down)</text>
 </g>
 <!-- active&#45;&gt;policy -->
 <g id="edge3" class="edge">
 <title>active&#45;&gt;policy</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M681.85,-628.52C723.52,-612.16 781.45,-589.43 828.24,-571.06"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="828.93,-573.42 834.55,-568.58 827.14,-568.86 828.93,-573.42"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1272.85,-768.4C1314.52,-752.04 1372.45,-729.31 1419.24,-710.94"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1419.93,-713.3 1425.55,-708.46 1418.14,-708.74 1419.93,-713.3"/>
 </g>
 <!-- rearm -->
-<g id="node7" class="node">
+<g id="node8" class="node">
 <title>rearm</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="705.16,-567.2 468.84,-567.2 468.84,-510.32 705.16,-510.32 705.16,-567.2"/>
-<text xml:space="preserve" text-anchor="middle" x="587" y="-548.66" font-family="Courier,monospace" font-size="11.00" fill="#231b12">self&#45;re&#45;arm</text>
-<text xml:space="preserve" text-anchor="middle" x="587" y="-535.46" font-family="Courier,monospace" font-size="11.00" fill="#231b12">newer turns mid&#45;eval →</text>
-<text xml:space="preserve" text-anchor="middle" x="587" y="-522.26" font-family="Courier,monospace" font-size="11.00" fill="#231b12">removeDeduplicationKey + re&#45;add</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1296.16,-707.08 1059.84,-707.08 1059.84,-650.2 1296.16,-650.2 1296.16,-707.08"/>
+<text xml:space="preserve" text-anchor="middle" x="1178" y="-688.54" font-family="Courier,monospace" font-size="11.00" fill="#231b12">self&#45;re&#45;arm</text>
+<text xml:space="preserve" text-anchor="middle" x="1178" y="-675.34" font-family="Courier,monospace" font-size="11.00" fill="#231b12">newer turns mid&#45;eval →</text>
+<text xml:space="preserve" text-anchor="middle" x="1178" y="-662.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">removeDeduplicationKey + re&#45;add</text>
 </g>
 <!-- active&#45;&gt;rearm -->
-<g id="edge16" class="edge">
+<g id="edge20" class="edge">
 <title>active&#45;&gt;rearm</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M619.19,-628.52C613.8,-613.65 606.49,-593.51 600.21,-576.17"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="602.52,-575.37 597.83,-569.63 597.92,-577.04 602.52,-575.37"/>
-<text xml:space="preserve" text-anchor="middle" x="639.4" y="-595.2" font-family="Courier,monospace" font-size="10.00">end of run</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1210.19,-768.4C1204.8,-753.53 1197.49,-733.39 1191.21,-716.05"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1193.52,-715.25 1188.83,-709.51 1188.92,-716.92 1193.52,-715.25"/>
+<text xml:space="preserve" text-anchor="middle" x="1230.4" y="-735.08" font-family="Courier,monospace" font-size="10.00">end of run</text>
 </g>
-<!-- gate -->
+<!-- probe -->
 <g id="node5" class="node">
-<title>gate</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="835.26,-444.12 552.74,-444.12 552.74,-387.24 835.26,-387.24 835.26,-444.12"/>
-<text xml:space="preserve" text-anchor="middle" x="694" y="-425.58" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Haiku gate (generateObject)</text>
-<text xml:space="preserve" text-anchor="middle" x="694" y="-412.38" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">{needed, confidence, reason}</text>
-<text xml:space="preserve" text-anchor="middle" x="694" y="-399.18" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">skip IFF !needed &amp;&amp; confidence ≥ 0.8</text>
+<title>probe</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1673.07,-588.2 1284.93,-588.2 1284.93,-518.12 1673.07,-518.12 1673.07,-588.2"/>
+<text xml:space="preserve" text-anchor="middle" x="1479" y="-569.66" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">converge probe — Haiku (myth&#45;3jna1)</text>
+<text xml:space="preserve" text-anchor="middle" x="1479" y="-556.46" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ONLY inside 0.75 ≤ mech &lt; 0.9 (else free)</text>
+<text xml:space="preserve" text-anchor="middle" x="1479" y="-543.26" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">arc position vs the sd_playbook, NEVER told the budget</text>
+<text xml:space="preserve" text-anchor="middle" x="1479" y="-530.06" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SECRET&#45;SIDE: only a boolean + a token count leave</text>
 </g>
-<!-- policy&#45;&gt;gate -->
+<!-- policy&#45;&gt;probe -->
 <g id="edge4" class="edge">
-<title>policy&#45;&gt;gate</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M858.37,-509.68C826.34,-491.56 784.58,-467.93 751.16,-449.02"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="752.61,-447.03 745.32,-445.71 750.2,-451.29 752.61,-447.03"/>
-<text xml:space="preserve" text-anchor="middle" x="843.82" y="-476.32" font-family="Courier,monospace" font-size="10.00">not forced</text>
+<title>policy&#45;&gt;probe</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1494.46,-649.62C1491.95,-634.09 1488.77,-614.45 1485.94,-597.03"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1488.42,-596.99 1484.88,-590.47 1483.58,-597.78 1488.42,-596.99"/>
+<text xml:space="preserve" text-anchor="middle" x="1520.2" y="-616.2" font-family="Courier,monospace" font-size="10.00">not forced</text>
 </g>
 <!-- director -->
-<g id="node6" class="node">
+<g id="node7" class="node">
 <title>director</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1076.16,-325.24 773.84,-325.24 773.84,-241.96 1076.16,-241.96 1076.16,-325.24"/>
-<text xml:space="preserve" text-anchor="middle" x="925" y="-306.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Opus director (generateObject)</text>
-<text xml:space="preserve" text-anchor="middle" x="925" y="-293.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">GATE VERDICT NOT FED IN</text>
-<text xml:space="preserve" text-anchor="middle" x="925" y="-280.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">structural split: reasoning | direction |</text>
-<text xml:space="preserve" text-anchor="middle" x="925" y="-267.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">standingDirective | summaryUpdate</text>
-<text xml:space="preserve" text-anchor="middle" x="925" y="-253.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">repairAttempted → DISCARD whole</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1433.16,-325.24 1130.84,-325.24 1130.84,-241.96 1433.16,-241.96 1433.16,-325.24"/>
+<text xml:space="preserve" text-anchor="middle" x="1282" y="-306.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Opus director (generateObject)</text>
+<text xml:space="preserve" text-anchor="middle" x="1282" y="-293.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">GATE VERDICT NOT FED IN</text>
+<text xml:space="preserve" text-anchor="middle" x="1282" y="-280.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">structural split: reasoning | direction |</text>
+<text xml:space="preserve" text-anchor="middle" x="1282" y="-267.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">standingDirective | summaryUpdate</text>
+<text xml:space="preserve" text-anchor="middle" x="1282" y="-253.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">repairAttempted → DISCARD whole</text>
 </g>
 <!-- policy&#45;&gt;director -->
 <g id="edge5" class="edge">
 <title>policy&#45;&gt;director</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M909.88,-509.7C912.73,-467.38 918.15,-386.62 921.67,-334.22"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="924.09,-334.71 922.12,-327.56 919.2,-334.38 924.09,-334.71"/>
-<text xml:space="preserve" text-anchor="middle" x="989.92" y="-412.68" font-family="Courier,monospace" font-size="10.00">floor / wind&#45;down forces</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1378.79,-649.48C1296.73,-623.48 1193.53,-575.95 1139.98,-493.12 1114.2,-453.26 1103.48,-429.02 1126,-387.24 1138.42,-364.19 1158.53,-345.47 1180.25,-330.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1181.33,-332.86 1185.83,-326.96 1178.63,-328.77 1181.33,-332.86"/>
+<text xml:space="preserve" text-anchor="middle" x="1211.99" y="-478.12" font-family="Courier,monospace" font-size="10.00">floor / wind&#45;down forces</text>
 </g>
-<!-- gate&#45;&gt;director -->
+<!-- gate -->
+<g id="node6" class="node">
+<title>gate</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1423.26,-444.12 1140.74,-444.12 1140.74,-387.24 1423.26,-387.24 1423.26,-444.12"/>
+<text xml:space="preserve" text-anchor="middle" x="1282" y="-425.58" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Haiku gate (generateObject)</text>
+<text xml:space="preserve" text-anchor="middle" x="1282" y="-412.38" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">{needed, confidence, reason}</text>
+<text xml:space="preserve" text-anchor="middle" x="1282" y="-399.18" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">skip IFF !needed &amp;&amp; confidence ≥ 0.8</text>
+</g>
+<!-- probe&#45;&gt;gate -->
 <g id="edge6" class="edge">
-<title>gate&#45;&gt;director</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M743.84,-386.61C773.06,-370.16 810.68,-348.97 844.06,-330.18"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="845.08,-332.42 849.98,-326.85 842.67,-328.15 845.08,-332.42"/>
-<text xml:space="preserve" text-anchor="middle" x="826.58" y="-353.24" font-family="Courier,monospace" font-size="10.00">evaluate</text>
+<title>probe&#45;&gt;gate</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1337,-517.58C1325.22,-510.83 1314.28,-502.76 1304.97,-493.12 1294.61,-482.39 1288.9,-467.16 1285.76,-453.12"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1288.19,-452.78 1284.47,-446.37 1283.38,-453.71 1288.19,-452.78"/>
+<text xml:space="preserve" text-anchor="middle" x="1388.99" y="-484.12" font-family="Courier,monospace" font-size="10.00">on pace, out of window,</text>
+<text xml:space="preserve" text-anchor="middle" x="1388.99" y="-472.12" font-family="Courier,monospace" font-size="10.00">or probe failed (fail&#45;quiet)</text>
+</g>
+<!-- probe&#45;&gt;director -->
+<g id="edge7" class="edge">
+<title>probe&#45;&gt;director</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1480.8,-517.4C1480.79,-502.37 1479.73,-484.69 1476,-469.12 1466.65,-430.11 1464.2,-417.62 1438,-387.24 1419.02,-365.23 1394.2,-346.05 1369.96,-330.41"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1371.57,-328.53 1364.34,-326.86 1368.95,-332.67 1371.57,-328.53"/>
+<text xml:space="preserve" text-anchor="middle" x="1565.69" y="-418.68" font-family="Courier,monospace" font-size="10.00">story behind spend →</text>
+<text xml:space="preserve" text-anchor="middle" x="1565.69" y="-406.68" font-family="Courier,monospace" font-size="10.00">force, converge:true (a BOOLEAN)</text>
 </g>
 <!-- prep -->
-<g id="node8" class="node">
+<g id="node9" class="node">
 <title>prep</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="204.35,-169.16 7.65,-169.16 7.65,-125.48 204.35,-125.48 204.35,-169.16"/>
-<text xml:space="preserve" text-anchor="middle" x="106" y="-150.62" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_preps.sd_playbook</text>
-<text xml:space="preserve" text-anchor="middle" x="106" y="-137.42" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(secret&#45;bearing prep doc)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2021.35,-169.16 1824.65,-169.16 1824.65,-125.48 2021.35,-125.48 2021.35,-169.16"/>
+<text xml:space="preserve" text-anchor="middle" x="1923" y="-150.62" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_preps.sd_playbook</text>
+<text xml:space="preserve" text-anchor="middle" x="1923" y="-137.42" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(secret&#45;bearing prep doc)</text>
 </g>
-<!-- gate&#45;&gt;prep -->
-<g id="edge10" class="edge">
-<title>gate&#45;&gt;prep</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M630.15,-386.57C544.06,-348.57 386.1,-278.47 252,-216.96 221.05,-202.76 186.57,-186.57 158.89,-173.48"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="160.29,-171.43 152.92,-170.65 158.2,-175.86 160.29,-171.43"/>
-<text xml:space="preserve" text-anchor="middle" x="497.77" y="-280.6" font-family="Courier,monospace" font-size="10.00">read</text>
+<!-- probe&#45;&gt;prep -->
+<g id="edge13" class="edge">
+<title>probe&#45;&gt;prep</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1565.57,-517.46C1601.21,-499.76 1640.69,-475.31 1669,-444.12 1699.72,-410.28 1684.6,-387.57 1710.98,-350.24 1762.04,-277.98 1841.68,-210.63 1887.44,-174.93"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1888.74,-177.02 1892.77,-170.79 1885.74,-173.14 1888.74,-177.02"/>
+<text xml:space="preserve" text-anchor="middle" x="1770.99" y="-353.24" font-family="Courier,monospace" font-size="10.00">read (FULL playbook)</text>
 </g>
 <!-- usagest -->
-<g id="node14" class="node">
+<g id="node15" class="node">
 <title>usagest</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1053.06,-169.16 796.94,-169.16 796.94,-125.48 1053.06,-125.48 1053.06,-169.16"/>
-<text xml:space="preserve" text-anchor="middle" x="925" y="-150.62" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:usage:st</text>
-<text xml:space="preserve" text-anchor="middle" x="925" y="-137.42" font-family="Courier,monospace" font-size="11.00" fill="#231b12">dedicated INCRBY (gate+eval spend)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1231.06,-169.16 974.94,-169.16 974.94,-125.48 1231.06,-125.48 1231.06,-169.16"/>
+<text xml:space="preserve" text-anchor="middle" x="1103" y="-150.62" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:usage:st</text>
+<text xml:space="preserve" text-anchor="middle" x="1103" y="-137.42" font-family="Courier,monospace" font-size="11.00" fill="#231b12">dedicated INCRBY (gate+eval spend)</text>
+</g>
+<!-- probe&#45;&gt;usagest -->
+<g id="edge14" class="edge">
+<title>probe&#45;&gt;usagest</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1671.06,-517.42C1779.13,-487.89 1884.02,-436.22 1838,-350.24 1783.05,-247.59 1731.06,-239.91 1620,-204.96 1581.2,-192.75 1294.11,-203.71 1254,-196.96 1224.09,-191.93 1191.98,-182.23 1165.09,-172.8"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1166.05,-170.54 1158.63,-170.5 1164.4,-175.16 1166.05,-170.54"/>
+<text xml:space="preserve" text-anchor="middle" x="1876.15" y="-353.24" font-family="Courier,monospace" font-size="10.00">incrUsageSt</text>
+</g>
+<!-- gate&#45;&gt;director -->
+<g id="edge8" class="edge">
+<title>gate&#45;&gt;director</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1282,-386.77C1282,-371.51 1282,-352.13 1282,-334.37"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1284.45,-334.62 1282,-327.62 1279.55,-334.62 1284.45,-334.62"/>
+<text xml:space="preserve" text-anchor="middle" x="1306" y="-353.24" font-family="Courier,monospace" font-size="10.00">evaluate</text>
+</g>
+<!-- gate&#45;&gt;prep -->
+<g id="edge12" class="edge">
+<title>gate&#45;&gt;prep</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1334.34,-386.62C1436.8,-331.92 1657.17,-215.42 1695,-204.96 1744.38,-191.31 1760.21,-209.04 1810,-196.96 1831.89,-191.65 1854.92,-182.46 1874.44,-173.49"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1875.36,-175.76 1880.65,-170.57 1873.28,-171.33 1875.36,-175.76"/>
+<text xml:space="preserve" text-anchor="middle" x="1624.27" y="-280.6" font-family="Courier,monospace" font-size="10.00">read</text>
 </g>
 <!-- gate&#45;&gt;usagest -->
-<g id="edge15" class="edge">
+<g id="edge19" class="edge">
 <title>gate&#45;&gt;usagest</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M685.73,-386.78C676.75,-350.7 666.91,-287.15 692.99,-241.96 709.41,-213.5 727.06,-218.5 757,-204.96 784.19,-192.67 814.87,-181.56 842.51,-172.51"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="842.96,-174.94 848.87,-170.45 841.45,-170.28 842.96,-174.94"/>
-<text xml:space="preserve" text-anchor="middle" x="725.99" y="-280.6" font-family="Courier,monospace" font-size="10.00">incrUsageSt</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1140.14,-392.6C1038.98,-368.46 910.58,-318.65 850,-216.96 832.03,-186.8 871.04,-215.29 961,-196.96 988.3,-191.4 1017.56,-182 1042.39,-172.94"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1043.22,-175.24 1048.93,-170.51 1041.51,-170.65 1043.22,-175.24"/>
+<text xml:space="preserve" text-anchor="middle" x="993.07" y="-280.6" font-family="Courier,monospace" font-size="10.00">incrUsageSt</text>
 </g>
 <!-- director&#45;&gt;prep -->
-<g id="edge7" class="edge">
+<g id="edge9" class="edge">
 <title>director&#45;&gt;prep</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M773.35,-245.65C766.15,-244.31 759.01,-243.07 752,-241.96 517.21,-204.68 449.61,-254.7 219,-196.96 197.33,-191.53 174.51,-182.42 155.09,-173.54"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="156.29,-171.4 148.91,-170.66 154.22,-175.84 156.29,-171.4"/>
-<text xml:space="preserve" text-anchor="middle" x="319.18" y="-207.96" font-family="Courier,monospace" font-size="10.00">read</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1432.76,-241.31C1494.27,-225.14 1558.11,-209.37 1589,-204.96 1637.65,-198.01 1762.05,-207.75 1810,-196.96 1832.16,-191.97 1855.41,-182.74 1875.02,-173.64"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1875.99,-175.89 1881.26,-170.68 1873.89,-171.46 1875.99,-175.89"/>
+<text xml:space="preserve" text-anchor="middle" x="1601" y="-207.96" font-family="Courier,monospace" font-size="10.00">read</text>
 </g>
 <!-- msgs -->
-<g id="node9" class="node">
+<g id="node10" class="node">
 <title>msgs</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="476.46,-169.16 233.54,-169.16 233.54,-125.48 476.46,-125.48 476.46,-169.16"/>
-<text xml:space="preserve" text-anchor="middle" x="355" y="-150.62" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_messages</text>
-<text xml:space="preserve" text-anchor="middle" x="355" y="-137.42" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listFtContextRows (recent slice)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1503.46,-169.16 1260.54,-169.16 1260.54,-125.48 1503.46,-125.48 1503.46,-169.16"/>
+<text xml:space="preserve" text-anchor="middle" x="1382" y="-150.62" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_messages</text>
+<text xml:space="preserve" text-anchor="middle" x="1382" y="-137.42" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listFtContextRows (recent slice)</text>
 </g>
 <!-- director&#45;&gt;msgs -->
-<g id="edge8" class="edge">
+<g id="edge10" class="edge">
 <title>director&#45;&gt;msgs</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M773.22,-246.4C766.05,-244.86 758.95,-243.37 752,-241.96 636.65,-218.49 604.84,-226.89 491,-196.96 466.27,-190.46 439.66,-181.42 416.59,-172.89"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="417.71,-170.69 410.29,-170.54 415.99,-175.28 417.71,-170.69"/>
-<text xml:space="preserve" text-anchor="middle" x="597.18" y="-207.96" font-family="Courier,monospace" font-size="10.00">read</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1328.29,-241.51C1335.71,-233.77 1342.93,-225.43 1349,-216.96 1357.59,-204.97 1364.96,-190.4 1370.55,-177.76"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1372.74,-178.86 1373.24,-171.46 1368.24,-176.94 1372.74,-178.86"/>
+<text xml:space="preserve" text-anchor="middle" x="1367.81" y="-207.96" font-family="Courier,monospace" font-size="10.00">read</text>
 </g>
 <!-- roster -->
-<g id="node10" class="node">
+<g id="node11" class="node">
 <title>roster</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="768.36,-175.76 505.64,-175.76 505.64,-118.88 768.36,-118.88 768.36,-175.76"/>
-<text xml:space="preserve" text-anchor="middle" x="637" y="-157.22" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_participants ⋈ characters</text>
-<text xml:space="preserve" text-anchor="middle" x="637" y="-144.02" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listSessionParticipantRoster</text>
-<text xml:space="preserve" text-anchor="middle" x="637" y="-130.82" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(class / background)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1795.36,-175.76 1532.64,-175.76 1532.64,-118.88 1795.36,-118.88 1795.36,-175.76"/>
+<text xml:space="preserve" text-anchor="middle" x="1664" y="-157.22" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session_participants ⋈ characters</text>
+<text xml:space="preserve" text-anchor="middle" x="1664" y="-144.02" font-family="Courier,monospace" font-size="11.00" fill="#231b12">listSessionParticipantRoster</text>
+<text xml:space="preserve" text-anchor="middle" x="1664" y="-130.82" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(class / background)</text>
 </g>
 <!-- director&#45;&gt;roster -->
-<g id="edge9" class="edge">
+<g id="edge11" class="edge">
 <title>director&#45;&gt;roster</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M836.24,-241.22C793.94,-221.49 744.14,-198.28 704.92,-179.99"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="706.24,-177.9 698.86,-177.16 704.17,-182.34 706.24,-177.9"/>
-<text xml:space="preserve" text-anchor="middle" x="793" y="-207.96" font-family="Courier,monospace" font-size="10.00">read</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M1399.73,-241.22C1456.43,-221.28 1523.29,-197.78 1575.57,-179.4"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1576.33,-181.73 1582.12,-177.1 1574.71,-177.11 1576.33,-181.73"/>
+<text xml:space="preserve" text-anchor="middle" x="1507.87" y="-207.96" font-family="Courier,monospace" font-size="10.00">read</text>
 </g>
 <!-- oneshot -->
-<g id="node11" class="node">
+<g id="node12" class="node">
 <title>oneshot</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1404.06,-169.16 1081.94,-169.16 1081.94,-125.48 1404.06,-125.48 1404.06,-169.16"/>
-<text xml:space="preserve" text-anchor="middle" x="1243" y="-150.62" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">direction:oneshot</text>
-<text xml:space="preserve" text-anchor="middle" x="1243" y="-137.42" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">latest&#45;wins SET · GETDEL by the turn worker</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="330.06,-169.16 7.94,-169.16 7.94,-125.48 330.06,-125.48 330.06,-169.16"/>
+<text xml:space="preserve" text-anchor="middle" x="169" y="-150.62" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">direction:oneshot</text>
+<text xml:space="preserve" text-anchor="middle" x="169" y="-137.42" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">latest&#45;wins SET · GETDEL by the turn worker</text>
 </g>
 <!-- director&#45;&gt;oneshot -->
-<g id="edge11" class="edge">
+<g id="edge15" class="edge">
 <title>director&#45;&gt;oneshot</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1023.01,-241.22C1075.68,-218.97 1138.89,-192.28 1184.01,-173.23"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1184.77,-175.57 1190.26,-170.59 1182.86,-171.05 1184.77,-175.57"/>
-<text xml:space="preserve" text-anchor="middle" x="1169.05" y="-207.96" font-family="Courier,monospace" font-size="10.00">setOneShot (intervene)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1130.35,-265.35C1061.34,-257.75 978.59,-248.96 904,-241.96 655.4,-218.61 589.85,-240.59 344,-196.96 310.37,-190.99 273.87,-181.37 242.94,-172.25"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="243.94,-169.99 236.53,-170.33 242.54,-174.68 243.94,-169.99"/>
+<text xml:space="preserve" text-anchor="middle" x="538.79" y="-207.96" font-family="Courier,monospace" font-size="10.00">setOneShot (intervene)</text>
 </g>
 <!-- standing -->
-<g id="node12" class="node">
+<g id="node13" class="node">
 <title>standing</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1755.06,-169.16 1432.94,-169.16 1432.94,-125.48 1755.06,-125.48 1755.06,-169.16"/>
-<text xml:space="preserve" text-anchor="middle" x="1594" y="-150.62" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">direction:standing</text>
-<text xml:space="preserve" text-anchor="middle" x="1594" y="-137.42" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SET / clear · READ (not cleared) every turn</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="681.06,-169.16 358.94,-169.16 358.94,-125.48 681.06,-125.48 681.06,-169.16"/>
+<text xml:space="preserve" text-anchor="middle" x="520" y="-150.62" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">direction:standing</text>
+<text xml:space="preserve" text-anchor="middle" x="520" y="-137.42" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">SET / clear · READ (not cleared) every turn</text>
 </g>
 <!-- director&#45;&gt;standing -->
-<g id="edge12" class="edge">
+<g id="edge16" class="edge">
 <title>director&#45;&gt;standing</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1076.84,-260.28C1174.95,-244.88 1305.1,-222.59 1419,-196.96 1450.49,-189.87 1484.79,-180.67 1514.6,-172.19"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1515.08,-174.6 1521.14,-170.32 1513.74,-169.89 1515.08,-174.6"/>
-<text xml:space="preserve" text-anchor="middle" x="1412.31" y="-207.96" font-family="Courier,monospace" font-size="10.00">set / clear</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1130.17,-245.26C1100.03,-236.77 1068.8,-227.21 1039.99,-216.96 1027.62,-212.56 1025.81,-207.85 1013,-204.96 944.04,-189.41 764.91,-207.39 695,-196.96 660.21,-191.77 622.52,-181.87 591.06,-172.35"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="591.93,-170.05 584.52,-170.34 590.49,-174.74 591.93,-170.05"/>
+<text xml:space="preserve" text-anchor="middle" x="1072.99" y="-207.96" font-family="Courier,monospace" font-size="10.00">set / clear</text>
 </g>
 <!-- summary -->
-<g id="node13" class="node">
+<g id="node14" class="node">
 <title>summary</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2020.16,-169.16 1783.84,-169.16 1783.84,-125.48 2020.16,-125.48 2020.16,-169.16"/>
-<text xml:space="preserve" text-anchor="middle" x="1902" y="-150.62" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:summary</text>
-<text xml:space="preserve" text-anchor="middle" x="1902" y="-137.42" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ST is the ONLY writer (rewrite)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="946.16,-169.16 709.84,-169.16 709.84,-125.48 946.16,-125.48 946.16,-169.16"/>
+<text xml:space="preserve" text-anchor="middle" x="828" y="-150.62" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session:{cId}:summary</text>
+<text xml:space="preserve" text-anchor="middle" x="828" y="-137.42" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ST is the ONLY writer (rewrite)</text>
 </g>
 <!-- director&#45;&gt;summary -->
-<g id="edge13" class="edge">
+<g id="edge17" class="edge">
 <title>director&#45;&gt;summary</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1076.84,-278.7C1247.44,-271.68 1531.69,-252.01 1770,-196.96 1795.12,-191.16 1821.96,-181.87 1844.84,-172.96"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1845.46,-175.35 1851.07,-170.5 1843.66,-170.79 1845.46,-175.35"/>
-<text xml:space="preserve" text-anchor="middle" x="1776.39" y="-207.96" font-family="Courier,monospace" font-size="10.00">setRunningSummary</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1192.55,-241.29C1152.63,-222.9 1114.2,-205.25 1113,-204.96 1046.88,-188.68 1026.7,-210.66 960,-196.96 934.21,-191.66 906.74,-182.2 883.57,-173.02"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="884.66,-170.82 877.25,-170.48 882.83,-175.37 884.66,-170.82"/>
+<text xml:space="preserve" text-anchor="middle" x="1189.58" y="-207.96" font-family="Courier,monospace" font-size="10.00">setRunningSummary</text>
 </g>
 <!-- director&#45;&gt;usagest -->
-<g id="edge14" class="edge">
+<g id="edge18" class="edge">
 <title>director&#45;&gt;usagest</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M925,-241.22C925,-220.95 925,-197 925,-178.49"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="927.45,-178.7 925,-171.7 922.55,-178.7 927.45,-178.7"/>
-<text xml:space="preserve" text-anchor="middle" x="958.01" y="-207.96" font-family="Courier,monospace" font-size="10.00">incrUsageSt</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1271.43,-241.39C1266.41,-228.39 1259.2,-214.84 1249,-204.96 1235.07,-191.47 1217.58,-181.1 1199.58,-173.16"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1200.92,-171.07 1193.52,-170.61 1199.02,-175.58 1200.92,-171.07"/>
+<text xml:space="preserve" text-anchor="middle" x="1290.82" y="-207.96" font-family="Courier,monospace" font-size="10.00">incrUsageSt</text>
 </g>
 <!-- rearm&#45;&gt;q -->
-<g id="edge17" class="edge">
+<g id="edge21" class="edge">
 <title>rearm&#45;&gt;q</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M520.2,-509.68C476.47,-491.29 419.24,-467.23 373.96,-448.19"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="375.01,-445.98 367.61,-445.52 373.11,-450.5 375.01,-445.98"/>
-<text xml:space="preserve" text-anchor="middle" x="532.25" y="-476.32" font-family="Courier,monospace" font-size="10.00">re&#45;add (own key cleared)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1059.26,-654.18C1026.35,-646.35 990.91,-636.64 958.98,-625.2 929.27,-614.56 897.63,-599.64 871.43,-586.22"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="872.79,-584.17 865.45,-583.13 870.54,-588.52 872.79,-584.17"/>
+<text xml:space="preserve" text-anchor="middle" x="1030.99" y="-616.2" font-family="Courier,monospace" font-size="10.00">re&#45;add (own key cleared)</text>
 </g>
 <!-- nextturn -->
-<g id="node15" class="node">
+<g id="node16" class="node">
 <title>nextturn</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1588.97,-56.88 1247.03,-56.88 1247.03,0 1588.97,0 1588.97,-56.88"/>
-<text xml:space="preserve" text-anchor="middle" x="1418" y="-38.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">NEXT DM turn → FastThinker</text>
-<text xml:space="preserve" text-anchor="middle" x="1418" y="-25.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">one&#45;shot fused onto last user message</text>
-<text xml:space="preserve" text-anchor="middle" x="1418" y="-11.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">standing appended as raw tail (post&#45;breakpoint)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="514.97,-56.88 173.03,-56.88 173.03,0 514.97,0 514.97,-56.88"/>
+<text xml:space="preserve" text-anchor="middle" x="344" y="-38.34" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">NEXT DM turn → FastThinker</text>
+<text xml:space="preserve" text-anchor="middle" x="344" y="-25.14" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">one&#45;shot fused onto last user message</text>
+<text xml:space="preserve" text-anchor="middle" x="344" y="-11.94" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">standing appended as raw tail (post&#45;breakpoint)</text>
 </g>
 <!-- oneshot&#45;&gt;nextturn -->
-<g id="edge18" class="edge">
+<g id="edge22" class="edge">
 <title>oneshot&#45;&gt;nextturn</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1275.1,-124.88C1301.32,-107.37 1338.81,-82.33 1368.81,-62.29"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1369.9,-64.51 1374.36,-58.59 1367.18,-60.44 1369.9,-64.51"/>
-<text xml:space="preserve" text-anchor="middle" x="1374.75" y="-84.88" font-family="Courier,monospace" font-size="10.00">take (GETDEL)</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M201.1,-124.88C227.32,-107.37 264.81,-82.33 294.81,-62.29"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="295.9,-64.51 300.36,-58.59 293.18,-60.44 295.9,-64.51"/>
+<text xml:space="preserve" text-anchor="middle" x="300.75" y="-84.88" font-family="Courier,monospace" font-size="10.00">take (GETDEL)</text>
 </g>
 <!-- standing&#45;&gt;nextturn -->
-<g id="edge19" class="edge">
+<g id="edge23" class="edge">
 <title>standing&#45;&gt;nextturn</title>
-<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M1561.72,-124.88C1535.35,-107.37 1497.65,-82.33 1467.47,-62.29"/>
-<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="1469.07,-60.41 1461.88,-58.58 1466.36,-64.5 1469.07,-60.41"/>
-<text xml:space="preserve" text-anchor="middle" x="1523.28" y="-84.88" font-family="Courier,monospace" font-size="10.00">read</text>
+<path fill="none" stroke="#8a5a3c" stroke-width="1.2" d="M487.72,-124.88C461.35,-107.37 423.65,-82.33 393.47,-62.29"/>
+<polygon fill="#8a5a3c" stroke="#8a5a3c" stroke-width="1.2" points="395.07,-60.41 387.88,-58.58 392.36,-64.5 395.07,-60.41"/>
+<text xml:space="preserve" text-anchor="middle" x="449.28" y="-84.88" font-family="Courier,monospace" font-size="10.00">read</text>
 </g>
 </g>
 </svg>
@@ -326,8 +366,8 @@
   blocking the player-visible stream behind an Opus call. MYT-69 moves it <strong>after</strong> the
   turn, into a background pipeline. A flushed DM turn enqueues an <code>st-evaluation</code> job; a
   dedicated worker — the sixth in the <a href="./worker.html">worker process</a> — runs
-  <strong>policy → gate → evaluate → write</strong>, all off the hot path. Its outputs land in Redis
-  slots the <em>next</em> turn's worker reads. The
+  <strong>policy → converge probe → gate → evaluate → write</strong>, all off the hot path. Its
+  outputs land in Redis slots the <em>next</em> turn's worker reads. The
   <a href="./session-turn.html">session-turn conductor</a> no longer calls the ST at all; the
   in-turn tier seam is retired.
 </p>
@@ -388,11 +428,12 @@
 
 <p>
   Inside <code>processStEvalJob</code>, the first decision is
-  <strong>mechanical code, not a model</strong>. Two arms force an evaluation outright, skipping the
-  gate: turns-since-the-last-ST- run ≥ <code>ST_EVAL_FLOOR_TURNS</code> (the every-N-turns oversight
-  floor), or total session usage ≥ <code>WIND_DOWN_FRACTION</code> ×
-  <code>SESSION_TOKEN_BUDGET</code> (which also flips wind-down mode on). These are policy arms
-  around the gate — like a rate limit, they are ZFC-exempt mechanical thresholds, never prompt
+  <strong>mechanical code, not a model</strong>. Three arms force an evaluation outright, skipping
+  the gate: turns-since-the-last-ST-run ≥ <code>ST_EVAL_FLOOR_TURNS</code> (the every-N-turns
+  oversight floor), total session usage ≥ <code>WIND_DOWN_FRACTION</code> ×
+  <code>SESSION_TOKEN_BUDGET</code> (which also flips wind-down mode on), or the
+  <a href="#the-convergence-steer">convergence probe</a> below returning a steer. These are policy
+  arms around the gate — like a rate limit, they are ZFC-exempt mechanical thresholds, never prompt
   content.
 </p>
 
@@ -425,6 +466,98 @@
   floor guarantees an evaluation within <code>ST_EVAL_FLOOR_TURNS</code> regardless.
 </aside>
 
+<h2 id="the-convergence-steer">The convergence steer</h2>
+
+<p>
+  Wind-down at 0.9 says <em>close now</em>. That is late: by then the table may be mid-thread with
+  nothing but a farewell left to spend, and the send-off gets bolted onto whatever scene happened to
+  be running. myth-3jna1 adds the stage before it. Convergence says
+  <em>start drawing toward somewhere this can rest</em>, while there is still session left to land
+  in. Three arms now run in order across a session: <strong>converge</strong> at 0.75 (and only if
+  the story is behind), <strong>wind-down</strong> at 0.9, then the
+  <a href="./session-turn.html">turn worker</a>'s <strong>farewell</strong> auto-end at 1.0.
+</p>
+
+<p>
+  The steer needs two independent readings. The first is mechanical: cumulative spend over
+  <code>SESSION_TOKEN_BUDGET</code>, arithmetic in <code>converge-policy.ts</code>. The second is a
+  judgment — <em>how far through the prep's intended arc is this table actually?</em> — which is a
+  reading of prose against the <code>sd_playbook</code>, so per ZFC it is a model call and never a
+  beat count in code. Cheap and classification-shaped, so Haiku, the same tier as the gate. The
+  steer fires when the story sits below the spend by more than <code>CONVERGE_LAG_MARGIN</code>.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The probe is never told how much budget is left</strong> — the whole value of the steer is
+  comparing two <em>independent</em> axes, story delivered against session spent. A probe that could
+  see the clock would anchor to it, and the comparison would collapse into a number checked against
+  itself. So <code>st-narrative-progress</code> receives the playbook, the running summary, and a
+  recent-exchange window, and nothing about the budget; the comparison happens afterwards, in code
+  that never reads prose.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Why 0.75, and why a margin</strong> — the probe costs a Haiku call per cycle, so it runs
+  only inside the <code>[CONVERGE_MECHANICAL_FLOOR, WIND_DOWN_FRACTION)</code> window: three
+  quarters of every session carries zero added spend, and once wind-down is active a converge
+  verdict could not change anything anyway. 0.75 leaves roughly a handful of late-session turns —
+  and late turns are the expensive ones, since the FT holds the whole transcript — which is enough
+  to bring a live thread somewhere it can be set down and still reach wind-down with room. Probing
+  earlier would put a quarter of every paid session into landing mode. The
+  <code>CONVERGE_LAG_MARGIN</code> exists because a 0-to-1 arc judgment from Haiku is coarse:
+  without it, "narrative 0.72 at mechanical 0.75" would trip the steer on judgment noise for a
+  session that is in fact on pace. The comparison is strictly <code>&lt;</code>, so a lag of exactly
+  the margin still reads as on-pace.
+</aside>
+
+<p>
+  A verdict <strong>forces</strong> the evaluation on the same arm wind-down uses, rather than
+  waiting for the gate or the five-turn floor. A steer that arrives with no session left to land in
+  is precisely the defect being fixed. The window is a handful of turns at the tail, so the
+  forced-Opus cost profile matches wind-down's, which already accepts it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Fail-quiet, because a spurious steer is worse than none</strong> — a probe failure returns
+  "no converge", which degrades the cycle to exactly the pre-steer behaviour: the Haiku gate decides
+  whether the ST runs, and wind-down remains the backstop. The alternative failure posture — steer
+  on no information — would spend paid session in landing mode for no reason.
+</aside>
+
+<h3 id="what-crosses-the-boundary-and-what-does-not">What crosses the boundary, and what does not</h3>
+
+<p>
+  The probe reads the whole <code>sd_playbook</code>; arc position is not judgeable without the
+  session goals and the revelation list. That is legal for the same reason the gate's playbook read
+  is: its output is consumed by <strong>code only</strong>. Everything that leaves the probe module
+  is a boolean and a token count. The fraction is logged (a number carries no secret, and tuning the
+  thresholds needs it); the model's <code>basis</code> field — secret-aware prose <em>about</em> the
+  playbook — is deliberately never logged and has no consumer anywhere.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The ST is told the mode, never the measurement</strong> — <code>runStDirector</code> takes
+  <code>converge</code> as a boolean, and the prompt fragment it switches on carries no number and
+  no arc position. The ST already holds the playbook, so the mode is all it needs, and keeping the
+  measurement on the code side means it can never be paraphrased into a direction. Opus then writes
+  the actual standing text in its own words, under an explicit instruction to phrase it as craft:
+  the narrator must never learn there is an arc it is behind on, or that a session has a length. So
+  what the <a href="./fast-thinker.html">Fast Thinker</a> eventually reads is a boolean-triggered
+  banner authored by the director — "bring this thread toward a place it can be set down; favour
+  what's already in play over anything new" — with no reason attached. The leak test forces the
+  probe to return a hostile output that repeats a sentinel secret verbatim, and proves a converging
+  cycle and an ordinary one produce byte-identical FT messages.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The player-facing progress number is a different number entirely</strong> — the table does
+  see how much session is left, but that readout is the
+  <a href="./session-turn.html#the-session-progress-signal">mechanical fraction</a> the turn worker
+  computes from token counters, which holds no narrative state at all. Nothing on this page reaches
+  a route, a publisher, or an FT-facing type. Two signals, two sides of the boundary, no shared
+  path.
+</aside>
+
 <h2 id="the-opus-evaluation-the-structural-split">The Opus evaluation: the structural split</h2>
 
 <p>
@@ -435,6 +568,21 @@
   <a href="./llm.html">LLM client</a>'s <code>generateObject</code>. The output schema is the
   channel's leak bound:
 </p>
+
+<aside class="wiki-rationale">
+  <strong>On Opus 5 the director thinks, whether or not anyone asked it to</strong> — omitting the
+  <code>thinking</code> parameter used to mean no thinking; on the 5 line it means
+  <em>adaptive</em> thinking, and we omit it everywhere. This is the capability the bump was for,
+  and the director's evaluation is where deep thinking is most wanted. But it changes what
+  <code>maxOutputTokens</code> means: the cap now covers thinking and visible output
+  <em>together</em>, so a ceiling sized for the answer alone truncates mid-thought — which for a
+  structured call is a terminal failure, not a shorter answer. Hence 4000 → 16000. Raising a ceiling
+  is close to free (we are billed for tokens actually produced, and adaptive thinking spends only
+  what the task needs) while truncation costs the whole cycle; wall-clock stays bounded by
+  <code>ST_EVAL_TIMEOUT_MS</code> either way. The same reasoning raised the
+  <a href="./scribe.html">Scribe</a>'s retcon cap and the
+  <a href="./fast-thinker.html">ST-vet</a>'s.
+</aside>
 
 <ul>
   <li>
@@ -497,7 +645,7 @@
   and coarse time progression.
 </aside>
 
-<h2 id="the-seven-direction-classes">The seven direction classes</h2>
+<h2 id="the-eight-direction-classes">The eight direction classes</h2>
 
 <p>
   The prompt's taxonomy spans craft and content. The four classic monitors — tonal monotony, pacing
@@ -509,7 +657,10 @@
   check ride the FT's <code>roll_skill_check</code>, direct the next rung after the pass lands),
   <strong>playbook beats</strong> (secret-free behavioral events),
   <strong>secret-integrity steering</strong> (a boundary phrased <em>without</em> naming the
-  protected content), <strong>grounding step-ins</strong>, and <strong>wind-down</strong>.
+  protected content), <strong>grounding step-ins</strong>, and the two closing classes —
+  <strong>convergence</strong> and <strong>wind-down</strong>. Both of the closing pair are
+  standing-shaped rather than one-shot: aiming a session at a resting point is a constraint that has
+  to hold across scenes, not a nudge that evaporates next turn.
 </p>
 
 <aside class="wiki-rationale">
@@ -587,9 +738,34 @@
   <code>(usage + usage:st) ≥ WIND_DOWN_FRACTION × SESSION_TOKEN_BUDGET</code>, the evaluation is
   forced with the wind-down flag and the director sets a <strong>standing</strong> directive
   steering toward a natural close — resolve the current scene, open no new threads or NPCs — and
-  keeps directing toward closure on subsequent evaluations. This is the ST-side signal only; the
-  actual <code>session_end</code> orchestration and the FT-context hard cap belong to the
-  session-end issue.
+  keeps directing toward closure on subsequent evaluations. It is the second of the three closing
+  arms, after <a href="#the-convergence-steer">convergence</a> at 0.75 and before the
+  <a href="./session-turn.html">turn worker</a>'s farewell auto-end at 1.0. Wind-down and
+  convergence are mutually exclusive by construction — the worker never probes for convergence once
+  wind-down is active — which is why the probe takes the wind-down expression as an argument rather
+  than forking a second float comparison of its own.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>What the budget constant actually governs, and why it moved</strong> —
+  <code>SESSION_TOKEN_BUDGET</code> went from 400,000 to 545,000 on 2026-07-26, and that was
+  <em>not</em> a decision to make sessions longer. Sonnet 5 ships a tokenizer that spends about
+  35.6% more tokens on identical text (measured on 6KB of our own prep prompt: 1175 → 1593), and the
+  <a href="./fast-thinker.html">Fast Thinker</a> re-sends the whole transcript every turn — so
+  overnight the old 400,000 bought roughly 26% less actual story. Multiplying through restores the
+  prior session in <em>prose</em> terms rather than token terms. Worth being precise about the blast
+  radius: the three arms that read this constant are the convergence probe's window, the wind-down
+  flip, and the <a href="./session-turn.html#the-session-progress-signal">progress fraction</a>. So
+  raising it makes the DM land later and the progress bar climb slower; it is narrative pacing, not
+  an authorisation to spend more. Sessions that genuinely run long do cost more, and Sonnet 5's
+  introductory rate ends 2026-08-31 — an equal-length session is slightly cheaper than before until
+  then, and roughly 36% dearer after.
+</aside>
+
+<p>
+  This is the ST-side signal only; the <code>session_end</code> orchestration belongs to the
+  <a href="./session-reconcile.html">session-end</a> flow, and the FT-context hard cap is the
+  <a href="./fast-thinker.html">Fast Thinker</a>'s.
 </p>
 
 <aside class="wiki-rationale">
@@ -597,7 +773,9 @@
   same-campaign session started within the keys' lifetime would otherwise inherit the prior
   session's usage and a standing wind-down directive. So
   <code>POST /api/sessions/:campaignId/start</code> resets the spend keys (<code>:usage</code>,
-  <code>:usage:st</code>, <code>:summary</code>) and the ST-owned trigger-state (both direction
+  <code>:usage:st</code>, <code>:summary</code>, and — since the fraction is derived from the same
+  budget — the <code>:progress</code> floor, which never falls on its own and would otherwise open
+  the next session pinned at the last one's reading) and the ST-owned trigger-state (both direction
   slots + the turns-since-ST counter). The smoke surfaced the sibling hazard too: a stale
   <code>responded-seq</code> watermark made every new batch
   <code>(staleWatermark, max]</code> empty, so the DM never fired — the session-start reset now
@@ -644,7 +822,11 @@
   <li>
     After a turn flushes, watch the worker log for <code>st-eval gate</code> (with
     <code>needed</code> / <code>confidence</code> / <code>skip</code>) on a gated cycle, or a forced
-    evaluation when the floor or wind-down arm fired.
+    evaluation when the floor or wind-down arm fired. Past 75% of the budget you should also see
+    <code>st-eval convergence probe</code> with <code>mechanical</code> / <code>narrative</code> /
+    <code>converge</code> — those two numbers are what to watch when tuning
+    <code>CONVERGE_LAG_MARGIN</code>. Below the floor the line is absent, which is correct: the
+    probe does not run.
   </li>
   <li>
     On an intervention, inspect the slots:
@@ -734,8 +916,24 @@
     </tr>
     <tr>
       <td><code>SESSION_TOKEN_BUDGET</code> / <code>WIND_DOWN_FRACTION</code></td>
-      <td>400000 / 0.9</td>
-      <td>The session-bound proxy and the fraction at which wind-down trips.</td>
+      <td>545000 / 0.9</td>
+      <td>
+        The session-bound proxy and the fraction at which wind-down trips. 400000 → 545000 on the
+        Sonnet 5 tokenizer shift — same session length in prose, not a bigger session.
+      </td>
+    </tr>
+    <tr>
+      <td><code>CONVERGE_MECHANICAL_FLOOR</code> / <code>CONVERGE_LAG_MARGIN</code></td>
+      <td>0.75 / 0.1</td>
+      <td>
+        Where the <a href="#the-convergence-steer">convergence probe</a> starts running, and how far
+        the story must lag the spend before it steers. Both are pacing feel; real play settles them.
+      </td>
+    </tr>
+    <tr>
+      <td><code>ST_PROGRESS_MODEL</code> / <code>ST_PROGRESS_TIMEOUT_MS</code></td>
+      <td><code>HAIKU</code> / 30s</td>
+      <td>The narrative-progress probe's tier and budget — same posture as the gate.</td>
     </tr>
     <tr>
       <td><code>ST_EVAL_TIMEOUT_MS</code> / <code>ST_GATE_TIMEOUT_MS</code></td>
@@ -744,8 +942,12 @@
     </tr>
     <tr>
       <td><code>ST_EVAL_MAX_OUTPUT_TOKENS</code></td>
-      <td>4000</td>
-      <td>Reasoning + direction + a full summary rewrite is long; the SDK default truncates.</td>
+      <td>16000</td>
+      <td>
+        Reasoning + direction + a full summary rewrite is long; the SDK default truncates. Raised
+        4000 → 16000 for Opus 5, where thinking is on by default and shares this one ceiling with
+        the visible output. <code>ST_EVAL_TIMEOUT_MS</code> remains the wall-clock guard.
+      </td>
     </tr>
     <tr>
       <td><code>ST_SUMMARY_TARGET_WORDS</code></td>
@@ -831,14 +1033,49 @@
     </tr>
     <tr>
       <td>
-        <code>src/llm/prompts/session/st-gate.txt</code> +
-        <code>st-evaluation.txt</code>
+        <code>src/llm/st-narrative-progress.ts</code> +
+        <code>src/llm/schemas/st-narrative-progress.ts</code>
       </td>
-      <td>The gate's spend-decision prompt and the director's multiplayer evaluation prompt.</td>
+      <td>
+        <code>runStNarrativeProgress</code> — the Haiku
+        <a href="#the-convergence-steer">arc-position judgment</a>. Errors propagate; the
+        fail-posture is the caller's to choose.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/session/converge-policy.ts</code> + <code>src/session/st-converge-probe.ts</code>
+      </td>
+      <td>
+        The deterministic half (<code>mechanicalProgress</code>,
+        <code>shouldProbeNarrativeProgress</code>, <code>isConverging</code>) and the seam that
+        joins it to the judgment (<code>probeConvergence</code>, <code>NO_CONVERGE</code>) with the
+        fail-quiet posture. Split out so the worker stays a readable ordered shell.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/st-usage.ts</code></td>
+      <td>
+        <code>usageTokens</code> — the one token-count fold, shared by the gate, the director, and
+        the probe now that three call sites accumulate into <code>:usage:st</code>.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/llm/prompts/session/st-gate.txt</code> + <code>st-evaluation.txt</code> +
+        <code>st-narrative-progress.txt</code>
+      </td>
+      <td>
+        The gate's spend-decision prompt, the director's multiplayer evaluation prompt (class H,
+        convergence, and the <code>{{converge}}</code> slot), and the arc-position probe's prompt.
+      </td>
     </tr>
     <tr>
       <td><code>src/session/st-config.ts</code></td>
-      <td>The tuning constants above (models, floor, gate floor, windows, budget, timeouts).</td>
+      <td>
+        The tuning constants above (models, floor, gate floor, windows, budget, convergence
+        thresholds, timeouts).
+      </td>
     </tr>
   </tbody>
 </table>
@@ -849,10 +1086,15 @@
   <code>backend/src/session/st-evaluation-worker.ts</code>,
   <code>backend/src/session/st-eval-queue.ts</code>, <code>backend/src/session/st-config.ts</code>,
   <code>backend/src/llm/st-gate.ts</code>, <code>backend/src/llm/st-director.ts</code>,
-  <code>backend/src/llm/schemas/st-gate.ts</code>,
+  <code>backend/src/llm/st-narrative-progress.ts</code>,
+  <code>backend/src/session/converge-policy.ts</code>,
+  <code>backend/src/session/st-converge-probe.ts</code>,
+  <code>backend/src/session/st-usage.ts</code>, <code>backend/src/llm/schemas/st-gate.ts</code>,
   <code>backend/src/llm/schemas/st-director.ts</code>,
+  <code>backend/src/llm/schemas/st-narrative-progress.ts</code>,
   <code>backend/src/llm/prompts/session/st-gate.txt</code>,
   <code>backend/src/llm/prompts/session/st-evaluation.txt</code>,
+  <code>backend/src/llm/prompts/session/st-narrative-progress.txt</code>,
   <code>backend/src/session/trigger-state.ts</code>. Design spec:
   <code>docs/superpowers/specs/2026-06-10-myt-69-slowthinker-design.md</code>.
 </p>
@@ -861,7 +1103,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-queue-single-flight-per-campaign-no-ttl">The queue: single-flight per campaign, no TTL</a></li><li style="padding-left:0"><a href="#the-deterministic-policy-and-the-haiku-gate">The deterministic policy and the Haiku gate</a></li><li style="padding-left:0"><a href="#the-opus-evaluation-the-structural-split">The Opus evaluation: the structural split</a></li><li style="padding-left:0"><a href="#the-seven-direction-classes">The seven direction classes</a></li><li style="padding-left:0"><a href="#the-slots-and-how-the-next-turn-consumes-them">The slots and how the next turn consumes them</a></li><li style="padding-left:0"><a href="#summary-ownership-and-the-dedicated-usage-key">Summary ownership and the dedicated usage key</a></li><li style="padding-left:0"><a href="#wind-down-and-session-boundaries">Wind-down and session boundaries</a></li><li style="padding-left:0"><a href="#enforced-ignorance">Enforced ignorance</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#watch-a-direction-land">Watch a direction land on the next turn</a></li><li style="padding-left:12px"><a href="#diagnose-an-st-that-never-evaluates">Diagnose an ST that never evaluates</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#tuning-constants-st-config-ts">Tuning constants (st-config.ts)</a></li><li style="padding-left:12px"><a href="#redis-slots-trigger-state-ts-session-state-ts">Redis slots (trigger-state.ts / session-state.ts)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-queue-single-flight-per-campaign-no-ttl">The queue: single-flight per campaign, no TTL</a></li><li style="padding-left:0"><a href="#the-deterministic-policy-and-the-haiku-gate">The deterministic policy and the Haiku gate</a></li><li style="padding-left:0"><a href="#the-convergence-steer">The convergence steer</a></li><li style="padding-left:12px"><a href="#what-crosses-the-boundary-and-what-does-not">What crosses the boundary, and what does not</a></li><li style="padding-left:0"><a href="#the-opus-evaluation-the-structural-split">The Opus evaluation: the structural split</a></li><li style="padding-left:0"><a href="#the-eight-direction-classes">The eight direction classes</a></li><li style="padding-left:0"><a href="#the-slots-and-how-the-next-turn-consumes-them">The slots and how the next turn consumes them</a></li><li style="padding-left:0"><a href="#summary-ownership-and-the-dedicated-usage-key">Summary ownership and the dedicated usage key</a></li><li style="padding-left:0"><a href="#wind-down-and-session-boundaries">Wind-down and session boundaries</a></li><li style="padding-left:0"><a href="#enforced-ignorance">Enforced ignorance</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#watch-a-direction-land">Watch a direction land on the next turn</a></li><li style="padding-left:12px"><a href="#diagnose-an-st-that-never-evaluates">Diagnose an ST that never evaluates</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#tuning-constants-st-config-ts">Tuning constants (st-config.ts)</a></li><li style="padding-left:12px"><a href="#redis-slots-trigger-state-ts-session-state-ts">Redis slots (trigger-state.ts / session-state.ts)</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

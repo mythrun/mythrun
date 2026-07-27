@@ -1,6 +1,6 @@
 <!-- source: backend/src/repo/ -->
 <!-- source: backend/src/app-deps.ts -->
-<!-- source-hash: sha256:cab8671e6827ca8f2f4842a42770689785eb840c84c9be9f262bedb4fb4f9ca4 -->
+<!-- source-hash: sha256:bc66466369037d993f7e4a5845ae4a3d452fd896d105d91cbf432385dd65ab8a -->
 <!-- last-ticket: MYT-74c -->
 
 <h1>Repository layer</h1>
@@ -31,9 +31,12 @@
   composite multi-table read that replaced the former <code>repo.pool</code> escape hatch) plus
   <code>worldRetrieval</code> (the
   <a href="./world-store-retrieval.html">world-store retrieval</a> binder — pgvector cosine search
-  and recursive-CTE graph walks) — and a <code>transaction</code> method. The return type is
-  exported as <code>type Repo</code>; the <a href="../runtime/index.html">backend runtime</a>'s
-  <code>AppDeps</code> carries it alongside <code>pg</code>, the two Redis clients, and the derived
+  and recursive-CTE graph walks) plus the three
+  <a href="#three-late-namespaces-snapshots-srd-and-tripwire-verdicts">late namespaces</a>
+  (<code>snapshots</code>, <code>srd</code>, <code>tripwireVerdicts</code>) — and a
+  <code>transaction</code> method. The return type is exported as <code>type Repo</code>; the
+  <a href="../runtime/index.html">backend runtime</a>'s <code>AppDeps</code> carries it alongside
+  <code>pg</code>, the two Redis clients, and the derived
   <code>redisKeyPrefix</code>
   (<code>${MYTHRUN_ENV}:${REGION_PREFIX}:</code>) every Redis-keyed subsystem prepends to its keys;
   <code>server.ts</code> threads <code>createRepo(pgRef)</code> into <code>buildApp</code> on both
@@ -284,14 +287,23 @@
   <strong>only</strong> transcript store, so it gained the PG-direct DM-turn surface (<code
     >listFtContextRows</code
   >
-  / <code>turnRowsExist</code> / <code>appendDmTurn</code>) and <code>characters</code> gained the
-  session-roster resolution the <a href="../runtime/fast-thinker.html">Fast Thinker</a>'s skill
-  checks read (<code>findSessionParticipantCharacterByName</code> /
-  <code>listSessionParticipantCharacters</code>) plus the class/background roster the
+  / <code>turnRowsExist</code> / <code>appendDmTurn</code>, plus <code>listByTurn</code> — one
+  turn's rows in <code>turn_ordinal</code> order, which the worker's corrected-turn
+  whole-turn-replace push reads to rebuild that turn's replay frames for the live
+  <code>session_reconnect</code>) and <code>characters</code> gained the session-roster resolution
+  the <a href="../runtime/fast-thinker.html">Fast Thinker</a>'s skill checks read (<code
+    >findSessionParticipantCharacterByName</code
+  >
+  / <code>listSessionParticipantCharacters</code>) plus the class/background roster the
   <a href="../runtime/slow-thinker.html">Slow Thinker</a> reads for its world-state block
   (<code>listSessionParticipantRoster</code>, MYT-69 — a new read, leaving the FT-hot-path sibling
-  untouched). The namespaces still unfilled by any consumer are tracked as beads under the
-  <code>repo-deferred</code> label and ship batched with their consumers.
+  untouched). Three more namespaces —
+  <a href="#three-late-namespaces-snapshots-srd-and-tripwire-verdicts"
+    ><code>snapshots</code>, <code>srd</code>, and <code>tripwireVerdicts</code></a
+  >
+  — land three more of the spec's §5.2 list against tables that had been sitting in the schema
+  without a typed surface. The namespaces still unfilled by any consumer are tracked as beads under
+  the <code>repo-deferred</code> label and ship batched with their consumers.
 </p>
 
 <aside class="wiki-rationale">
@@ -325,13 +337,89 @@
   <code>character_concepts</code> follows the rule: its own repo
   (<code>backend/src/repo/character-concepts.ts</code>) ships under MYT-53 with exactly the
   primitives the routes and the worker need (<code>upsert</code>, <code>getByCampaignAndUser</code>,
-  <code>listSubmittedByCampaign</code>, <code>countCompleted</code>, the four status flips, and the
-  composable <code>flipSubmittedToProcessing</code>), because the concept lifecycle has a real
-  consumer to shape it against. Cluster C dropped that flip's explicit BEGIN/COMMIT so it composes
-  into <code>POST /characters</code>' <code>repo.transaction</code> (upsert → flip → seed the
+  <code>getConceptOutput</code>, <code>listSubmittedByCampaign</code>, <code>countCompleted</code>,
+  the four status flips, and the composable <code>flipSubmittedToProcessing</code>), because the
+  concept lifecycle has a real consumer to shape it against. <code>getConceptOutput</code> reads
+  back the structured narrative <code>setConceptOutput</code> wrote, and it is what makes stage-3
+  re-entry <em>recoverable</em>: the loop persists <code>concept_output</code> before it marks the
+  <code>character_concept</code> stage completed, so a job resuming after that marker committed
+  finds <code>ctx.conceptOutput</code> null in memory but the same narrative still on the row. A
+  genuinely absent row returns <code>null</code>, and the caller terminal-fails on it rather than
+  retrying forever. Cluster C dropped that flip's explicit BEGIN/COMMIT so it composes into
+  <code>POST /characters</code>' <code>repo.transaction</code> (upsert → flip → seed the
   <code>character_concept</code> recovery row), with the BullMQ enqueue moved to AFTER the commit
   (the MYT-56 shape).
 </p>
+
+<h3 id="three-late-namespaces-snapshots-srd-and-tripwire-verdicts">
+  Three late namespaces: <code>snapshots</code>, <code>srd</code>, and <code>tripwireVerdicts</code>
+</h3>
+
+<p>
+  <strong><code>snapshots</code></strong> (<code>repo/snapshots.ts</code>) is the binder for
+  <code>world_snapshots</code>, the campaign-scoped world-state checkpoint table migration 001 laid
+  down and <code>session_preps.snapshot_id</code> points at. Four methods — <code>create</code>,
+  <code>getById</code>, <code>listByCampaign</code>, <code>getLatest</code>. A snapshot's
+  <code>data</code> column is TEXT holding an opaque serialized blob; the repo never parses it,
+  because the column predates the world store's shape and the layer stays agnostic about what a
+  caller chooses to checkpoint. It is composable, so a checkpoint can be written in the same
+  transaction as the state it captures.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Both ordered reads tiebreak on <code>id DESC</code>, and that is load-bearing</strong> —
+  <code>created_at DEFAULT now()</code> is <em>transaction</em> time in Postgres, so two snapshots
+  written inside one transaction carry an identical timestamp down to the microsecond. Ordering by
+  <code>created_at DESC</code> alone would make "latest" a coin flip between them. The ids are
+  UUIDv7 and therefore time-ordered, so adding <code>id DESC</code> resolves the tie by true write
+  order rather than an arbitrary one.
+</aside>
+
+<p>
+  <strong><code>srd</code></strong> (<code>repo/srd.ts</code>) covers migration 003's three SRD
+  reference tables — <code>srd_monsters</code>, <code>srd_spells</code>,
+  <code>srd_conditions</code> — with the five reads the spec pins: <code>getMonster</code>,
+  <code>getSpell</code>, <code>getCondition</code>, <code>searchMonsters</code>,
+  <code>searchSpells</code>. It is read-only for now. The tables are populated by an SRD content
+  loader that isn't built yet, and the loader's write strategy (idempotent UPSERT versus
+  truncate-and-reload) is precisely what decides whether this namespace needs a write primitive at
+  all and of what shape — so the write surface is deferred to that ticket rather than guessed at.
+  The JSONB columns are typed <code>unknown</code> for the same reason: nothing in-tree pins their
+  shape because no data exists yet, and <code>unknown</code> forces a consumer to validate at its
+  own boundary instead of inheriting a shape invented here.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    ><code>strpos(lower(name), lower($1)) &gt; 0</code>, not <code>ILIKE '%'||$1||'%'</code></strong
+  >
+  — under <code>ILIKE</code> a caller's <code>%</code> or <code>_</code> is a wildcard, so a bare
+  <code>%</code> in a user-supplied query matches the entire table. Under <code>strpos</code> the
+  same characters are literal text. The tables are reference-sized (the SRD is a few hundred rows),
+  so a sequential scan is the right plan and there is no index the change defeats. Results are
+  capped by a default limit so a broad query can't return an unbounded page, and
+  <code>ORDER BY name</code> sorts under the database collation — stable per deployment, but not
+  byte order, so a caller needing a specific ordering sorts client-side.
+</aside>
+
+<p>
+  <strong><code>tripwireVerdicts</code></strong> (<code>repo/tripwire-verdicts.ts</code>, migration
+  037) is a single <code>insert</code> over one row per post-turn secret-tripwire verdict: severity
+  (<code>none</code> / <code>soft_consistency</code> / <code>hard_reveal</code>), confidence, and an
+  optional <code>secret_ref</code>. It exists because the run-2 forensics had to infer a firing
+  breach from two incidental "skipping re-author" log lines; the table makes every verdict durable
+  and queryable per turn, indexed both by session (the verdict timeline) and by turn ("what did the
+  tripwire say about <em>this</em> turn").
+</p>
+
+<aside class="wiki-rationale">
+  <strong><code>secret_ref</code> is handle-only, by design</strong> — the column stores the opaque
+  <code>[SECRET-n]</code> handle (or <code>[CONSISTENCY]</code> / <code>[UNRECOGNIZED]</code> for
+  the non-secret verdicts), never secret content; the Scribe worker sanitizes before insert. A
+  forensics table that recorded <em>what</em> the secret was would turn the audit trail into a
+  second, unguarded copy of the thing enforced ignorance exists to protect — the same reason a
+  corrected-field echo never lands on a shared surface.
+</aside>
 
 <h2>Camel out, snake in: mappers at the boundary</h2>
 
@@ -495,7 +583,7 @@
 <p>
   <strong><code>users</code></strong> — <code>create</code>, <code>getById</code>,
   <code>getByCognitoSub</code>, <code>getByCognitoSubWithTimeout</code>, <code>getByUsername</code>,
-  <code>update</code>; plus the standalone
+  <code>isSuspended</code>, <code>update</code>; plus the standalone
   <code>findOrCreateStripeCustomer(pool, stripe, userId)</code> helper exported alongside the
   closure. Each <code>getByX</code> maps 1:1 to a column with an index that supports it (or, for
   <code>getByUsername</code>, the <code>users_username_lower_key</code> expression index); adding a
@@ -532,6 +620,19 @@
   effect inside a transaction, so the BEGIN/COMMIT wrapper isn't optional even though the read
   itself is single-statement. SQLSTATE <code>57014</code> (statement_timeout) maps to a
   <code>LookupTimeoutError</code> the route layer translates to a 503.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>isSuspended</code> defaults a missing row to SUSPENDED</strong> — the obvious
+  spelling is <code>getById(id)?.suspendedAt !== null</code>, and it gets the missing-row answer
+  backwards. This is a security control: the transport layers gate on it at the WebSocket handshake
+  and on every inbound frame, so a suspension lands on an already-open socket without waiting for a
+  Redis message. "I have no row for that id" therefore has to resolve to suspended, and putting that
+  default inside one dedicated read means no call site can write it open by accident. A missing row
+  is unreachable through the FK from <code>campaign_members</code>, so the fail-closed default costs
+  nothing in practice. It is also what holds out the permanently-suspended SYSTEM user that owns the
+  demo world: a 1970 <code>suspended_at</code> sentinel runs it through the ordinary suspension
+  machinery, with no name-based special case anywhere for a future refactor to drop.
 </aside>
 
 <p>
@@ -595,7 +696,8 @@
   <code>idx_sessions_one_active</code> guarantees at most one active row per campaign, but the
   <code>LIMIT 1</code> at the SQL site makes the contract self-documenting.
   <code>recordUsage</code> + <code>budgetSummary</code> are the per-session cost-tracking primitives
-  MYT-43 added; the cluster has its own narrative on the
+  MYT-43 added — both are <a href="#recordusage-budgetsummary">currently unwired</a>; the cluster
+  has its own narrative on the
   <a href="../auth-billing/billing-metering.html">billing-metering page</a>. The remaining methods
   are the <a href="../runtime/session-reconcile.html">end-of-session</a> primitives.
   <code>getMostRecentByCampaign</code> + <code>markReconciled</code> are MYT-74a's:
@@ -608,8 +710,25 @@
   returning the rowCount so <code>session_end</code> broadcasts exactly once),
   <code>writeAnalysis</code> (the recap + handoff write, gated on <code>summary IS NULL</code> so a
   retry is idempotent), and <code>getPriorContextForPrep</code> (the prep's newest-first read of
-  prior ended sessions with a written analysis).
+  prior ended sessions with a written analysis). <code>getLatestEndedRecap</code> (myth-lhp99) is
+  the player-facing counterpart to <code>writeAnalysis</code>: the campaign's most-recent
+  <code>ended</code> session, ordered <code>session_number DESC LIMIT 1</code>, projected to
+  <code>sessionNumber</code>, <code>endedAt</code>, and the raw <code>summary</code> JSON wrapper.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The recap read is a projection, not <code>getById</code></strong> —
+  <code>sessions</code> carries two written-by-the-analysis columns, and only one of them is
+  secret-free. <code>summary</code> holds the player-witnessed
+  <code>{summary, emergingThreads}</code> pair; <code>handoff</code> and
+  <code>st_running_summary</code> are secret-aware, written for the Slow Thinker. A recap surface
+  reaching for the whole row would have both in hand and only a code-review habit standing between
+  the plot and the wire. <code>getLatestEndedRecap</code> selects the three safe columns and nothing
+  else, so the enforced-ignorance boundary is a SQL fact rather than a caller's discipline — the
+  same shape as <code>worlds.getWikiSummary</code>. It returns the summary as an unparsed string
+  because the column is <code>NULL</code> until the async post-session analysis lands; the route
+  parses it and renders <code>pending</code> on a null or malformed value.
+</aside>
 
 <aside class="wiki-rationale">
   <strong><code>sessions.update</code> doesn't bump <code>updated_at</code></strong> — the
@@ -621,7 +740,28 @@
   increment counters in place without touching it.
 </aside>
 
-<h3 id="recordusage-budgetsummary"><code>recordUsage</code> and <code>budgetSummary</code></h3>
+<h3 id="recordusage-budgetsummary">
+  <code>recordUsage</code> and <code>budgetSummary</code> — defined, and currently unwired
+</h3>
+
+<aside class="wiki-rationale">
+  <strong><code>session_usage</code> has no writer, so the durable cost trail is empty</strong> —
+  <code>recordUsage</code> is the only thing that writes the table, and it has no production caller
+  anywhere. <code>budgetSummary</code> therefore always reads <code>null</code>. This is a live gap,
+  not a design: it was found when the turn worker's budget auto-end — which read
+  <code>budgetSummary</code> — turned out to have never fired once. Cumulative tokens were
+  permanently zero, so no session ever hit the budget cliff; sessions ended only when a player chose
+  to end one, or when the FT context finally overflowed and the provider rejected the call mid-turn,
+  which is an error rather than an ending (no farewell, no finalize, no recap). The stop was
+  restored by pointing it at the Redis usage counter the
+  <a href="../runtime/slow-thinker.html">Slow Thinker</a>'s wind-down and the progress signal
+  already read — three signals that must agree about how much budget is gone are surest to agree
+  when they read one number. Re-wiring <code>recordUsage</code> would have given a fourth. The
+  durable per-session trail is still missing, and anything reading <code>session_usage</code> for
+  cost metering or analytics reads nothing; that is a metering concern tracked separately rather
+  than conflated with restoring the stop. Everything below describes the shape these two methods
+  have when a writer is finally wired to them.
+</aside>
 
 <p>
   <code>recordUsage(sessionId, model, deltas)</code> writes per LLM call. The function computes the
@@ -651,8 +791,9 @@
 <p>
   <code>budgetSummary(sessionId)</code> is the read-side for non-hot-path consumers (receipts,
   dashboards, end-of-session reports). Plain SELECT, returns the row or <code>null</code> for
-  sessions with no LLM calls yet. The Session Runtime hot path doesn't call it — it uses
-  <code>recordUsage</code>'s return value, saving one round-trip per turn.
+  sessions with no LLM calls yet — which, with no writer, is every session. The Session Runtime hot
+  path was never meant to call it: the design has it use <code>recordUsage</code>'s return value
+  instead, saving a round-trip per turn.
 </p>
 
 <p>
@@ -714,6 +855,13 @@
   purely to keep <code>characters.ts</code> under the 400-line cap; the narrative for the
   guard-predicate debits, the §5a HP single owner, and the per-turn snapshot is on the
   <a href="../runtime/character-ledger.html">character ledger</a> page.
+  <code>readConditions(characterId)</code> is the one deliberately narrow read in that interface:
+  the <code>ledger_update</code> emit sites on the hot HP path need exactly a character's active
+  conditions and must not pay for a whole <code>readPartyLedgerSnapshot</code>, which fans out per
+  character across slots, features, spells, and equipment. It uses the same projection and
+  <code>ORDER BY condition ASC</code> as the snapshot's per-character read, so the two sources of
+  <code>activeConditions</code> agree byte-for-byte on a given character state; sites that already
+  hold a post-mutation snapshot reuse its <code>conditions</code> instead of calling it.
 </p>
 
 <aside class="wiki-rationale">
@@ -1248,10 +1396,12 @@
       <td><code>src/repo/users.ts</code></td>
       <td>
         <code>usersNs(c)</code> binder — <code>create</code>, <code>getById</code>,
-        <code>getByCognitoSub</code>, <code>getByUsername</code>, <code>update</code>;
-        <code>selfManagingUsers(pool)</code> — <code>getByCognitoSubWithTimeout</code> (own tx +
-        statement timeout, pool-only); <code>createUsersRepo(pool)</code> back-compat factory
-        (binder ∪ self-managing); <code>LookupTimeoutError</code>; standalone
+        <code>getByCognitoSub</code>, <code>getByUsername</code>,
+        <code>isSuspended</code> (fail-closed suspension predicate; missing row ⇒ suspended),
+        <code>update</code>; <code>selfManagingUsers(pool)</code> —
+        <code>getByCognitoSubWithTimeout</code> (own tx + statement timeout, pool-only);
+        <code>createUsersRepo(pool)</code> back-compat factory (binder ∪ self-managing);
+        <code>LookupTimeoutError</code>; standalone
         <code>findOrCreateStripeCustomer</code> three-phase helper +
         <code>StripeCustomersClient</code> structural interface.
       </td>
@@ -1316,9 +1466,11 @@
       <td>
         <code>sessionsNs(c)</code> binder — <code>create</code>, <code>getById</code>,
         <code>getActiveByCampaign</code>, <code>getMostRecentByCampaign</code>,
-        <code>listByCampaign</code>, <code>update</code>, <code>recordUsage</code>,
-        <code>budgetSummary</code>, <code>markReconciled</code>, and MYT-74b's
-        <code>markEnded</code> / <code>writeAnalysis</code> / <code>getPriorContextForPrep</code>;
+        <code>listByCampaign</code>, <code>update</code>, <code>recordUsage</code> +
+        <code>budgetSummary</code> (defined, no production caller — see
+        <a href="#recordusage-budgetsummary">above</a>), <code>markReconciled</code>, MYT-74b's
+        <code>markEnded</code> / <code>writeAnalysis</code> / <code>getPriorContextForPrep</code>,
+        and <code>getLatestEndedRecap</code> (secret-free player recap projection);
         <code>createSessionsRepo(pool)</code> back-compat factory.
       </td>
     </tr>
@@ -1390,6 +1542,7 @@
       <td>
         <code>createCharacterConceptsRepo(pool)</code> — <code>upsert</code> (member submission; ON
         CONFLICT (campaign_id, user_id) DO UPDATE), <code>getByCampaignAndUser</code>,
+        <code>getConceptOutput</code> (stage-3 re-entry recovery read),
         <code>listSubmittedByCampaign</code>, <code>countCompleted</code>,
         <code>loadCompletedParty</code>, the four status flips (<code>markProcessing</code>,
         <code>markCompleted</code>, <code>markFailed</code>, <code>markIntegrated</code>), and the
@@ -1511,6 +1664,32 @@
         renders into prep prompts. Moved verbatim from <code>world-dump.ts</code>'s former
         <code>loadWorldInventory</code>; homing it behind the repo boundary is what let the
         <code>repo.pool</code> escape hatch be removed.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/snapshots.ts</code></td>
+      <td>
+        <code>snapshotsNs(c)</code> — <code>create</code>, <code>getById</code>,
+        <code>listByCampaign</code>, <code>getLatest</code> over <code>world_snapshots</code>.
+        <code>data</code> is an opaque TEXT blob the repo never parses; both ordered reads tiebreak
+        <code>created_at DESC, id DESC</code> because <code>now()</code> is transaction time.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/srd.ts</code></td>
+      <td>
+        <code>srdNs(c)</code> — <code>getMonster</code>, <code>getSpell</code>,
+        <code>getCondition</code>, <code>searchMonsters</code>, <code>searchSpells</code>. Read-only
+        until the SRD content loader decides the write shape; JSONB columns typed
+        <code>unknown</code>; substring search via <code>strpos</code>, default limit 50.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/repo/tripwire-verdicts.ts</code></td>
+      <td>
+        <code>tripwireVerdictsNs(c)</code> — <code>insert</code> only. One row per post-turn
+        secret-tripwire verdict (migration 037); <code>secret_ref</code> holds the opaque handle,
+        never secret content.
       </td>
     </tr>
     <tr>

@@ -16,8 +16,8 @@
 <!-- source: backend/src/session/post-session-analysis.ts -->
 <!-- source: backend/src/session/session-turn-queue-events.ts -->
 <!-- source: backend/src/queue/job-containment.ts -->
-<!-- source-hash: sha256:9e785282076eacfb85fb628381a855f6d2285e6677cf911e6961b37195381e79 -->
-<!-- last-ticket: MYT-74b -->
+<!-- source-hash: sha256:310bb435ab0bdd105ef3a6746f11415d58d6f507e8186bc726e8524bb6d10c0a -->
+<!-- last-ticket: myth-ha6qr -->
 
 <h1>Worker</h1>
 
@@ -238,26 +238,51 @@
 
 <p>
   Boot is sequential and fail-fast. Its very first act — before any connection, queue, or worker
-  exists — is installing the process escape guard covered in
-  <a href="#job-containment">Job containment</a> below, so nothing later in the sequence can escape
-  uncontained. Then <code>createBullmqRedisClient(env.redisBatchUrl)</code> returns an ioredis
-  client configured for BullMQ; immediately <code>ping()</code>'d (through <code>waitFor</code>) so
-  a misconfigured URL surfaces at startup rather than first-job time. Boot is where the client fails
-  <em>loud</em>; at runtime it does the opposite — both clients now share the bounded
-  backoff-with-jitter reconnect strategy, so a mid-run ElastiCache blip self-heals (the workers
-  reconnect and BullMQ reclaims any job stalled during the gap) instead of severing the process
-  until a rollover. That config-vs- transient split, and what an operator sees in the logs during a
-  blip, live on <a href="./redis-reconnect.html">Redis reconnection</a>.
+  exists — is <strong>binding the health port</strong>, which doubles as the same-host
+  duplicate-worker guard (<a href="#the-health-endpoint">below</a>). Only once that socket is
+  claimed does anything else start. Then
+  <code>createBullmqRedisClient(env.redisBatchUrl)</code> returns an ioredis client configured for
+  BullMQ; immediately <code>ping()</code>'d (through <code>waitFor</code>) so a misconfigured URL
+  surfaces at startup rather than first-job time. Boot is where the client fails <em>loud</em>; at
+  runtime it does the opposite — both clients now share the bounded backoff-with-jitter reconnect
+  strategy, so a mid-run ElastiCache blip self-heals (the workers reconnect and BullMQ reclaims any
+  job stalled during the gap) instead of severing the process until a rollover. That config-vs-
+  transient split, and what an operator sees in the logs during a blip, live on
+  <a href="./redis-reconnect.html">Redis reconnection</a>.
   <code>createRedisClient(env.redisRealtimeUrl)</code> opens the second Redis (the realtime side,
   used by MYT-52's streaming entity / edge <code>PUBLISH</code> path, myth-imxg's per-fact events,
   and MYT-62's session-prep phase + prose deltas &mdash; all feeding the
   <a href="./pipeline-status.html">pipeline status</a> SSE bridge, the prep deltas over the separate
   dev-only <a href="./session-prep.html#two-channels-one-stream">prep channel</a>).
-  <code>createPgPool(env.databaseUrl, { max: 4 })</code> with <code>SELECT 1</code> follows. Only
-  once every dependency is up does <code>startHealthServer</code> bind Fastify on
-  <code>127.0.0.1:3001</code> — the order matters because that bind is what flips the task from
-  starting to healthy at the ECS level.
+  <code>createPgPool(env.databaseUrl, { max: 4 })</code> with <code>SELECT 1</code> follows. The
+  escape guard goes in next, after every probe has passed and immediately before the first queue
+  consumer registers (<a href="#job-containment">why that exact spot</a>). Only once every
+  dependency is up and all nine workers are registered is the already-bound health server
+  <strong>armed</strong> with its probes — arming, not binding, is what flips the task from starting
+  to healthy at the ECS level.
 </p>
+
+<h3 id="the-boot-gate">The boot gate</h3>
+
+<p>
+  A boot-phase failure is always fatal here. There is no degraded worker worth running: one that
+  comes up without its queues consumes nothing, so the only honest signal is a non-zero exit that
+  ECS turns into a visible crash-loop, and that a local <code>pnpm dev:worker</code> surfaces
+  immediately rather than hanging half-alive. So <code>main()</code> is a thin gate around
+  <code>bootWorker</code>: every handle is registered into a <code>BootPartials</code> bag as it
+  comes up, and a throw at <em>any</em> step closes whatever exists — health socket, pg pool, both
+  Redis clients, the escape guard — and exits 1. Closes go through <code>allSettled</code> so one
+  failed close cannot mask the others, or the boot error itself. It mirrors the API server's
+  <code>closePartials</code>, with two extra members the worker owns: the bound health socket
+  (releasing it is what lets a restart rebind) and the escape-guard disposer.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The gate does no classification — the probes already did</strong> — whether a failure is
+  configuration (a bad Voyage key) or transient (Redis not up yet) is decided inside the individual
+  probes, which is where the knowledge lives. By the time a throw reaches the gate the verdict is
+  already "do not run", so the gate's whole job is to clean up and exit honestly.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>A second ioredis factory for BullMQ</strong> — BullMQ requires
@@ -306,15 +331,29 @@
 
 <p>
   Layer three is the process boundary. <code>createProcessEscapeGuard</code> registers
-  <code>unhandledRejection</code> / <code>uncaughtException</code> handlers as the very first act of
-  <code>main()</code>, before any connection or worker exists — because a floating rejection
-  detached from every await chain (the exact incident shape) is invisible to both layers above. Each
-  escape is logged as <code>process.escape</code> and the process stays alive. The keep-alive
-  posture is bounded by a storm hatch: more than 25 escapes inside a rolling 60-second window logs
-  <code>process.escape_storm</code> and exits 1, so ECS restarts the task and the failure surfaces
-  as a crash-loop that alarms fire on. During graceful shutdown the guard no-ops and is detached, so
-  a rejection racing teardown can't re-trigger the fail-fast exit.
+  <code>unhandledRejection</code> / <code>uncaughtException</code> handlers — because a floating
+  rejection detached from every await chain (the exact incident shape) is invisible to both layers
+  above. Each escape is logged as <code>process.escape</code> and the process stays alive. The
+  keep-alive posture is bounded by a storm hatch: more than 25 escapes inside a rolling 60-second
+  window logs <code>process.escape_storm</code> and exits 1, so ECS restarts the task and the
+  failure surfaces as a crash-loop that alarms fire on. During graceful shutdown the guard no-ops
+  and is detached, so a rejection racing teardown can't re-trigger the fail-fast exit.
 </p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The guard installs after the probes, not before them — and that placement is the whole
+    fix</strong
+  >
+  — it used to be the first act of <code>main()</code>, which sounded maximally safe and was the
+  opposite. The guard is keep-alive by default, so covering boot meant every boot failure — bad
+  Voyage key, unreachable Redis — became a swallowed rejection and a half-live, silent process:
+  health bound but never armed, zero consumers, no crash, no signal. It now sits after the last
+  probe and immediately before the first queue consumer registers, so it covers steady state (where
+  keep-alive is right) and not boot (where <a href="#the-boot-gate">exiting</a> is right). Nothing
+  between that line and <code>health.arm()</code> awaits, so no job can interleave into the
+  uncovered window — the two phases are disjoint by construction, not by luck.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Keep-alive per escape, crash on a storm</strong> — generic Node advice says always exit on
@@ -349,7 +388,7 @@
   <a href="./character-creation.html">character creation</a> page.
 </p>
 
-<h2>The health endpoint</h2>
+<h2 id="the-health-endpoint">The health endpoint, and the duplicate-worker guard</h2>
 
 <p>
   <code>GET http://127.0.0.1:3001/health</code> probes the four moving parts: the pg pool (<code
@@ -362,6 +401,33 @@
   by the ECS container <code>healthCheck</code> block in <code>infra/modules/serving/main.tf</code>,
   which curls it every 30 seconds.
 </p>
+
+<p>
+  It comes up in <strong>two phases</strong>. <code>startHealthServer(port)</code> binds the socket
+  at the very top of boot; <code>arm(deps)</code> supplies the runtime probes at the very bottom.
+  Between the two, <code>/health</code> answers 503 with <code>failed: ['boot']</code> — the same
+  "not ready" signal ECS used to get from the port simply not listening yet — so an un-armed worker
+  can never report green.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Binding first is what stops a second local worker stealing jobs</strong> — BullMQ
+  consumers compete, so a stray second <code>pnpm dev:worker</code> on the same host quietly takes
+  half the session turns, and its <code>tsx</code> watch reloads kill them mid-run. Nothing about
+  that is visible; jobs just disappear. Because the bind now happens before a single queue consumer
+  is registered, a duplicate dies on <code>EADDRINUSE</code> with an actionable message instead of
+  falling through into a hidden competing consumer. The split exists purely to move the bind earlier
+  without reporting healthy earlier.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Deliberately a same-host guard, not a distributed lock</strong> — production runs the
+  worker as an ECS service whose rolling deploys run old and new tasks concurrently, and competing
+  consumers are the intended scale-out story. A Redis lock would break both. Under
+  <code>awsvpc</code> each task has its own network namespace, so every replica binds its own
+  <code>127.0.0.1:3001</code> and this check never sees a sibling.
+  <code>WORKER_HEALTH_PORT</code> remains the escape hatch for a deliberate second local instance.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>Probe the workers, not just the connections</strong> — a healthy Redis client paired with
@@ -522,7 +588,16 @@
   </li>
   <li>
     Curl <code>http://127.0.0.1:3001/health</code>. A 200 with <code>{ "status": "ok" }</code> means
-    pg + both Redises + all nine BullMQ workers are healthy.
+    pg + both Redises + all nine BullMQ workers are healthy. A 503 carrying
+    <code>failed: ['boot']</code> means the socket is bound but boot hasn't finished arming — either
+    still coming up, or stuck on a probe.
+  </li>
+  <li>
+    <code>worker.health_port_in_use</code> means another worker already owns <code>:3001</code> on
+    this host. It refuses to start rather than becoming a competing consumer — stop the other one,
+    or set <code>WORKER_HEALTH_PORT</code> for a deliberate second instance.
+    <code>worker.boot_failed</code> means a probe rejected: the partial clients were closed and the
+    process exited non-zero, so read the preceding probe log for the cause.
   </li>
 </ol>
 
@@ -643,7 +718,13 @@
   <tbody>
     <tr>
       <td><code>backend/src/worker.ts</code></td>
-      <td>Process entrypoint. Boots clients, registers Workers, runs graceful shutdown.</td>
+      <td>
+        Process entrypoint. <code>main</code> is the <a href="#the-boot-gate">boot gate</a> around
+        <code>bootWorker</code> (<code>BootPartials</code> / <code>closeBootPartials</code> /
+        <code>failBoot</code>); <code>bindHealthOrFail</code> is the same-host
+        <a href="#the-health-endpoint">duplicate-worker guard</a>. Boots clients, registers Workers,
+        arms health, runs graceful shutdown.
+      </td>
     </tr>
     <tr>
       <td><code>backend/src/worker/bullmq-config.ts</code></td>
@@ -723,7 +804,9 @@
       <td><code>backend/src/worker/health-server.ts</code></td>
       <td>
         Fastify <code>/health</code> server on <code>127.0.0.1:3001</code>; probes pg + both Redises
-        + workers' <code>isRunning()</code>.
+        + workers' <code>isRunning()</code>. Two-phase: <code>startHealthServer(port)</code> binds
+        (the duplicate-worker guard), <code>WorkerHealthServer.arm(deps)</code> supplies the probes;
+        503 <code>failed: ['boot']</code> in between.
       </td>
     </tr>
     <tr>

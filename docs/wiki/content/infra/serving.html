@@ -1,18 +1,19 @@
 <!-- source: infra/modules/serving/ -->
 <!-- source: infra/environments/shared/main.tf -->
 <!-- source: infra/environments/shared/outputs.tf -->
+<!-- source: infra/environments/shared/github-actions-build-role.tf -->
 <!-- source: infra/environments/staging/main.tf -->
 <!-- source: infra/environments/staging/outputs.tf -->
 <!-- source: infra/environments/staging/variables.tf -->
-<!-- source-hash: sha256:45a9f140a02588978902b7dd197bf3daca4b8f9a1ae761b853f18a720a99f7dc -->
+<!-- source-hash: sha256:da080d2c2a6949836f04650a705fd408a45377ec0dd57b5716b0ce7ddb1bb393 -->
 <!-- last-ticket: MYT-96 -->
 
 <h1>Serving</h1>
 
 <p class="lead">
-  The compute platform that runs the API and the Worker. A shared ECR repo, an ECS cluster, and the
-  ALB on one side; per-env task definitions, services, target groups, and the GitHub-Actions deploy
-  role on the other.
+  The compute platform that runs the API and the Worker. A shared ECR repo, an ECS cluster, the ALB
+  and the GitHub-Actions build role on one side; per-env task definitions, services, target groups,
+  the scoped deploy role, the alerts topic, and the alarms that watch this environment on the other.
 </p>
 
 <!-- @diagram: infra/serving -->
@@ -22,10 +23,11 @@
 <p>
   Serving splits along the same shared-vs-per-env line the rest of the infra does. The shared
   workspace owns the resources that would be wasteful or confusing to duplicate — one ECR repo, one
-  GitHub OIDC provider, one ECS cluster, one ALB, one HTTPS listener. The per-env workspace (today
-  only <code>staging/</code>) consumes those through <code>terraform_remote_state</code>
-  and adds everything that has to exist twice by nature: task definitions, services, a target group,
-  a listener rule, a DNS A-alias, a scoped GitHub Actions IAM role, and an SNS alerts topic.
+  GitHub OIDC provider, one ECS cluster, one ALB, one HTTPS listener, one image-build IAM role. The
+  per-env workspace (today only <code>staging/</code>) consumes those through
+  <code>terraform_remote_state</code> and adds everything that has to exist twice by nature: task
+  definitions, services, a target group, a listener rule, a DNS A-alias, a scoped GitHub Actions
+  deploy role, an SNS alerts topic, and the alarms whose subject is this environment.
 </p>
 
 <h2>Shared compute platform</h2>
@@ -106,10 +108,20 @@
 <p>
   The <code>serving</code> module produces the per-env surface: two CloudWatch log groups
   (<code>/mythrun/&lt;env&gt;/api</code>, <code>/mythrun/&lt;env&gt;/worker</code>), two IAM roles,
-  two task definitions, a target group, a listener rule, two ECS services, and a Route 53 A-alias
-  record. Every resource is named <code>mythrun-&lt;env&gt;-*</code> so staging and production never
-  collide.
+  two task definitions, a target group, a listener rule, two ECS services, a Route 53 A-alias
+  record, and the alarms that watch them. Every resource is named <code>mythrun-&lt;env&gt;-*</code>
+  so staging and production never collide.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Staging keeps 30 days of logs, not the module's 14</strong> — two weeks is shorter than
+  the interval at which a subtle bug gets noticed, so an incident that opens with &ldquo;when did
+  this start?&rdquo; runs out of logs before it runs out of questions. At roughly a gigabyte a month
+  the difference is cents; the production composition should pass 90. The 14-day default stays as
+  the conservative floor for a bring-up, and the staging workspace holds its value in one local so a
+  future bump moves every log group it owns together. The migrate task's group is deliberately
+  outside that: its lifetime is a schema history, not an incident window.
+</aside>
 
 <p>
   Two IAM roles sit behind each task: the <em>task-execution role</em> is what ECS uses
@@ -293,7 +305,7 @@
   already owns it.
 </p>
 
-<h2>The GitHub Actions deploy role</h2>
+<h2 id="the-github-actions-deploy-role">The GitHub Actions roles</h2>
 
 <p>
   <code>mythrun-github-actions-staging</code> is the role CI assumes to push images and update
@@ -339,29 +351,87 @@
 </aside>
 
 <p>
-  The permissions policy grants exactly what a deploy needs: an account-wide
-  <code>ecr:GetAuthorizationToken</code> (AWS doesn't let it be ARN-scoped), the ECR push/pull verbs
-  scoped to both the <code>mythrun</code> repo and the <code>ecr-public/*</code> pull-through cache
-  prefix, <code>ecr:CreateRepository</code> + <code>ecr:BatchImportUpstreamImage</code> scoped to
-  <code>ecr-public/*</code> (so the first pull through a previously-unseen upstream can auto-create
-  the cache repo and trigger the import), ECS <code>UpdateService</code> /
-  <code>DescribeServices</code> / <code>DescribeTasks</code> / <code>ListTasks</code> conditioned on
-  the <code>mythrun</code> cluster, <code>RegisterTaskDefinition</code> and
-  <code>DeregisterTaskDefinition</code> scoped to the <code>mythrun-staging-*</code> family, and
-  <code>iam:PassRole</code> on the two task roles conditioned on
-  <code>iam:PassedToService = ecs-tasks.amazonaws.com</code>. Two further statements (added with the
-  <a href="frontend-hosting.html">frontend-hosting</a> module) let the same role drive the frontend
-  deploy: S3 object verbs scoped to the <code>mythrun-staging-frontend</code> bucket ARN and its
-  <code>/*</code>, and <code>cloudfront:Create/GetInvalidation</code> scoped to the distribution
-  ARN. Production snapshot permissions (<code>rds:CreateDBSnapshot</code>) are deliberately absent;
-  they belong to the future production role.
+  A sixth condition is written but switched off. <code>pin_job_workflow_ref</code> adds a
+  <code>job_workflow_ref</code> equality check against an enumerated list of workflow files, so only
+  those files can assume the role rather than anything merged to <code>main</code> inside the
+  staging environment. The list is derived from every workflow that names the staging role — today
+  <code>deploy.yml</code>, the reusable <code>_db-migrate-job.yml</code>,
+  <code>deploy-frontend.yml</code>, and <code>bootstrap-db-build.yml</code>.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Single role for build + deploy, for now</strong> — ideally the build and deploy jobs would
-  assume distinct roles (build needs ECR push, deploy needs ECS mutate; no job needs both).
-  Splitting them is a pre-production hardening item — a follow-up bead tracks the split before the
-  prod job is appended.
+  <strong>The workflow pin defaults to <em>off</em></strong> — a wrong ref string doesn't degrade,
+  it locks every deploy job out of AWS until someone reverts, and the claim's exact value can't be
+  confirmed from outside a real workflow run. The safe order is: decode the OIDC token in a
+  throwaway workflow step, compare it against the enumerated list, then flip and watch the next run.
+  A reusable workflow is the subtle case — its jobs report <em>their own</em> file as
+  <code>job_workflow_ref</code>, not the caller's, so the caller's entry does not cover it.
+</aside>
+
+<h3 id="the-build-deploy-split">The build / deploy split</h3>
+
+<p>
+  The image-build half of CI has its own role, <code>mythrun-github-actions-build</code>, declared
+  in the shared workspace. It can authenticate to ECR, push to the <code>mythrun</code> and
+  <code>mythrun-bootstrap-db</code> repositories, and create + import through the
+  <code>ecr-public/*</code> pull-through cache prefix. It has no ECS authority and no
+  <code>iam:PassRole</code> at all.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A compromised build should be able to push an image and nothing more</strong> — the build
+  job's whole purpose is to run third-party code with AWS credentials in the environment: a pinned
+  action, a <code>pnpm</code> postinstall script, a Dockerfile's <code>RUN</code> lines. On the
+  single-role shape, anything that compromises one of those steps inherits the authority to roll a
+  new task definition into the running cluster. Split, a compromised build produces a bad image and
+  something still has to choose to deploy it. For staging alone the blast radius made the single
+  role acceptable; for production it does not, which is why the split lands before the production
+  deploy job is enabled.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The build role is shared, the deploy roles are per-env</strong> — it is
+  environment-agnostic by construction: it pushes to the two shared ECR repositories, and the images
+  it produces are the same images every environment deploys. Declaring it in the shared workspace
+  means the production composition inherits one build role instead of minting a second with
+  identical permissions.
+</aside>
+
+<p>
+  The cutover is deliberately sequenced and gated rather than done in one commit, because it spans
+  Terraform, GitHub settings, and workflow files. Applying the shared workspace creates the role and
+  changes nothing — no workflow assumes it yet. A <code>build</code> GitHub Environment has to exist
+  (with its own <code>AWS_ACCOUNT_ID</code> variable, since variables are environment-scoped and
+  come back empty under a new one), the build jobs have to point at the new role and go green, and
+  only then does <code>github_build_role_cutover = true</code> on the staging workspace strip ECR
+  write from the deploy role. Doing those out of order breaks every image push, which is what the
+  gate variable exists to keep separately revertible.
+</p>
+
+<p>
+  The deploy role's permissions policy grants exactly what a deploy needs: an account-wide
+  <code>ecr:GetAuthorizationToken</code> (AWS doesn't let it be ARN-scoped), ECR <em>read</em> on
+  the <code>mythrun</code> and <code>mythrun-bootstrap-db</code> repositories, ECS
+  <code>UpdateService</code> / <code>DescribeServices</code> / <code>DescribeTasks</code> /
+  <code>ListTasks</code> conditioned on the <code>mythrun</code> cluster,
+  <code>RegisterTaskDefinition</code> and <code>DeregisterTaskDefinition</code> scoped to the
+  <code>mythrun-staging-*</code> family, and <code>iam:PassRole</code> on the two task roles
+  conditioned on <code>iam:PassedToService = ecs-tasks.amazonaws.com</code>. Two further statements
+  (added with the <a href="frontend-hosting.html">frontend-hosting</a> module) let the same role
+  drive the frontend deploy: S3 object verbs scoped to the
+  <code>mythrun-staging-frontend</code> bucket ARN and its <code>/*</code>, and
+  <code>cloudfront:Create/GetInvalidation</code> scoped to the distribution ARN. The ECR
+  <em>write</em> and pull-through-cache statements are still on this role today, wrapped in the
+  cutover gate, and move wholesale to the build role when it flips. Production snapshot permissions
+  (<code>rds:CreateDBSnapshot</code>) are deliberately absent; they belong to the future production
+  role.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>ECR read stays on the deploy role after the cutover</strong> — the deploy jobs don't pull
+  images themselves (the task-execution role does that), but the migrate workflow resolves a SHA to
+  a digest before running its task, and an operator debugging a deploy shouldn't be blocked on a
+  role they don't hold. Read is not the permission that made the single role uncomfortable.
 </aside>
 
 <h2>SNS alerts topic</h2>
@@ -393,6 +463,28 @@
 </aside>
 
 <p>
+  The topic also carries an explicit resource policy. SNS's default policy allows
+  <code>sns:Publish</code> from any principal in the account; declaring a policy replaces it
+  outright, leaving only <code>cloudwatch.amazonaws.com</code> and
+  <code>budgets.amazonaws.com</code> able to publish from the resource side. Nothing about
+  administration changes — same-account access is satisfied by an identity policy <em>or</em> a
+  resource policy, so Terraform and anyone holding <code>sns:*</code> continue to manage the topic
+  normally.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Budgets is pre-authorized even though nothing publishes budget notifications here</strong>
+  — the account cost budget notifies by email today. AWS Budgets fails closed
+  <em>and silently</em> against a policy that omits it: notifications simply stop, with no error
+  surfaced anywhere. Granting it up front turns a future wiring change into one that works rather
+  than one that appears to. The two statements carry different conditions on purpose — the Budgets
+  one is AWS-published verbatim (including a region-less <code>arn:aws:budgets::</code> source-ARN
+  pattern), while the CloudWatch one carries only <code>aws:SourceAccount</code>, because pinning a
+  source ARN is undocumented for CloudWatch and an unpopulated condition key denies the publish,
+  producing exactly the silent non-delivery this hardening exists to prevent.
+</aside>
+
+<p>
   Because a green <code>apply</code> proves nothing about delivery, each topic is smoke-tested once
   after it is wired:
   <code
@@ -400,6 +492,81 @@
     --state-reason "delivery smoke test"</code
   >
   should produce an email.
+</p>
+
+<h2>What watches this environment</h2>
+
+<p>
+  The serving module carries its own alarms, in three files beside the resources they watch. Two are
+  metric alarms on the ALB's view of this environment's target group; the other two files are
+  log-metric-filters over the API and worker log groups, turning structured pino events into
+  CloudWatch metrics with alarms on top. All of them publish to
+  <code>alerts_topic_arn</code>, and all of them are skipped entirely when that input is empty, so a
+  fresh environment can apply before its topic exists.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Alarms live in the module, not the environment root</strong> — they sit beside the log
+  group or target group they watch, so a future production composition inherits them by
+  construction. An alarm that has to be remembered per-environment is an alarm that will be missing
+  in the environment that matters. The counterpart rule holds too: alarms whose subject is a
+  <em>shared</em> resource live in the shared workspace, so one database gets one alarm rather than
+  one per environment.
+</aside>
+
+<p>
+  <strong><code>mythrun-&lt;env&gt;-api-down</code></strong> watches
+  <code>HealthyHostCount</code> on the target group, firing when no load-balancer node can see a
+  healthy target for a minute. It is the only liveness signal available without Container Insights,
+  and it is the better one anyway: it reports whether the API is answering
+  <code>/health/ready</code>, not merely whether a container process exists. It wires an OK action
+  as well as an alarm action — recovery is exactly the edge an operator mid-incident wants
+  confirmed.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Missing data is <em>breaching</em>, and the statistic is Maximum</strong> — a target group
+  with zero registered targets stops emitting <code>HealthyHostCount</code> altogether rather than
+  emitting a zero, so &ldquo;no data&rdquo; <em>is</em> the outage; any other setting sleeps through
+  the worst case. Maximum reads backwards until you know Min/Max here are computed across the load
+  balancer's nodes, not across time: Minimum would page whenever any single node briefly reports
+  zero, while Maximum below one means no node can see a healthy target anywhere. A partial failure
+  surfaces through the 5xx alarm instead of as a false &ldquo;everything is down&rdquo; at 3am.
+</aside>
+
+<p>
+  <strong><code>mythrun-&lt;env&gt;-api-target-5xx</code></strong> fires on more than fifty
+  <code>HTTPCode_Target_5XX_Count</code> responses in five minutes — errors the <em>application</em>
+  produced. The load balancer's own 502/503/504s are a property of the shared ALB and are alarmed
+  once in the shared workspace. Both exist because they point at different people: one at the code,
+  one at the platform.
+</p>
+
+<p>
+  <strong>The retrieval alarms</strong> cover the Voyage embedding dependency after boot. The boot
+  probe already makes deploy-time misconfiguration loud — the task crashloops and ECS rolls the
+  deploy back — but it cannot cover a key revoked, re-scoped, or dimension-changed while tasks are
+  already running. In that window nothing crashes: world-gen keeps producing content and leaves
+  every embedding NULL, so retrieval quietly degrades to whatever was embedded before the break. Two
+  alarms split it by operator response: a <em>misconfigured</em> class that never self-heals and
+  needs a corrected key or realigned model, and an <em>unavailable</em> class that is usually
+  transient.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Both log groups feed the same metric, and the transient alarm needs two windows</strong> —
+  the API task runs the boot probe, but only the worker runs the world-gen and character-integration
+  pipelines where the runtime embed events come from, so two filters write one metric name in one
+  namespace. That is deliberate: one metric, one alarm, one page, whichever task noticed first;
+  triage by log group and event name from there. The unavailable alarm requires two of three
+  five-minute windows because a single failed embed during a Voyage blip is expected and self-heals,
+  and the partial-degradation event that the backfill recovers on its own is excluded from the
+  filter entirely — alarming on it would page for the system working as designed.
+</aside>
+
+<p>
+  <strong>The billing alarms</strong> are the fourth group, described with their metric filters in
+  the appendix below.
 </p>
 
 <h2>Operating this piece</h2>
@@ -419,6 +586,58 @@
     confirmation link.
   </li>
   <li>Re-run the same command; the ARN should now be the full subscription ARN.</li>
+</ol>
+
+<h3 id="cut-ci-over-to-the-build-role">Cut CI over to the ECR-push-only build role</h3>
+
+<p>
+  Four steps, in this order. Each is separately revertible; doing them out of order breaks every
+  image push.
+</p>
+
+<ol>
+  <li>
+    Apply the shared workspace. <code>mythrun-github-actions-build</code> appears and nothing
+    changes — CI keeps using the staging role.
+  </li>
+  <li>
+    In GitHub, create an Environment named <code>build</code>. No required reviewers (it gates
+    nothing; it exists to scope the OIDC <code>environment</code> claim). Restrict its deployment
+    branch to <code>main</code> and add an <code>AWS_ACCOUNT_ID</code> <em>variable</em> —
+    environment variables are environment-scoped, so a new environment that lacks it hands the job
+    an empty string.
+  </li>
+  <li>
+    Point the build jobs at the new environment and role: the <code>build</code> job in
+    <code>deploy.yml</code> and <code>build-and-push</code> in <code>bootstrap-db-build.yml</code>.
+    Push and confirm a real run goes green.
+  </li>
+  <li>
+    Only now set <code>github_build_role_cutover = true</code> on the staging workspace and apply.
+    That strips ECR write and pull-through-cache creation from the deploy role.
+  </li>
+</ol>
+
+<h3 id="pin-the-oidc-trust-to-workflow-files">Pin the OIDC trust to specific workflow files</h3>
+
+<ol>
+  <li>
+    Add a temporary step to one workflow that fetches and base64-decodes the OIDC token (<code
+      >$ACTIONS_ID_TOKEN_REQUEST_URL</code
+    >
+    with <code>audience=sts.amazonaws.com</code>), and read the real
+    <code>job_workflow_ref</code> off a live run. The value cannot be confirmed any other way.
+  </li>
+  <li>
+    Compare it against <code>local.staging_job_workflow_refs</code> in the staging workspace (and
+    the equivalent list in <code>github-actions-build-role.tf</code>). Every workflow that names the
+    role must appear, reusable workflows included — a reusable workflow's jobs report their own
+    file, not the caller's.
+  </li>
+  <li>
+    Set <code>pin_job_workflow_ref = true</code>, apply, and watch the next run. If deploys start
+    failing at the role assume, revert the variable and re-apply; nothing else is affected.
+  </li>
 </ol>
 
 <h3 id="rotate-the-manual-secret-values">Rotate a manual secret value</h3>
@@ -547,6 +766,23 @@
       <td>From the shared workspace.</td>
     </tr>
     <tr>
+      <td><code>alb_arn_suffix</code></td>
+      <td><code>&quot;&quot;</code></td>
+      <td>
+        The ALB's <code>arn_suffix</code> (<code>app/mythrun-alb/&lt;id&gt;</code>), not its ARN —
+        the form CloudWatch wants for the <code>LoadBalancer</code> dimension. Passed explicitly
+        rather than derived from <code>alb_arn</code> by string surgery.
+      </td>
+    </tr>
+    <tr>
+      <td><code>alerts_topic_arn</code></td>
+      <td><code>&quot;&quot;</code></td>
+      <td>
+        SNS topic every alarm in the module publishes to. Empty disables alarm creation entirely
+        (metric filters are still created, so the metrics exist and alarms can attach later).
+      </td>
+    </tr>
+    <tr>
       <td><code>dns_zone_id</code>, <code>dns_zone_name</code></td>
       <td>—</td>
       <td>From the shared workspace's DNS module.</td>
@@ -580,7 +816,10 @@
     <tr>
       <td><code>log_retention_days</code></td>
       <td><code>14</code></td>
-      <td>Production should pass <code>30</code>.</td>
+      <td>
+        Applies to the api + worker log groups. Staging passes <code>30</code>; production should
+        pass <code>90</code>.
+      </td>
     </tr>
     <tr>
       <td><code>extra_env</code></td>
@@ -655,6 +894,18 @@
       <td>Listeners</td>
       <td>HTTPS :443 with wildcard cert; HTTP :80 redirect</td>
     </tr>
+    <tr>
+      <td>GH Actions build role</td>
+      <td><code>mythrun-github-actions-build</code> (ECR push only; not yet wired)</td>
+    </tr>
+    <tr>
+      <td>Alerts KMS key</td>
+      <td><code>alias/mythrun-alerts</code> (customer-managed, rotation on)</td>
+    </tr>
+    <tr>
+      <td>SNS topic</td>
+      <td><code>mythrun-shared-alerts</code> (shared-resource alarms)</td>
+    </tr>
   </tbody>
 </table>
 
@@ -668,16 +919,62 @@
   </thead>
   <tbody>
     <tr>
-      <td>GH Actions role</td>
+      <td>GH Actions deploy role</td>
       <td><code>mythrun-github-actions-staging</code></td>
     </tr>
     <tr>
       <td>SNS topic</td>
-      <td><code>mythrun-staging-alerts</code></td>
+      <td>
+        <code>mythrun-staging-alerts</code> (shared CMK, explicit topic policy, email subscription)
+      </td>
     </tr>
     <tr>
       <td>Hostname</td>
       <td><code>staging-api.mythrun.com</code></td>
+    </tr>
+    <tr>
+      <td>Cutover gates</td>
+      <td>
+        <code>github_build_role_cutover</code>, <code>pin_job_workflow_ref</code> — both
+        <code>false</code>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Per-environment alarms</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Alarm</th>
+      <th>Signal</th>
+      <th>Condition</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>&lt;env&gt;-api-down</code></td>
+      <td><code>AWS/ApplicationELB HealthyHostCount</code></td>
+      <td>Max &lt; 1 for 1 min; missing data breaches; OK action wired</td>
+    </tr>
+    <tr>
+      <td><code>&lt;env&gt;-api-target-5xx</code></td>
+      <td><code>AWS/ApplicationELB HTTPCode_Target_5XX_Count</code></td>
+      <td>Sum &gt; 50 in 5 min; missing data does not breach</td>
+    </tr>
+    <tr>
+      <td><code>&lt;env&gt;-voyage-misconfigured</code></td>
+      <td>Log filter → <code>Mythrun/&lt;env&gt;/Retrieval</code></td>
+      <td>
+        Any boot-probe or pipeline <em>misconfigured</em> event on either log group. Never
+        self-heals; fix the key or realign model + dimension, then redeploy
+      </td>
+    </tr>
+    <tr>
+      <td><code>&lt;env&gt;-voyage-unavailable</code></td>
+      <td>Log filter → <code>Mythrun/&lt;env&gt;/Retrieval</code></td>
+      <td>2 of 3 five-minute windows with an unreachable / failed embed</td>
     </tr>
   </tbody>
 </table>
@@ -737,18 +1034,16 @@
 </table>
 
 <aside class="wiki-rationale">
-  <strong>Alarms live in the module, not the environment root</strong> — they sit beside the log
-  group they filter, so a future production composition inherits them by construction. An alarm that
-  has to be remembered per-environment is an alarm that will be missing in the environment that
-  matters. Each metric transformation sets <code>default_value = 0</code> so the alarms hold a real
-  OK state and self-recover rather than parking in <code>INSUFFICIENT_DATA</code>, and alarm
-  creation is skipped entirely when <code>alerts_topic_arn</code> is empty so a fresh environment
-  can apply before its topic exists.
+  <strong>Every metric transformation sets <code>default_value = 0</code></strong> — without it a
+  log-derived metric emits nothing in a quiet window, and the alarm parks in
+  <code>INSUFFICIENT_DATA</code> instead of holding a real OK state. Zero-filling means these alarms
+  self-recover and their green is meaningful.
 </aside>
 
 <h2>Source</h2>
 
 <p>
   <code>infra/modules/serving/</code>, <code>infra/environments/shared/main.tf</code>,
+  <code>infra/environments/shared/github-actions-build-role.tf</code>,
   <code>infra/environments/staging/main.tf</code>.
 </p>

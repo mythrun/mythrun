@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html" class="active">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>backend/src/</code>, <code>backend/eslint-rules/</code>, <code>backend/package.json</code>, <code>backend/tsconfig.json</code>, <code>backend/tsconfig.build.json</code>, <code>backend/Dockerfile</code>, <code>backend/.dockerignore</code>, <code>backend/.env.development.example</code>, <code>package.json</code>, <code>pnpm-workspace.yaml</code>, <code>.npmrc</code>, <code>.nvmrc</code>, <code>.dockerignore</code>, <code>.gitignore</code>, <code>eslint.config.js</code>, <code>docker-compose.yml</code>, <code>docker-compose.override.yml.example</code></div>
-</div>
-
+        <article>
 <h1>Backend</h1>
 
 <p class="lead">
@@ -721,9 +716,13 @@
   <a href="./session-reconcile.html">end-of-session reconciler</a>), and the MYT-74b
   <code>QUEUE_SESSION_ANALYSIS</code> (the
   <a href="./session-reconcile.html#post-session-analysis-and-the-handoff">post-session analysis</a
-  >) — plus a <code>QueueEvents('session-turn')</code> subscriber — and binds a Fastify
+  >) — plus a <code>QueueEvents('session-turn')</code> subscriber — around a Fastify
   <code>/health</code> server on <code>127.0.0.1:3001</code> that the ECS container
-  <code>healthCheck</code> probes. Graceful shutdown drains the workers within a
+  <code>healthCheck</code> probes. That health socket is <em>bound first</em>, before any queue
+  consumer exists, so it doubles as a same-host duplicate-worker guard, and it is
+  <em>armed last</em>, so an un-armed worker answers 503 rather than green; a boot failure at any
+  step closes the partial clients and exits non-zero. Both stories are the
+  <a href="./worker.html">Worker</a> page's. Graceful shutdown drains the workers within a
   <code>100s</code> deadline (under the task's 120s <code>stopTimeout</code>) and falls back to a
   forced close that marks any in-flight jobs as stalled for BullMQ to re-deliver. Phase 0 shipped
   stub processors that logged and completed; the real prep-stage processors landed across MYT-51
@@ -1288,7 +1287,8 @@
       <td><code>src/routes/sessions.ts</code></td>
       <td>
         <code>POST /api/sessions/:id/ws-ticket</code> mint route plus the <code>/start</code> /
-        <code>/active</code> / <code>/messages</code> session-lifecycle routes. See
+        <code>/active</code> / <code>/messages</code> / <code>/recap</code> session-lifecycle
+        routes. See
         <a href="../auth-billing/access-control-ws-ticket.html">access control &amp; WS ticket</a>
         and <a href="./session-transport.html">session transport</a>.
       </td>
@@ -1296,12 +1296,14 @@
     <tr>
       <td>
         <code>src/routes/ws-session.ts</code>, <code>src/ws/session-hub.ts</code>,
-        <code>src/redis/session-state.ts</code>, <code>src/session/session-suspend.ts</code>
+        <code>src/redis/session-state.ts</code>, <code>src/session/session-suspend.ts</code>,
+        <code>src/session/replay-frames.ts</code>
       </td>
       <td>
-        The live multiplayer WebSocket transport — upgrade route + handshake, cross-container
-        pub/sub fan-out, Redis session state, and the suspend job. See
-        <a href="./session-transport.html">session transport</a>.
+        The live multiplayer WebSocket transport — upgrade route + handshake (including the
+        suspension re-check), cross-container pub/sub fan-out and its suspended-user socket sweep,
+        Redis session state, the suspend job, and the shared persisted-row → replay-frame mapping.
+        See <a href="./session-transport.html">session transport</a>.
       </td>
     </tr>
     <tr>
@@ -1327,12 +1329,14 @@
     <tr>
       <td><code>src/worker.ts</code></td>
       <td>
-        <code>main()</code> — entry-point-guarded BullMQ worker boot: opens pg + both Redis clients,
-        registers seven <code>Worker</code> instances (world-gen / campaign-setup / session-prep /
-        session-turn / dm-trigger / st-evaluation / scribe) plus the
-        <code>QueueEvents('session-turn')</code> subscriber on the batch Redis, starts the Fastify
-        <code>/health</code> probe on <code>:3001</code>, and threads bounded shutdown through
-        <code>closeWithDeadline</code>. See <a href="./worker.html">Worker</a>,
+        <code>main()</code> — the boot gate around <code>bootWorker</code>: binds the Fastify
+        <code>/health</code> socket on <code>:3001</code> first (the duplicate-worker guard), opens
+        pg + both Redis clients, registers nine <code>Worker</code> instances (world-gen /
+        campaign-setup / session-prep / session-turn / dm-trigger / st-evaluation / scribe /
+        session-reconcile / session-analysis) plus the
+        <code>QueueEvents('session-turn')</code> subscriber on the batch Redis, arms health last,
+        and threads bounded shutdown through <code>closeWithDeadline</code>. A throw at any boot
+        step closes the partials and exits non-zero. See <a href="./worker.html">Worker</a>,
         <a href="./session-turn.html">Session turn</a>, and
         <a href="./dm-trigger.html">DM trigger</a>.
       </td>
@@ -1340,8 +1344,9 @@
     <tr>
       <td><code>src/worker/bullmq-config.ts</code>, <code>src/worker/health-server.ts</code></td>
       <td>
-        Queue identifiers + concurrency caps; Fastify <code>/health</code> server probing pg + both
-        Redis + each worker's <code>isRunning()</code> state.
+        Queue identifiers + concurrency caps; the two-phase Fastify <code>/health</code> server
+        (<code>startHealthServer</code> binds, <code>arm</code> supplies the probes) covering pg +
+        both Redis + each worker's <code>isRunning()</code> state.
       </td>
     </tr>
     <tr>
@@ -1413,6 +1418,7 @@
         <code>POST /api/sessions/:campaignId/start</code>,
         <code>GET /api/sessions/:campaignId/active</code>,
         <code>GET /api/sessions/:sessionId/messages</code>,
+        <code>GET /api/sessions/:campaignId/recap</code>,
         <code>GET /ws/session/:sessionId</code> (upgrade)
       </td>
       <td colspan="2">

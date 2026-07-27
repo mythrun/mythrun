@@ -21,8 +21,8 @@
 <!-- source: backend/src/llm/schemas/world-lookup-gate.ts -->
 <!-- source: backend/src/llm/schemas/st-lookup-vet.ts -->
 <!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
-<!-- source-hash: sha256:8999ba5c7a2a6c3e4a2ca11554d36c928d55dda25e0148e0db2cc8d8c6e35eb1 -->
-<!-- last-ticket: myth-d6knq -->
+<!-- source-hash: sha256:d6913905e5e93918ac164c78f4839cce439b487633f5495ba5ab80128f3abe37 -->
+<!-- last-ticket: myth-aiiao -->
 
 <h1>Fast Thinker</h1>
 
@@ -359,6 +359,28 @@
   fiction carries it, never a ledger note or an aside about the gears turning.
 </p>
 
+<p>
+  The same silence now covers the FT's own <em>inputs</em>. Staging audits caught the model naming
+  its scaffolding in the prose — "the session context says the passage narrows", "as provided", "the
+  stage direction" — words that belong to the machine and not to the world. The rule is absolute: no
+  reference to the context, the system, the instructions, the notes it was handed. If the passage
+  narrows, it narrows because the bone closes in. Two more prompt additions came from the same
+  audits. The FT may use <code>*italics*</code> and <code>**bold**</code> for a word or short phrase
+  that genuinely carries weight, and nothing else — no headings, lists, links, tables, or code,
+  because its output is running prose and the client renders exactly that vocabulary. And the prompt
+  now pulls in <code>shared/prose-register</code>, the one house-voice fragment the prep stages
+  share, through the <a href="./llm.html">prompt loader</a>'s include directive — so a register
+  change lands on the prep engine and the live DM in the same edit instead of drifting between them.
+</p>
+
+<p>
+  A correction turn gets its own framing: the correction comes first and <em>is</em> the whole job.
+  The FT may not continue the scene, advance time, resolve anything open, or narrate any new event
+  before the <a href="#correction-channel"><code>issue_correction</code></a> call, and afterwards at
+  most a sentence or two that quietly restores the scene and hands it back to the players. If there
+  is nothing to restore, it calls the tool and stops.
+</p>
+
 <aside class="wiki-rationale">
   <strong>The silent-tools rule lives in the prompt, deliberately not in the audit gate</strong> —
   these leaks (a stray "I'll roll Perception here," a slot-accounting aside) surface on
@@ -531,6 +553,27 @@
 </p>
 
 <p>
+  That strip runs at finalize — <em>after</em> every delta has already streamed. So the durable
+  record was clean while the table still watched a <code>Sable:</code> block appear on screen,
+  styled as DM narration; a staging run caught exactly that. myth-aiiao adds the live twin. A
+  <code>LivePcPrefixGate</code> holds back the opening of the turn's first text run — bounded to
+  roughly forty characters — until a leading <code>&lt;participant&gt;:</code> is either confirmed
+  (stripped, so the live text matches the durable normalization byte for byte) or ruled out
+  (released verbatim). The hold releases at the first tool boundary as well as on completion, so
+  prose is never delayed past a tool call, and a text-less boundary leaves the gate armed for the
+  first real text run.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Deterministic and first-run-only, mirroring the durable strip</strong> — this is string
+  normalization against a known roster, not a judgment, so it is code (the same ZFC carve-out the
+  agency gate sits in). After the first decision every subsequent delta passes straight through
+  untouched, so the cost is a few characters of latency once per turn and nothing thereafter. The
+  character cap matters: without it, pathological leading whitespace could hold a turn's prose back
+  indefinitely, which would be a worse failure than the leak.
+</aside>
+
+<p>
   The weekend playtest found the semantic sibling of that leak. On a <strong>scene switch</strong> —
   a player's message opens a new location or a new line of action while another PC's scene hangs
   unresolved — the FT would close the old scene by authoring the absent character's dialogue or
@@ -546,8 +589,11 @@
   exactly this violation (among two others) and — when it is safe to — re-renders the turn once with
   a corrective instruction. The gate lives on the
   <a href="./session-turn.html">session-turn</a> page; the layering is the point here: prompt rule,
-  deterministic tool gate, durable prefix strip, semantic post-audit — each catches what the one
-  before it structurally cannot.
+  deterministic tool gate, live prefix hold-back, durable prefix strip, semantic post-audit — each
+  catches what the one before it structurally cannot. And the audit's correction now reaches a
+  seated player too, through the
+  <a href="./session-turn.html#the-audit-gate">whole-turn replace</a> the worker pushes after
+  persist.
 </p>
 
 <h2 id="correction-channel">The correction channel: issue_correction</h2>
@@ -567,6 +613,22 @@
   tool is <em>not</em> player-agency-gated — the DM is correcting its own narration, never acting
   for a player character.
 </p>
+
+<p>
+  On a correction turn the FT also withholds anything it writes <em>before</em> the tool call. Left
+  alone the model opens with machinery preamble — "let me process that first" — which is neither
+  narration nor correction, and it was reaching both the live stream and the durable transcript. The
+  consume loop buffers pre-correction text out of both sinks and discards the buffer the moment
+  <code>issue_correction</code> fires; trailing narration then streams normally.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Fail open if the correction never comes</strong> — a correction turn that produces no
+  <code>issue_correction</code> call is malformed, but the withheld text was ordinary prose. So the
+  buffer is flushed at stream end rather than dropped: a malformed turn degrades to a normal one
+  instead of silently losing a whole turn's writing. On the happy path the buffer is already empty
+  by then.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>A separate channel, because an amended fact must not survive wrong in canon</strong> — an
@@ -858,6 +920,52 @@
   Render-only, like the others; absent on every normal first-attempt render.
 </aside>
 
+<h2 id="the-context-ceiling">The context ceiling is the session-length bound</h2>
+
+<p>
+  Caching makes holding the whole transcript affordable; it does not make it unbounded. The FT
+  re-sends every message every turn with no compaction, so the model's input window — not the token
+  budget, not anyone's patience — is the hard limit on how long a session can run.
+  <code>ft-config.ts</code> names it: <code>FT_CONTEXT_WINDOW_TOKENS</code> (1,000,000, read off the
+  Anthropic Models API for the configured <code>FT_MODEL</code> rather than assumed) minus
+  <code>FT_CONTEXT_HEADROOM_TOKENS</code> (150,000) gives <code>FT_USABLE_CONTEXT_TOKENS</code> —
+  the divisor the
+  <a href="./session-turn.html#the-session-progress-signal">progress fraction</a> measures context
+  fill against.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The usable ceiling sits below the real one on purpose</strong> — a session has to end
+  <em>before</em> the window is full, not when it is. The reserve covers what the ending itself
+  still has to fit: one more whole FT turn (the farewell), its up-to-<code>FT_MAX_TOOL_STEPS</code>
+  tool round-trips, and its output, which the model line caps at 128K. 150K — 15% — clears that with
+  margin. Running to the real ceiling instead would trade a graceful send-off for a provider 400
+  mid-turn, which is the failure mode that was actually ending sessions before the budget auto-end
+  was <a href="./session-turn.html">repaired</a>.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A model bump can shrink the session without moving a single constant</strong> — the
+  2026-07-26 move to Sonnet 5 re-verified both numbers live and found them unchanged: 1M in, 128K
+  out. But Sonnet 5 ships a new tokenizer that spends about 35.6% more tokens on identical text
+  (measured on 6KB of our own prep prompt: 1175 → 1593; Opus is unchanged). Same window in tokens is
+  roughly 26% <em>smaller in prose</em>. Nothing in the config moved; the thing it measures did.
+  These constants are deliberately not auto-scaled off a model change — session length against cost
+  per session is a product decision, not a silent side effect — so the compensating move was made
+  once, explicitly, on <a href="./slow-thinker.html">SESSION_TOKEN_BUDGET</a>. Re-check both numbers
+  whenever <code>FT_MODEL</code> moves; they are not the same across the model line (Haiku 4.5's
+  window is 200K).
+</aside>
+
+<p>
+  The measurement itself comes off the render. <code>streamTextWithTools</code> exposes the final
+  step's usage separately from the cumulative total, and the FT returns that step's
+  <code>inputTokens</code> as <code>contextTokens</code> on the assistant message. It is read
+  best-effort — the promise rejects on a zero-step failure, and this runs after the prose has
+  already streamed, so a usage hiccup degrades the progress number and never costs the table a
+  rendered turn.
+</p>
+
 <h2>Integration points</h2>
 
 <p>
@@ -913,7 +1021,24 @@
     <tr>
       <td><code>FT_MODEL</code></td>
       <td><code>SONNET</code></td>
-      <td>The player-facing prose model; swappable for an Opus eval.</td>
+      <td>
+        The player-facing prose model; swappable for an Opus eval. Pinned to
+        <code>claude-sonnet-5</code> as of 2026-07-26 — see
+        <a href="#the-context-ceiling">the context ceiling</a> for what that bump did to session
+        length.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>FT_CONTEXT_WINDOW_TOKENS</code> / <code>FT_CONTEXT_HEADROOM_TOKENS</code> /
+        <code>FT_USABLE_CONTEXT_TOKENS</code>
+      </td>
+      <td>1000000 / 150000 / 850000</td>
+      <td>
+        The <a href="#the-context-ceiling">session-length bound</a>: the model's real input window,
+        the reserve the ending needs, and the divisor the progress fraction measures against.
+        Re-verify against the Models API whenever <code>FT_MODEL</code> moves.
+      </td>
     </tr>
     <tr>
       <td><code>SKILL_CHECK_MODEL</code></td>
@@ -970,8 +1095,12 @@
     </tr>
     <tr>
       <td><code>ST_LOOKUP_VET_MAX_OUTPUT_TOKENS</code></td>
-      <td>1200</td>
-      <td>A relay/invention is 1–3 sentences; bounds a runaway.</td>
+      <td>6000</td>
+      <td>
+        A relay/invention is still 1–3 sentences, but on Opus 5 this ceiling covers adaptive
+        thinking and the visible output together, so 1200 would truncate mid-thought. The runaway
+        guard is wall-clock (<code>ST_LOOKUP_VET_TIMEOUT_MS</code>), not tokens.
+      </td>
     </tr>
     <tr>
       <td><code>KNOWLEDGE_SKILLS</code></td>
@@ -1010,7 +1139,10 @@
         stream and the transcript (+ <code>buildKmpFailure</code>) — and the myth-ph544
         <code>stripLeadingPcPrefix</code> / <code>stripPcPrefixFromParts</code>: the
         <a href="#player-agency">durable-message</a> normalizer that removes a leaked
-        <code>&lt;PC name&gt;:</code> input-format prefix from the first text part.
+        <code>&lt;PC name&gt;:</code> input-format prefix from the first text part, plus the
+        myth-aiiao <code>LivePcPrefixGate</code> — its live-stream twin — and the myth-retprop
+        correction-turn preamble buffer. The render also returns <code>contextTokens</code> (the
+        final step's input) for the <a href="#the-context-ceiling">context-fill</a> signal.
       </td>
     </tr>
     <tr>

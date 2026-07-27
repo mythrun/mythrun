@@ -275,8 +275,18 @@ whether to extend an existing page (preferred) or create a new one.
 STEP 4 — APPLY THE MENTAL-MODEL TEST
 For each touched page, ask: would a reader's mental model after reading the
 current page match reality after this change?
-  - Yes → run pnpm wiki:accept-drift <page> with NO content edits.
+  - Yes → leave the page's content byte-identical. Record it as accept-only.
   - No  → rewrite the page per the canonical spine and the seven principles.
+
+⚠️ `pnpm wiki:accept-drift` TAKES NO PAGE ARGUMENT. It is GLOBAL: build.ts's
+parseMode only looks for the bare `--accept-drift` flag, and the pipeline then
+stamps a fresh hash onto EVERY drifted page it renders. An earlier version of
+this step read `pnpm wiki:accept-drift <page>`, which does not do what it looks
+like — the path is silently ignored and all drifted pages are blessed, including
+ones nobody has read. So do NOT run it per page as you go. Finish reviewing every
+drifted page first, then run it once at the end, where "accept everything" is
+true rather than a lie. When several agents are syncing in parallel, only the
+controller runs it.
 
 STEP 5 — AUTHOR (when rewriting)
 Read the actual source files. Understand what changed and what the reader needs

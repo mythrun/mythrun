@@ -11,7 +11,7 @@
 <!-- source: frontend/ui/src/components/PackList/ -->
 <!-- source: frontend/ui/src/components/PurchaseHistory/ -->
 <!-- source: frontend/ui/src/components/PurchasePrompt/ -->
-<!-- source-hash: sha256:8f3ba8c1fe05d634d1fc6e80c6806e0aa1c5fde01207e32b1970b552349c33d9 -->
+<!-- source-hash: sha256:a3d7c718fd7451745253ad2a8bfcc1d6848934cc0e8b42e970534878e853897a -->
 <!-- last-ticket: MYT-95 -->
 
 <h1>Billing &amp; credits</h1>
@@ -50,8 +50,27 @@
   <code>CreditBalance</code> itemizes both, while the play-adjacent chrome — the header count and the
   <a href="./campaign-hub.html">campaign card</a>'s low-credit line — tracks <strong>session credits
   only</strong>. Starting a session spends a session credit; generating a world spends a world-gen
-  credit; the two are different currencies and the UI keeps them apart.
+  credit; the two are different currencies and the UI keeps them apart. The header says so out loud:
+  its readout is labelled "session credits", not "credits", because a bare number in the app's
+  most-seen chrome silently equalled one bucket and taught the wrong model.
 </p>
+
+<p>
+  Keeping them apart is necessary but not sufficient — a number a player can't interpret is not much
+  better than a wrong one. Each bucket therefore renders as its own bounded <strong>tile</strong>
+  carrying its count plus two lines of its own: what one credit buys, and what running out means.
+  Those explainers are <em>required</em> props on the component, not optional decoration.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The explainer lives with its number, and the contract forces it</strong> — the first version
+  rendered each bucket as a full-width justified row, which at desktop width put the label most of a
+  screen away from its count with nothing binding them, and neither count said what the currency was.
+  A bounded tile fixes the association; making the explainers required in
+  <code>CreditBalanceProps</code> is what stops the next surface from shipping a bare number again.
+  These are the product's only two economic units, so the cost of teaching them is two lines each, and
+  they must never be readable against the wrong bucket.
+</aside>
 
 <h2>The subscription CTA gate — the double-subscribe guard</h2>
 
@@ -151,11 +170,16 @@
 </p>
 
 <ul>
-  <li><strong><code>CreditBalance</code></strong> — both buckets, itemized, never summed.</li>
+  <li>
+    <strong><code>CreditBalance</code></strong> — both buckets, itemized, never summed, each an
+    explained tile.
+  </li>
   <li>
     <strong><code>PackList</code></strong> — the price-ordered subscription tiers by their brand names
-    (<strong>Wayfarer / Sojourner / Mythwright</strong>) each with its gated CTA, over the à-la-carte
-    packs with a quantity control (presets <code>1 / 4 / 8 / 16</code>).
+    (<strong>Wayfarer / Sojourner / Mythwright</strong>), each with its gated CTA and its
+    <strong>grant ledger</strong>, over the à-la-carte packs with a quantity control (presets
+    <code>1 / 4 / 8 / 16</code>). Both sections carry a heading and a one-line note on how their
+    credits behave.
   </li>
   <li>
     <strong><code>PurchaseHistory</code></strong> — a terse mono ledger.
@@ -167,22 +191,65 @@
 </ul>
 
 <aside class="wiki-rationale">
+  <strong>The tiers differentiate on the ledger, never on a nudge</strong> — three cards carrying only
+  a name and a price cannot be used to make a billing decision, which is the one job a pricing screen
+  has. So every tier and pack states its per-cycle grants as label·value rows: sessions, then worlds,
+  in that fixed order in <em>every</em> card, so the reader scans across rather than re-reading each
+  one. A zero grant renders no row at all — an empty "worlds: 0" line is noise, not data. What is
+  still absent is any "recommended" / "best value" / "most popular" marker: the register constraint
+  holds, and the product states what each tier gives and lets the reader choose. The one state the
+  vocabulary does mark is the tier the viewer is already on, and it marks it with a mono label line
+  plus a raised paper surface — typography and surface tier, not a chip.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The grant numbers come from the SKU payload, not a frontend table</strong> — the catalogue
+  is served from the Stripe-probed SKU cache, so composing each ledger from the payload's own granted
+  counts is what keeps the pricing UI from drifting off Stripe. A frontend constant listing "the
+  Sojourner gives eight sessions" would be a second source of truth for a number Stripe already owns,
+  and it would be wrong the first time a tier is re-sized. The shell formats those counts; the design
+  system receives finished strings and never formats a count itself. (Prices are formatted the same
+  way, and drop the trailing <code>.00</code> on a whole amount — a decimal on a round consumer price
+  is a developer tell.)
+</aside>
+
+<aside class="wiki-rationale">
   <strong>No "best value" labels, and a pack row can't name a credit count</strong> — the tier names
-  are server data carried through verbatim; the catalogue view adds no "recommended" or "best value"
-  marker (the brand register constraint). And the history feed carries <code>lookup_key</code> only for
-  subscription <em>invoice</em> rows — an à-la-carte pack row has none — so the view-model can never
-  resolve a tier name or promise per-item credit detail for a pack. Its prose is "Purchase — $X.XX",
-  because the webhook (not the client) is the authority on what a purchase granted.
+  are server data carried through verbatim. And the history feed carries <code>lookup_key</code> only
+  for subscription <em>invoice</em> rows — an à-la-carte pack row has none — so the view-model can
+  never resolve a tier name or promise per-item credit detail for a pack. Its prose is "Purchase —
+  $X.XX", because the webhook (not the client) is the authority on what a purchase granted.
 </aside>
 
 <h3>Header chrome and the low-credit card line</h3>
 
 <p>
-  The <a href="./app-shell.html">AppFrame</a> header carries the live session-credit count with a quiet
-  quick-buy path to the purchase surface (the header edit is MYT-95's; the play route's full-bleed
-  variant is a declared shared edit on the same frame). The <a href="./campaign-hub.html">campaign
-  card</a> shows an owner-only low-credit line, driven by <code>useLowSessionCredits</code>.
+  The <a href="./app-shell.html">AppFrame</a> header carries the labelled live session-credit count
+  with a quiet quick-buy path to the purchase surface (the header edit is MYT-95's; the play route's
+  full-bleed variant is a declared shared edit on the same frame). The
+  <a href="./campaign-hub.html">campaign card</a> shows an owner-only low-credit line, driven by
+  <code>useLowSessionCredits</code>.
 </p>
+
+<p>
+  Because that readout lives in chrome that never remounts, it needs an explicit refresh contract:
+  <code>useInvalidateBalance</code> marks the shared <code>['billing','balance']</code> cache stale and
+  lets every active reader refetch in the background. The header calls it on route navigation, and the
+  <a href="./live-play.html">live play</a> shell calls it when a session's shell mounts, since starting
+  a session is where the debit actually happens.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A chrome-level refresh contract beats asking every spender to remember</strong> — the
+  alternative is for each credit-spending mutation site to invalidate the balance itself, which is one
+  more thing to forget at every future call site and fails silently when forgotten (a stale number is
+  not an error). Invalidating on navigation makes "the header is never stale across a navigation" a
+  property of the chrome instead. It is stale-while-revalidate, so the number updates in place —
+  suspense only ever gates the first load — and the cost is one cheap GET per navigation. The
+  session-start invalidation exists for the case navigation can't cover: the debit happens
+  <em>while</em> the player sits on the play route, and the end-of-session confirm states in the past
+  tense that the credit is already spent, so the two must not disagree.
+</aside>
 
 <aside class="wiki-rationale">
   <strong><code>useLowSessionCredits</code> fails open</strong> — the low-credit nudge is decorative
@@ -216,10 +283,11 @@
     also carry the pinned API version, or the dispatcher records-and-acks them without granting.
   </li>
   <li>
-    Open <code>/settings</code>: both balances render, the tiers show their gated CTAs, and history
-    lists real rows. As a new subscriber, the subscription CTA is <code>subscribe</code>; as an
+    Open <code>/settings</code>: both balance tiles render with their explainers, every tier and pack
+    shows its grant ledger in the same row order, the tiers show their gated CTAs, and history lists
+    real rows. As a new subscriber, the subscription CTA is <code>subscribe</code>; as an
     already-subscribed test user, the same tiles render <code>upgrade</code> / <code>manage</code> —
-    never a second checkout.
+    never a second checkout — and the active tier carries the current marker.
   </li>
   <li>
     Buy an à-la-carte pack: Checkout → <code>/billing/return</code> polls until the credited balance
@@ -261,7 +329,8 @@
     <td>
       The slices — <code>getBalance</code>/<code>useBalance</code>, <code>useSkus</code>,
       <code>useHistory</code>, <code>createCheckout</code>, <code>openPortal</code>,
-      <code>upgradeTier</code>, and the fail-open <code>useLowSessionCredits</code>.
+      <code>upgradeTier</code>, the fail-open <code>useLowSessionCredits</code>, and
+      <code>useInvalidateBalance</code> (the shared-cache refresh the persistent chrome calls).
     </td>
   </tr>
   <tr>
@@ -305,7 +374,11 @@
   </tr>
   <tr>
     <td><code>routes/settings.tsx</code> · <code>routes/settings/sessions-billing.tsx</code></td>
-    <td>The Sessions &amp; Billing surface (balance + tiers + à-la-carte + history + portal).</td>
+    <td>
+      The Sessions &amp; Billing surface (balance tiles + tiers + à-la-carte + history + portal); it
+      also composes each card's grant ledger and formats every price and count, so the design system
+      receives finished strings.
+    </td>
   </tr>
   <tr>
     <td><code>routes/billing/checkout-return.tsx</code> · <code>checkout-cancelled.tsx</code></td>

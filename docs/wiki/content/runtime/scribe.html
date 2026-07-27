@@ -1,6 +1,9 @@
 <!-- source: backend/src/session/scribe-worker.ts -->
 <!-- source: backend/src/session/scribe-queue.ts -->
 <!-- source: backend/src/session/scribe-config.ts -->
+<!-- source: backend/src/session/playbook-split.ts -->
+<!-- source: backend/src/repo/tripwire-verdicts.ts -->
+<!-- source: backend/migrations/037_tripwire_verdicts.sql -->
 <!-- source: backend/src/redis/working-set.ts -->
 <!-- source: backend/src/session/working-set/types.ts -->
 <!-- source: backend/src/llm/secret-tripwire.ts -->
@@ -11,19 +14,22 @@
 <!-- source: backend/src/llm/prompts/session/retcon-author.txt -->
 <!-- source: backend/src/llm/schemas/world-delta.ts -->
 <!-- source: docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md -->
-<!-- source-hash: sha256:83ba58d56f34122cac3775eed0e96965c17d6e6a716f9d03b569a25c23296fdb -->
-<!-- last-ticket: MYT-73 -->
+<!-- source-hash: sha256:893c9e9499d29cb56ee491c7c96e9d7a1f251055a4ade6b56ef3b7b42bbc4304 -->
+<!-- last-ticket: myth-g4hf3 -->
 
 <h1>Scribe</h1>
 
 <p class="lead">
   The post-turn reconciler — off the hot path. After each DM turn it turns the Fast Thinker's
   improvisation into durable in-session canon without breaking secrets: it appends the turn's
-  proposed facts to an ephemeral session working set the FT can read next turn, runs a per-turn
-  Haiku <strong>secret tripwire</strong> over the player-facing prose, and on a core-secret breach
-  authors (Opus) a secret-preserving <strong>retcon</strong> the DM delivers openly through a
-  player-less correction turn. The secret <code>sd_playbook</code> is read only on the secret side;
-  the FT sees working-set content only through the Slow-Thinker-vet relay.
+  proposed facts to an ephemeral session working set the FT can read next turn, and runs a per-turn
+  Haiku <strong>secret tripwire</strong> over the player-facing prose. The tripwire returns a
+  <strong>severity</strong>, and the severity picks the remedy: an actual reveal gets an
+  Opus-authored secret-preserving <strong>retcon</strong> the DM delivers openly on a player-less
+  correction turn; an NPC merely acting in character gets a silent nudge to the
+  <a href="./slow-thinker.html">Slow Thinker</a> instead. The secret <code>sd_playbook</code> is
+  read only on the secret side; the FT sees working-set content only through the Slow-Thinker-vet
+  relay.
 </p>
 
 <!-- @diagram: runtime/scribe -->
@@ -53,12 +59,15 @@
 </aside>
 
 <p>
-  Three inputs ride the job. The <a href="./fast-thinker.html">Fast Thinker</a> appends a
-  lightweight <strong>fact-delta</strong> after its prose (the new named things it introduced this
-  turn). The lookup tools' <a href="./fast-thinker.html#world-knowledge-lookups">ST-vet</a> records
-  each <strong>injection</strong> (a fact it relayed or invented mid-turn) into a per-turn sink. And
-  the FT's whole player-facing prose is the tripwire's input. The
-  <a href="./session-turn.html">SessionController</a> assembles all three into one
+  Four inputs ride the job. The <a href="./fast-thinker.html">Fast Thinker</a> appends a lightweight
+  <strong>fact-delta</strong> after its prose (the new named things it introduced this turn). The
+  lookup tools' <a href="./fast-thinker.html#world-knowledge-lookups">ST-vet</a> records each
+  <strong>injection</strong> (a fact it relayed or invented mid-turn) into a per-turn sink. The
+  turn's <strong>resolved skill checks</strong> ride along — roll, tier, and the outcome constraint
+  the FT wrote under — which are public by construction (the outcome table is generated FT-side
+  under enforced ignorance, and the constraint already streamed to the players on the
+  <code>skill_check</code> frame). And the FT's whole player-facing prose is the tripwire's input.
+  The <a href="./session-turn.html">SessionController</a> assembles all of it into one
   <code>ScribeJobPayload</code> and the worker enqueues it once per flushed turn.
 </p>
 
@@ -173,26 +182,156 @@
   ST-vet nor the prose downstream ever surfaces an NPC's claim as ground truth.
 </aside>
 
+<aside class="wiki-rationale">
+  <strong>A third provenance: <code>dice_outcome</code>, and why it exists</strong> — when a turn
+  resolved a passing skill check, the facts it asserted were at least partly licensed by the
+  system's own outcome table. Those proposals are stamped <code>dice_outcome</code> with the tier
+  that earned them (highest passing tier wins; a turn with only failed checks or none stays
+  <code>objective</code>). This is <strong>canonize-on-grant</strong>: a reward the system granted
+  under a success is canon the moment it lands. If it collides with scripted prep material, the
+  world conforms to play — the collision steers <em>future</em> turns down the soft ST path; it
+  never erases the grant. The stamp is deliberately coarse: deciding <em>which</em> fact the dice
+  earned would be local intelligence over prose, so the reconciler sees the provenance and makes the
+  judgment.
+</aside>
+
 <h2>The secret tripwire: the per-turn breach detector</h2>
 
 <p>
   The other half of the Scribe job is the safety check. <code>secret-tripwire.ts</code> is a cheap
-  Haiku <code>generateObject</code> call that reads the FT's player-facing prose and the session's
-  core secrets (the prep's <code>sd_playbook</code>, formatted under handle annotations) and returns
-  an <strong>opaque control signal</strong> — <code>{ breached, confidence, secretRef }</code>,
-  where <code>secretRef</code> is a handle like <code>[SECRET-1]</code>, never secret-derived prose.
-  It asks one question: did the FT, blind to the playbook, just state something that breaks a core
-  secret?
+  Haiku <code>generateObject</code> call that reads the FT's player-facing prose against the
+  session's core secrets and returns an <strong>opaque control signal</strong> —
+  <code>{ severity, confidence, secretRef }</code>, where <code>secretRef</code> is a handle like
+  <code>[SECRET-1]</code>, never secret-derived prose. There is deliberately no free-text
+  <code>why</code> field and no <code>.refine</code> on the schema: the first would carry the
+  secret, and the second lets the repair chain author a "valid" tree and defeat the gate.
+</p>
+
+<h3 id="severity-not-a-boolean">Severity, not a boolean</h3>
+
+<p>
+  The verdict used to be <code>breached: true | false</code>. That bit conflated two very different
+  things, because the FT writes blind: a "hit" is either an accidental hard reveal
+  <em>or</em> improvised colour that merely rhymes with a hidden truth. Both routed to the same
+  open, player-facing correction. So an NPC whose gaze drifted to a door — good DMing, and exactly
+  what a hidden agenda should look like from outside — earned a public "actually, his eyes were just
+  wandering", which confused the player and advertised the secret. The
+  <strong>Streisand retcon</strong>. The verdict is now a severity:
+</p>
+
+<ul>
+  <li>
+    <code>hard_reveal</code> — the prose <em>states</em> a secret, or a player could only conclude
+    its actual content from it. This alone warrants a player-facing correction.
+  </li>
+  <li>
+    <code>soft_consistency</code> — an NPC <em>acts</em> in line with a hidden agenda (a gaze, a
+    mood, guarding a door) without stating or necessarily implying the secret. Good DMing, not a
+    leak.
+  </li>
+  <li><code>none</code> — no meaningful relation to any secret.</li>
+</ul>
+
+<aside class="wiki-rationale">
+  <strong>Confidence survives as observability, not as a gate</strong> — routing is severity's job
+  now; the old <code>TRIPWIRE_ESCALATE_CONFIDENCE_FLOOR</code> is gone. The recall bias it existed
+  to express lives inside the severity call instead: <em>any</em> <code>hard_reveal</code> fires the
+  correction regardless of how confident the model claims to be, because a suspected live leak is
+  corrected rather than waved through. What changed is that a low-confidence hit no longer reaches
+  the disruptive path merely by virtue of being a hit — the severity split is what makes the remedy
+  proportionate.
+</aside>
+
+<h3 id="the-grounding-floor">The grounding floor</h3>
+
+<p>
+  A tripwire that only ever sees prose and secrets will fire on prose the system itself licensed.
+  Two inputs stop that. The first is the <strong>public briefing</strong> — the same
+  enforced-ignorance-safe <code>ft_context</code> the FT reads. A detail grounded there was
+  explicitly handed to the narrator, so it is definitionally not a breach even when it is
+  thematically consistent with a secret. (The incident that forced this: an NPC watching a door the
+  briefing already said he watches.) The second is the turn's
+  <strong>resolved skill-check outcomes</strong> — the deterministic roll plus the Haiku-generated
+  outcome constraint the FT wrote under. Content the system granted through a resolved roll is
+  likewise not a breach.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Recall-biased: any breach escalates, even a low-confidence one</strong> — the tripwire is
-  tuned to catch leaks, not to be precise. A <code>breached: true</code> verdict escalates to the
-  Opus retcon-author regardless of confidence — a breach under the confidence floor is still a
-  breach, never waved through; the expensive author is the second opinion. A
-  <code>breached: false</code>
-  verdict never escalates. The cost of a false positive is a wasted Opus call and a redundant
-  correction; the cost of a false negative is a leaked secret. The asymmetry is deliberate.
+  <strong>Reading a public column is not widening the secret surface</strong> — the Scribe's narrow
+  <code>ScribeRepo</code> now returns <code>ftContext</code> alongside <code>sdPlaybook</code>. That
+  looks like a boundary loosening and is the opposite: <code>ft_context</code> is the
+  <em>public</em> artifact, already in the FT's own hands every turn, and it enters here only to
+  make the tripwire fire <em>less</em>. An empty briefing degrades gracefully — grounding simply
+  rescues nothing that turn — rather than failing the job.
+</aside>
+
+<h3 id="the-playbook-split">Splitting the playbook</h3>
+
+<p>
+  The other half of the false-positive problem was the input shape. The whole
+  <code>sd_playbook</code> used to ride a single <code>[SECRET-1]</code> handle, so "the prose
+  contradicts an encounter script" and "the prose revealed a secret" were literally
+  indistinguishable in the verdict — which is how a dice-earned reward got openly retconned.
+  <code>splitPlaybook</code> now parses the prep template's section seams: only the actual secret
+  sections (NPC secrets and the revelation list) get per-secret <code>[SECRET-n]</code> handles, and
+  everything else — session goals, knowledge bounds, encounter scripts, pacing, hooks — becomes
+  <strong>consistency material</strong>, which the tripwire may route to the soft path only.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Structural parsing of a template we author is ZFC-legal</strong> — this is not
+  intelligence about prose; it is splitting a markdown document on headings we wrote ourselves,
+  matched as case-insensitive prefixes so minor prep drift still classifies. When no secret section
+  is recognized at all the split falls back to the old whole-playbook lump and logs a warn: over-
+  protective rather than under-protective, and visible rather than silent.
+</aside>
+
+<h3>The remedy, routed</h3>
+
+<p>
+  <code>none</code> logs clean and returns. <code>soft_consistency</code> gets the
+  <strong>silent</strong> remedy: no player-facing correction at all, just an
+  <a href="./slow-thinker.html">st-evaluation</a> enqueue so the secret-aware Opus director can
+  decide for itself whether to steer future turns through its standing directive. Only
+  <code>hard_reveal</code> reaches the open retcon below — and only when it cites one of the emitted
+  handles.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The hard-reveal handle gate</strong> — an open, player-facing correction is licensed only
+  when the tripwire named a real <code>[SECRET-n]</code> from this playbook. A hard verdict with a
+  null, <code>[CONSISTENCY]</code>, or hallucinated ref means no listed core secret was actually
+  named, so it routes to the silent path instead. This is structural validation of an opaque control
+  signal — the same class of check as a schema validation — and it is the backstop that keeps a
+  scripted-canon collision off the disruptive path even if the severity call itself gets it wrong.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The soft path carries strictly less back than the retcon path</strong> — the ST signal is
+  a bare enqueue: campaign and session ids, nothing secret-derived, no text. It is dedup-collapsed
+  per campaign by the st-eval queue's no-TTL dedup, so a scene full of in-character NPC beats cannot
+  spam Opus, and it is total — an enqueue failure logs and returns, because steering is an
+  enhancement and the ST's own five-turn oversight floor is the backstop. The turn already shipped
+  clean; nothing is being repaired here, only aimed.
+</aside>
+
+<h3>Every verdict is durable</h3>
+
+<p>
+  Each verdict writes one row to <code>tripwire_verdicts</code> (migration 037): campaign, session,
+  turn, severity, confidence, handle. Forensics on a live incident previously had to infer a firing
+  breach from two incidental "skipping re-author" log lines; the table makes the whole series
+  queryable per turn. The insert has its own try/catch — verdict persistence is observability, and
+  this job is total, so a Postgres hiccup must never skip the routing.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The handle is sanitized before it is stored</strong> — <code>secret_ref</code> is a free
+  string on the wire, and the schema's handle-only contract is a promise the model makes, not one
+  the database can rely on. So a ref that is not a recognized <code>[SECRET-n]</code> or
+  <code>[CONSISTENCY]</code> collapses to <code>[UNRECOGNIZED]</code> before insert. A durable row
+  must not depend on the model honouring a contract — the same rule that keeps a corrected-field
+  echo out of shared storage.
 </aside>
 
 <aside class="wiki-rationale">
@@ -209,14 +348,14 @@
 <h2>The retcon: a secret-preserving correction on a player-less turn</h2>
 
 <p>
-  On a breach, <code>retcon-author.ts</code> writes the fix. It is an Opus call — the same tier as
-  the narrative director — because the judgment is the same: it reasons over the secret to author a
-  correction <code>Z</code> that <em>removes the contradiction without revealing the secret</em>,
-  paraphrased or implied. Its <code>retconText</code> is the player-facing correction prose,
-  surfaced verbatim. The Scribe then delivers it through a
-  <strong>player-less correction turn</strong>: it enqueues a normal <code>session-turn</code> job
-  with <code>trigger.kind: 'correction'</code>, empty trigger messages, and the
-  <code>correctionText</code> set to <code>Z</code>.
+  On a <code>hard_reveal</code> that cited a real handle, <code>retcon-author.ts</code> writes the
+  fix. It is an Opus call — the same tier as the narrative director — because the judgment is the
+  same: it reasons over the secret to author a correction <code>Z</code> that
+  <em>removes the contradiction without revealing the secret</em>, paraphrased or implied. Its
+  <code>retconText</code> is the player-facing correction prose, surfaced verbatim. The Scribe then
+  delivers it through a <strong>player-less correction turn</strong>: it enqueues a normal
+  <code>session-turn</code> job with <code>trigger.kind: 'correction'</code>, empty trigger
+  messages, and the <code>correctionText</code> set to <code>Z</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -259,12 +398,13 @@
   The producer is the turn worker's post-turn <code>finally</code> phase, so the whole job is
   <strong>total</strong>: <code>processScribeJob</code> never throws out. A working-set append/evict
   failure logs and continues to the tripwire (the secret check is the load-bearing half). A tripwire
-  call failure skips the breach check this turn and returns. An embed failure degrades to empty
-  embeddings (the fact still appends, just unrankable until re-embedded) rather than dropping the
-  turn's facts. A retcon-author repair attempt fail-softs — a repaired tree was re-authored by a
-  different model and could re-author the safety-critical text, so the correction is skipped and
-  re-fires next turn. Transient failures lean on BullMQ retry; the one loud error is the disarmed
-  tripwire.
+  call failure skips the breach check this turn and returns. A verdict-persist failure or a failed
+  soft-path ST enqueue logs and continues — both are observability and steering, not correctness. An
+  embed failure degrades to empty embeddings (the fact still appends, just unrankable until
+  re-embedded) rather than dropping the turn's facts. A retcon-author repair attempt fail-softs — a
+  repaired tree was re-authored by a different model and could re-author the safety-critical text,
+  so the correction is skipped and re-fires next turn. Transient failures lean on BullMQ retry; the
+  one loud error is the disarmed tripwire.
 </p>
 
 <h2>Operating this piece</h2>
@@ -299,9 +439,26 @@
     <code>Z</code>, and a <code>correction</code> turn delivers it.
   </li>
   <li>
-    On the worker log, a clean turn logs <code>scribe: tripwire clean; no retcon</code>; a breach
-    logs the escalation and (on a fresh secret) the enqueued correction. Grep the streamed
+    On the worker log, a clean turn logs <code>scribe: tripwire clean; no retcon</code>; a
+    <code>hard_reveal</code> logs <code>hard_reveal breach → authoring open retcon</code> with its
+    handle and confidence, and (on a fresh secret) the enqueued correction. Grep the streamed
     correction prose against the playbook's secret strings to confirm zero verbatim leak.
+  </li>
+  <li>
+    A turn that logs
+    <code>soft_consistency (NPC behavior consistent with a secret) — NO player correction</code>
+    took the <a href="#severity-not-a-boolean">silent path</a>: expect an
+    <code>st-evaluation</code> enqueue and <em>no</em> correction turn. A
+    <code>hard_reveal without a recognized secret handle</code> warn means the handle gate rerouted
+    a hard verdict to the same silent path — worth reading alongside the playbook split's
+    <code>no recognizable secret sections</code> warn, which says the prep doc's headings drifted.
+  </li>
+  <li>
+    For the full series rather than a single turn, query the durable verdicts:
+    <code
+      >SELECT turn_id, severity, confidence, secret_ref FROM tripwire_verdicts WHERE session_id =
+      '&lt;id&gt;' ORDER BY created_at</code
+    >.
   </li>
   <li>
     A <code>scribe_tripwire_misconfigured</code> error means the session's <code>sd_playbook</code>
@@ -358,13 +515,22 @@
     </tr>
     <tr>
       <td><code>SCRIBE_RETCON_MAX_OUTPUT_TOKENS</code></td>
-      <td>1200</td>
-      <td>A short open correction <code>Z</code>; bounds a runaway.</td>
+      <td>6000</td>
+      <td>
+        A short open correction <code>Z</code>. Raised 1200 → 6000 on the Opus 5 bump: the cap now
+        covers adaptive thinking and the visible output together, so a ceiling sized for the
+        correction alone would truncate mid-thought. The runaway guard is
+        <code>SCRIBE_RETCON_TIMEOUT_MS</code>.
+      </td>
     </tr>
     <tr>
-      <td><code>TRIPWIRE_ESCALATE_CONFIDENCE_FLOOR</code></td>
-      <td>0.5</td>
-      <td>A breach under this still escalates (recall-biased); only informs the log line.</td>
+      <td><code>SECRET_TRIPWIRE_SEVERITIES</code></td>
+      <td><code>none</code> / <code>soft_consistency</code> / <code>hard_reveal</code></td>
+      <td>
+        The <a href="#severity-not-a-boolean">routing verdict</a>. Replaces
+        <code>TRIPWIRE_ESCALATE_CONFIDENCE_FLOOR</code>, which is gone — there is deliberately no
+        numeric escalation knob; severity is the gate and confidence is observability.
+      </td>
     </tr>
     <tr>
       <td><code>WORKING_SET_CAP</code></td>
@@ -433,22 +599,44 @@
     <tr>
       <td><code>src/session/scribe-worker.ts</code></td>
       <td>
-        <code>processScribeJob</code> (total: embed → tripwire → retcon),
+        <code>processScribeJob</code> (total: embed → tripwire → route by severity),
         <code>buildScribeWorker</code>, the narrow <code>ScribeRepo</code> /
-        <code>ScribeTriggerState</code> / <code>ScribeWorkingSet</code>
-        interfaces.
+        <code>ScribeTriggerState</code> / <code>ScribeWorkingSet</code> interfaces,
+        <code>handleSoftConsistency</code> (the silent ST steer), <code>diceProvenance</code>, and
+        <code>sanitizeRefForPersist</code>.
       </td>
     </tr>
     <tr>
       <td><code>src/session/scribe-queue.ts</code></td>
       <td>
         <code>enqueueScribe</code>, <code>QUEUE_SCRIBE</code>, <code>ScribeJobPayload</code> (prose
-        + worldDelta + injections + worldId; no dedup id).
+        + worldDelta + injections + worldId + the optional <code>skillChecks</code>; no dedup id),
+        <code>ResolvedSkillCheckOutcome</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>src/session/playbook-split.ts</code></td>
+      <td>
+        <code>splitPlaybook</code> / <code>isKnownSecretHandle</code> /
+        <code>normalizeHandle</code> — the
+        <a href="#the-playbook-split">secret / consistency split</a> along the prep template's
+        section seams, the emitted handle list the hard-reveal gate validates against, and the
+        over-protective fallback flag.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>src/repo/tripwire-verdicts.ts</code> +
+        <code>migrations/037_tripwire_verdicts.sql</code>
+      </td>
+      <td>
+        One durable row per verdict — severity, confidence, and a sanitized handle. Handle-only by
+        design; never secret content.
       </td>
     </tr>
     <tr>
       <td><code>src/session/scribe-config.ts</code></td>
-      <td>The tuning constants above (models, timeouts, working-set cap, escalation floor).</td>
+      <td>The tuning constants above (models, timeouts, working-set cap).</td>
     </tr>
     <tr>
       <td><code>src/redis/working-set.ts</code> + <code>src/session/working-set/types.ts</code></td>
@@ -465,7 +653,10 @@
       </td>
       <td>
         <code>runSecretTripwire</code> (Haiku, <code>redactRawText</code>) + the
-        <code>{ breached, confidence, secretRef }</code> schema + prompt.
+        <code>{ severity, confidence, secretRef }</code> schema
+        (<code>SECRET_TRIPWIRE_SEVERITIES</code>) + prompt. The wrapper also takes the
+        <a href="#the-grounding-floor">grounding-floor</a> inputs: <code>publicContext</code>, plus
+        the optional <code>consistencyContext</code> and <code>diceOutcomes</code>.
       </td>
     </tr>
     <tr>
@@ -495,7 +686,11 @@
 <p>
   <code>backend/src/session/scribe-worker.ts</code>,
   <code>backend/src/session/scribe-queue.ts</code>,
-  <code>backend/src/session/scribe-config.ts</code>, <code>backend/src/redis/working-set.ts</code>,
+  <code>backend/src/session/scribe-config.ts</code>,
+  <code>backend/src/session/playbook-split.ts</code>,
+  <code>backend/src/repo/tripwire-verdicts.ts</code>,
+  <code>backend/migrations/037_tripwire_verdicts.sql</code>,
+  <code>backend/src/redis/working-set.ts</code>,
   <code>backend/src/session/working-set/types.ts</code>,
   <code>backend/src/llm/secret-tripwire.ts</code>, <code>backend/src/llm/retcon-author.ts</code>,
   <code>backend/src/llm/schemas/world-delta.ts</code> (+ the tripwire / retcon schemas and prompts).

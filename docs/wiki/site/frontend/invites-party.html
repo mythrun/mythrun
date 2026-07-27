@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/character-creation.html">Character-creation experience</a></li><li><a href="../frontend/invites-party.html" class="active">Invites & party</a></li><li><a href="../frontend/live-play.html">Live play</a></li><li><a href="../frontend/billing-credits.html">Billing & credits</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › Invites & party</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>frontend/src/routes/join.tsx</code>, <code>frontend/src/routes/campaign-invite-panel.tsx</code>, <code>frontend/client-core/src/api/invites.ts</code>, <code>frontend/client-core/src/invites/</code>, <code>frontend/client-core/src/contract/invite/</code>, <code>frontend/src/platform/web/share.ts</code>, <code>frontend/src/platform/web/use-foreground-refetch.ts</code>, <code>frontend/ui/src/components/InvitePanel/</code>, <code>frontend/ui/src/components/JoinPreview/</code></div>
-</div>
-
+        <article>
 <h1>Invites &amp; party</h1>
 
 <p class="lead">
@@ -206,6 +201,27 @@
 </p>
 
 <aside class="wiki-rationale">
+  <strong>Replace asks once before it strands a link</strong> — replacing revokes the code the owner
+  may already have pasted into a group chat, and the first version fired that on a single press
+  sitting next to Copy. The panel now arms a <strong>one-beat inline confirm</strong>: the first press
+  swaps the row for a prose question plus a confirm and a cancel, and only the confirm calls
+  <code>onRevoke</code>. It stays inline prose rather than a modal — the calm paper register — and the
+  confirm's open/closed is ephemeral component state, since no consumer needs to observe it.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The same panel appears at two weights, because the invite isn't always the point</strong> —
+  on the <a href="./campaign-hub.html">campaign page</a> the invite <em>is</em> the primary action, so
+  Copy carries the brand accent fill. Mounted under a character reveal or a party roster it is
+  secondary to that screen's own hero, so the panel takes <code>prominence="quiet"</code> and Copy
+  drops to a bordered secondary — a page spends its one filled accent on its real primary action, and
+  a demoted invite must not be it. The route wrapper adds a second lever for those placements,
+  <code>collapsible</code>: the panel starts as a single quiet "invite a friend" line that expands on
+  demand. The link is still resolved on mount, so expanding is instant, and a pending notice always
+  overrides the collapse — an error must never hide behind an affordance.
+</aside>
+
+<aside class="wiki-rationale">
   <strong>Native share is progressive enhancement over a clipboard copy</strong> — the panel offers a
   <code>navigator.share</code> button only where the platform has it (<code>canWebShare()</code>), and
   copy-to-clipboard everywhere. Both are web globals, so they live in the sanctioned
@@ -333,7 +349,8 @@
 <ol>
   <li>
     As the owner, open a campaign and copy the primary link from the invite panel. "Replace link"
-    revokes and re-mints — the old link then previews <code>valid: false</code>.
+    arms an inline confirm; confirming revokes and re-mints — the old link then previews
+    <code>valid: false</code>. Cancelling leaves the current link untouched.
   </li>
   <li>
     In a second browser identity (signed out), open <code>/join/:code</code>. You should see the
@@ -423,7 +440,7 @@
     <td><code>routes/campaign-invite-panel.tsx</code></td>
     <td>
       The owner-gated wired panel — link resolution, copy/share/revoke, the StrictMode mounted-ref
-      reset.
+      reset, and the <code>prominence</code> / <code>collapsible</code> placement levers.
     </td>
   </tr>
   <tr>
@@ -432,7 +449,11 @@
   </tr>
   <tr>
     <td><code>platform/web/share.ts</code></td>
-    <td><code>canWebShare</code> / <code>webShare</code> / <code>copyText</code> — the web-global carve-out.</td>
+    <td>
+      <code>canWebShare</code> / <code>webShare</code> / <code>copyText</code> / <code>absoluteUrl</code>
+      — the web-global carve-out (<code>absoluteUrl</code> resolves an app-relative path against the
+      page origin, so a route that hands out a link never reaches <code>window</code> itself).
+    </td>
   </tr>
   <tr>
     <td><code>platform/web/use-foreground-refetch.ts</code></td>
@@ -440,7 +461,10 @@
   </tr>
   <tr>
     <td><code>ui/…/InvitePanel</code> · <code>ui/…/JoinPreview</code></td>
-    <td>The presentational share panel and public join card.</td>
+    <td>
+      The presentational share panel (two prominences, the one-beat replace confirm) and the public
+      join card.
+    </td>
   </tr>
 </table>
 

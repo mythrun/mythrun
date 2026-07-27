@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../data/index.html">Overview</a></li><li><a href="../data/schema.html">Schema</a></li><li><a href="../data/migrations.html" class="active">Migrations</a></li><li><a href="../data/repository.html">Repository layer</a></li><li><a href="../data/world-store-retrieval.html">World-store retrieval</a></li><li><a href="../data/bootstrap-database.html">Bootstrap database</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Data › Migrations</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>backend/src/db/migrate.ts</code>, <code>backend/src/db/lock-key.ts</code>, <code>backend/migrations/</code></div>
-</div>
-
+        <article>
 <h1>Migrations</h1>
 
 <p class="lead">
@@ -572,10 +567,16 @@ aws ecs execute-command \
 <h2 id="integration-points">Integration points</h2>
 
 <p>
-  The runner applies the <a href="./schema.html">current schema</a> — nine files in
-  <code>backend/migrations/</code>, the union of which lays down the application tables, named
-  indexes, and three empty SRD reference tables — onto a fresh database; the
-  <code>schema</code> page is the explainer for what those files lay down. The runner reuses
+  The runner applies the <a href="./schema.html">current schema</a> — the numbered files in
+  <code>backend/migrations/</code> (37 of them as of <code>037_tripwire_verdicts.sql</code>), the
+  union of which lays down every application table, its named indexes, and the three
+  still-unpopulated SRD reference tables — onto a fresh database; the <code>schema</code> page is
+  the explainer for what those files lay down, and the
+  <a href="../reference/schema.html">schema reference</a> is the generated per-table view. Each new
+  migration also updates the pinned expectations in
+  <code>backend/src/db/__tests__/migrate-schema.test.ts</code> — the file list plus the table,
+  index, CHECK-constraint, and FK-delete-rule arrays — so a migration that lands without its parity
+  entries fails CI rather than drifting quietly. The runner reuses
   <a href="../runtime/index.html"><code>createPgPool</code></a> from the backend workspace and the
   <a href="../runtime/index.html"><code>installSignalHandlers</code></a> shape the boot gate already
   established. The eventual server-boot wiring will call <code>runMigrations</code> after the

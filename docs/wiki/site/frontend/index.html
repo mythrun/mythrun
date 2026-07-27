@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html" class="active">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/character-creation.html">Character-creation experience</a></li><li><a href="../frontend/invites-party.html">Invites & party</a></li><li><a href="../frontend/live-play.html">Live play</a></li><li><a href="../frontend/billing-credits.html">Billing & credits</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>frontend/package.json</code>, <code>frontend/ui/package.json</code>, <code>frontend/tsconfig.json</code>, <code>frontend/eslint.config.js</code>, <code>frontend/ui/eslint.config.js</code>, <code>frontend/eslint-rules/no-ad-hoc-ui.js</code>, <code>frontend/eslint-rules/no-untranslated-jsx-text.js</code>, <code>frontend/vitest.config.ts</code>, <code>frontend/ui/src/components/Text/Text.tsx</code>, <code>frontend/src/main.tsx</code>, <code>frontend/src/index.css</code>, <code>frontend/src/i18n/config.ts</code>, <code>frontend/src/i18n/i18next.d.ts</code>, <code>frontend/client-core/src/i18n/</code>, <code>frontend/scripts/i18n-todo.mjs</code>, <code>frontend/client-core/src/tokens/generate-palette.mjs</code>, <code>frontend/ui/src/styles/semantic.css</code>, <code>frontend/ui/src/styles/theme.css</code>, <code>frontend/ui/src/styles/base.css</code>, <code>frontend/ui/src/styles/index.css</code>, <code>pnpm-workspace.yaml</code>, <code>.github/workflows/frontend-check.yml</code></div>
-</div>
-
+        <article>
 <h1>Frontend</h1>
 
 <p class="lead">
@@ -559,18 +554,21 @@
   <code>[ph_*]</code> tokens so a frame rendered at honest width before its copy landed. MYT-100 —
   the <strong>copy pass</strong> — closed that era: with every surface built, Miklos and Claude swept
   the whole catalog against the live app and authored the real strings, so no
-  <code>[ph:</code>/<code>[ph_</code> marker renders anywhere. The catalog now holds
-  <strong>482 leaves</strong> under the single <code>common</code> namespace.
+  <code>[ph:</code>/<code>[ph_</code> marker renders anywhere. The catalog keeps growing with the
+  surfaces — the staging-audit fix waves that followed the pass added the session-position vocabulary,
+  the end-session confirm, the wind-down offer, the composer's gate captions, the credit explainers
+  and grant ledgers, the pronoun ask, and the escalated error screen — and now holds
+  <strong>643 leaves</strong> under the single <code>common</code> namespace.
 </p>
 
 <p>
   The pass also folded repeated copy into a <strong><code>shared.*</code> subtree</strong>. A line
   that recurs verbatim across the app — the low-credits nudge, the retry cooldown, the weave-interrupt
-  notice, a plain <code>Try again</code> (thirteen sites), the entity-type labels — is written once
-  under <code>shared</code> and referenced elsewhere through i18next's
-  <strong><code>$t()</code> nesting</strong>: a value of <code>"$t(shared.tryAgain)"</code> resolves
-  to the shared string at lookup. Fifty-seven keys are such aliases, so one edit to a shared line
-  updates every site that reads it.
+  notice, a plain <code>Try again</code>, the entity-type labels, the draft-cost disclosure — is
+  written once under <code>shared</code> (a dozen keys today) and referenced elsewhere through
+  i18next's <strong><code>$t()</code> nesting</strong>: a value of
+  <code>"$t(shared.tryAgain)"</code> resolves to the shared string at lookup. Fifty-eight keys are
+  such aliases, so one edit to a shared line updates every site that reads it.
 </p>
 
 <aside class="wiki-rationale">
@@ -593,6 +591,26 @@
   <code>_one</code>/<code>_other</code> plural shapes the pass introduced (<code>home.card.record</code>
   pluralized, so a one-session campaign no longer reads "1 sessions").
 </p>
+
+<p>
+  The pass also left a <strong>reviewing surface</strong> behind it. <code>frontend/copy-workbench/</code>
+  is an internal tooling app — its own Vite entry, outside the web app's own
+  <code>tsconfig</code> — that lays every catalog key out flow by flow with its description, its call
+  sites, and the candidate lines, and folds the build into one self-contained HTML page Miklos reads
+  copy in. It is the sibling of the existing <code>animation-audit/</code> surface and ships nothing to
+  players.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The workbench's typecheck is chained onto <code>typecheck</code>, not a new gate</strong> —
+  the file that declares its compiler project already existed, but nothing ran it, so the workbench
+  silently rotted through several rounds of component-contract changes while every sweep stayed green.
+  <code>@mythrun/web</code>'s <code>typecheck</code> script now runs <code>tsc --noEmit</code> and then
+  the workbench's project, so every existing caller — the pre-push frontend section, CI's
+  <code>frontend-check</code>, the root <code>pnpm typecheck</code> — covers it with no new step for
+  anyone to forget to wire up. The workbench is the surface copy is reviewed in; a broken one blocks
+  the copy work, so it gets a real gate.
+</aside>
 
 <h2 id="design-tokens">Design tokens</h2>
 
@@ -654,7 +672,11 @@
   <em>foreground</em> — so dark-mode button fills, link text, and focus rings each clear AA under
   opposite contrast constraints; the
   <a href="./design-system.html#the-design-language-flat-1-bit">Design system</a>
-  tells that story.
+  tells that story. A canvas gets its ink from the same vocabulary: the
+  <a href="./world-gen-experience.html">world-gen</a> terrain field paints through a
+  <code>--worldgen-terrain</code> alias — a different paper step per theme — rather than a hard-coded
+  hex, so the map's ground flips with the theme and its measured contrast against the page can be
+  pinned by a test.
 </p>
 
 <aside class="wiki-rationale">

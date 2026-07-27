@@ -479,7 +479,7 @@
   <code>proration_date = current_period_start</code> on the upgrade path, which Portal doesn't
   expose. The boot probe verifies the Portal config carries the asymmetric
   <code>schedule_at_period_end.conditions</code> rule for downgrades. See
-  <a href="./stripe-contract.html#the-boot-probe-and-its-four-error-classes"
+  <a href="./stripe-contract.html#the-boot-probe-and-its-error-classes"
     >probe and its error classes</a
   >.
 </aside>
@@ -538,6 +538,55 @@
   The early-exit on <code>tier_unchanged</code> handles the post-COMMIT replay case where Stripe's
   24-hour idempotency cache has expired but our DB shows the new tier already.
 </aside>
+
+<h3 id="the-closed-error-code-union">The closed error-code union</h3>
+
+<p>
+  Every 4xx and 5xx these routes return carries a machine-readable <code>code</code>, and the set of
+  codes is closed. <code>backend/src/billing/errors.ts</code> declares
+  <code>BILLING_ERROR_CODES</code> as a tuple and derives the <code>BillingErrorCode</code> union
+  from it, so the runtime list and the type cannot drift apart. Handlers never write the envelope by
+  hand: each emit site calls <code>billingError('&lt;code&gt;')</code>, whose parameter is typed to
+  the union, and codes that carry a detail payload spread the result (<code
+    >{ ...billingError('unknown_lookup_key'), lookup_key }</code
+  >). A typo is a typecheck failure at the emit site rather than a 400 carrying a body no client
+  knows how to read.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Three mechanisms, because a type alone was already tried and failed</strong> — the first
+  version of this union was a bare <code>type</code> that nothing imported. Emit sites wrote
+  <code>reply.code(400).send({ code: '…' })</code> and TypeScript inferred a string literal, so the
+  "closed enum" was documentation rather than a constraint and was eventually deleted as dead code.
+  The rebuild (myth-wtj2i) closes each hole the first attempt left open: the constructor makes an
+  unknown code a type error; an ESLint <code>no-restricted-syntax</code> rule scoped to
+  <code>routes/billing.ts</code> and <code>routes/webhook.ts</code> bans the bare
+  <code>{ code: '…' }</code> literal so a new site cannot quietly reintroduce the unchecked form;
+  and a <code>Record&lt;BillingErrorCode, number&gt;</code> status map in
+  <code>billing/__tests__/errors.test.ts</code> fails typecheck when a code is added without
+  documenting its HTTP status, or when a stale entry survives its code's removal. Adding a code
+  means touching all four places plus §12.2 of the billing spec.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong
+    ><code>unauthenticated</code> and <code>username_required</code> sit outside the union</strong
+  >
+  — both are the shared cross-route auth envelope emitted by every authenticated plugin's
+  <code>resolveUserId</code> (the same pair <code>routes/invites.ts</code> returns), not
+  billing-domain errors. Pulling them into <code>BillingErrorCode</code> would make a
+  billing-specific type the home of a platform-wide contract. The lint rule exempts the two values
+  explicitly so the auth arms keep compiling.
+</aside>
+
+<p>
+  The union spans both route files, so it also carries the three codes the
+  <a href="./billing-webhook.html">webhook route</a> emits — <code>missing_signature</code> and
+  <code>invalid_signature</code> on the signature gate, and <code>internal</code> when the raw-body
+  parser is missing and <code>request.body</code> arrives as something other than a
+  <code>Buffer</code>. The last one is not in spec §12.1's list; it is recorded in the tuple anyway
+  so the union stays honest about what the routes can actually return.
+</p>
 
 <h2 id="operating-this-piece">Operating this piece</h2>
 
@@ -606,13 +655,14 @@
   <a href="./billing-webhook.html">webhook</a> is the asynchronous counterpart to checkout and
   upgrade — Stripe fires events at the webhook when the operations complete, and the handlers there
   produce the credit grants and audit rows. <code>findOrCreateStripeCustomer</code> sits in
-  <code>backend/src/repo/users.ts</code>; the helper's three-phase shape is documented on the
+  <code>backend/src/repo/users.ts</code> and is re-exported through
+  <code>backend/src/billing/customer.ts</code> so the routes import it from the billing namespace;
+  the helper's three-phase shape is documented on the
   <a href="../data/repository.html">repository layer</a> page. Cart rule failures and upgrade
-  preconditions return stable machine-readable <code>code</code> values so the SPA can
-  branch on <code>response.code</code> without parsing prose. (The codes are emitted as
-  literals at each route; a closed union type meant to pin the set was never wired to an
-  enforcing test and was removed as dead code — bead <code>myth-wtj2i</code> tracks
-  re-introducing it properly.)
+  preconditions return stable machine-readable <code>code</code> values so the SPA can branch on
+  <code>response.code</code> without parsing prose — see
+  <a href="#the-closed-error-code-union">the closed error-code union</a> for what keeps that set
+  honest.
 </p>
 
 <h2 id="appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</h2>
@@ -768,14 +818,40 @@
       <td>503</td>
       <td>Boot probe didn't populate the cache (defensive — should be unreachable in deploy).</td>
     </tr>
+    <tr>
+      <td><code>missing_signature</code></td>
+      <td>400</td>
+      <td>Webhook route: no <code>Stripe-Signature</code> header.</td>
+    </tr>
+    <tr>
+      <td><code>invalid_signature</code></td>
+      <td>400</td>
+      <td>Webhook route: <code>constructEvent</code> rejected the signature.</td>
+    </tr>
+    <tr>
+      <td><code>internal</code></td>
+      <td>500</td>
+      <td>
+        Webhook route: the raw-body parser is missing and <code>request.body</code> isn't a
+        <code>Buffer</code>.
+      </td>
+    </tr>
   </tbody>
 </table>
+
+<p>
+  Every row above is an entry in <code>BILLING_ERROR_CODES</code> except
+  <code>unauthenticated</code> and <code>username_required</code>, which are the shared cross-route
+  auth envelope and deliberately live outside the union. The last three rows are emitted by
+  <code>routes/webhook.ts</code> rather than <code>routes/billing.ts</code>; both files draw from
+  the one union and both are covered by the lint rule that bans the bare literal form.
+</p>
 
 <h2 id="source">Source</h2>
 
 <p>
   <code>backend/src/routes/billing.ts</code>, <code>backend/src/billing/customer.ts</code>,
-  <code>backend/src/billing/sku-cache.ts</code>,
+  <code>backend/src/billing/errors.ts</code>, <code>backend/src/billing/sku-cache.ts</code>,
   <code>backend/src/repo/users.ts</code> (<code>findOrCreateStripeCustomer</code>),
   <code>backend/src/repo/user-subscriptions.ts</code>,
   <code>backend/src/repo/billing-history.ts</code>, <code>backend/src/repo/purchases.ts</code>.
@@ -785,7 +861,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#read-endpoints">Read endpoints</a></li><li style="padding-left:12px"><a href="#write-endpoints">Write endpoints</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-tier-upgrade">Diagnose a stuck tier upgrade</a></li><li style="padding-left:12px"><a href="#reconcile-a-checkout-with-no-credit-grant">Reconcile a checkout with no credit grant</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#routes">Routes</a></li><li style="padding-left:12px"><a href="#error-codes">Error codes</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#read-endpoints">Read endpoints</a></li><li style="padding-left:12px"><a href="#write-endpoints">Write endpoints</a></li><li style="padding-left:12px"><a href="#the-closed-error-code-union">The closed error-code union</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#diagnose-a-stuck-tier-upgrade">Diagnose a stuck tier upgrade</a></li><li style="padding-left:12px"><a href="#reconcile-a-checkout-with-no-credit-grant">Reconcile a checkout with no credit grant</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-inputs-amp-outputs">Appendix: inputs &amp; outputs</a></li><li style="padding-left:12px"><a href="#routes">Routes</a></li><li style="padding-left:12px"><a href="#error-codes">Error codes</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

@@ -1,8 +1,11 @@
 digraph slow_thinker {
   // The post-hoc SlowThinker pipeline (MYT-69), OFF the hot path. A flushed DM
   // turn enqueues an st-evaluation job (per-campaign dedup, NO ttl). The
-  // st-evaluation worker runs policy → gate → evaluate → write, all background:
-  // the deterministic policy (floor / wind-down) may force an evaluation; else a
+  // st-evaluation worker runs policy → converge probe → gate → evaluate → write,
+  // all background: the deterministic policy (floor / wind-down) may force an
+  // evaluation; inside [0.75, 0.9) the myth-3jna1 converge probe asks Haiku how
+  // far through the prep's arc the table is and forces the evaluation when the
+  // story is behind the spend; else a
   // Haiku gate decides whether to spend the Opus call; the Opus director (gate
   // verdict NEVER fed in) emits a STRUCTURAL split — private `reasoning` +
   // public `direction`/`standingDirective` + a full summary REWRITE. Outputs
@@ -31,6 +34,7 @@ digraph slow_thinker {
 
     active [label="active-session check\n(queued job for an ended session → no-op)"];
     policy [label="DETERMINISTIC POLICY (code)\nturns-since-ST ≥ FLOOR → evaluate\nusage ≥ 0.9 × BUDGET → evaluate (wind-down)"];
+    probe [label="converge probe — Haiku (myth-3jna1)\nONLY inside 0.75 ≤ mech < 0.9 (else free)\narc position vs the sd_playbook, NEVER told the budget\nSECRET-SIDE: only a boolean + a token count leave", color="ember", fontcolor="ember"];
     gate  [label="Haiku gate (generateObject)\n{needed, confidence, reason}\nskip IFF !needed && confidence ≥ 0.8", color="ember", fontcolor="ember"];
     director [label="Opus director (generateObject)\nGATE VERDICT NOT FED IN\nstructural split: reasoning | direction |\nstandingDirective | summaryUpdate\nrepairAttempted → DISCARD whole", color="ember", fontcolor="ember"];
     rearm [label="self-re-arm\nnewer turns mid-eval →\nremoveDeduplicationKey + re-add"];
@@ -64,14 +68,18 @@ digraph slow_thinker {
   turn -> q [label="add (dedup, no ttl)"];
   q -> active [label="BLPOP-style"];
   active -> policy;
-  policy -> gate [label="not forced"];
+  policy -> probe [label="not forced"];
   policy -> director [label="floor / wind-down forces", style=dashed];
+  probe -> gate [label="on pace, out of window,\nor probe failed (fail-quiet)"];
+  probe -> director [label="story behind spend →\nforce, converge:true (a BOOLEAN)", style=dashed];
   gate -> director [label="evaluate"];
 
   director -> prep [label="read", style=dotted];
   director -> msgs [label="read", style=dotted];
   director -> roster [label="read", style=dotted];
   gate -> prep [label="read", style=dotted];
+  probe -> prep [label="read (FULL playbook)", style=dotted];
+  probe -> usagest [label="incrUsageSt", style=dashed];
 
   director -> oneshot [label="setOneShot (intervene)"];
   director -> standing [label="set / clear"];

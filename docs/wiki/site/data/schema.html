@@ -815,8 +815,13 @@
   replay is deterministic; <code>session_participants</code> records who was present.
   <code>world_snapshots</code> is a point-in-time freeze of world state used by
   <code>session_preps</code> (the FT context + ST playbook the runtime loads at session start).
-  <code>session_usage</code> tracks per-session token spend and the running USD cost (the cap signal
-  the Slow Thinker uses to ramp toward a graceful close); see the
+  <code>session_usage</code> is <em>shaped</em> to hold per-session token spend and running USD
+  cost, but nothing currently writes it: <code>recordUsage</code> is defined on the sessions
+  repository and has no caller, so the table stands empty in production. Read it as a reserved slot,
+  not a live feed — the per-session cost trail it was meant to provide does not presently exist. The
+  spend signal the Slow Thinker actually ramps on is the Redis usage counter
+  (<code>sessionState.totalUsageTokens</code>), which is the same number the session-progress
+  fraction and the budget stop read; see the
   <a href="../auth-billing/billing-metering.html">billing-metering</a> page for the call shape. The
   row's lifecycle stamps are <code>started_at</code>, <code>ended_at</code>, and — added in
   migration 027 — <code>reconciled_at</code>, the marker the

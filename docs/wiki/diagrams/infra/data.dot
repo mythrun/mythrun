@@ -8,7 +8,7 @@ digraph data {
     fontcolor="ember";
 
     rds   [label="RDS Postgres 16\ndb.t4g.micro  Single-AZ\n20 GB gp3"];
-    redis [label="ElastiCache Redis 7.1\ncache.t4g.micro\nsingle node"];
+    redis [label="ElastiCache Redis 7.1\ncache.t4g.micro\nmythrun-redis-001\nmaxmemory: noeviction"];
   }
 
   master_secret  [label="AWS-managed\nRDS master secret\n(mythrun_admin)"];
@@ -18,7 +18,14 @@ digraph data {
 
   bootstrap [label="bootstrap-\ndatabases.sh", color="ember", fontcolor="ember"];
 
+  alarms [label="shared-resource alarms\nCPU · free storage\nnode memory", color="ember", fontcolor="ember"];
+  shared_sns [label="SNS\nmythrun-shared-alerts"];
+
   rds -> master_secret [label="auto-created"];
+
+  rds    -> alarms [label="CloudWatch metrics"];
+  redis  -> alarms [label="CloudWatch metrics"];
+  alarms -> shared_sns [label="publish"];
 
   bootstrap -> master_secret  [label="read"];
   bootstrap -> rds            [label="CREATE DATABASE\nCREATE USER"];

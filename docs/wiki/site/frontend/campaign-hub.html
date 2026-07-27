@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html" class="active">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/character-creation.html">Character-creation experience</a></li><li><a href="../frontend/invites-party.html">Invites & party</a></li><li><a href="../frontend/live-play.html">Live play</a></li><li><a href="../frontend/billing-credits.html">Billing & credits</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › Campaign hub</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>frontend/src/routes/home.tsx</code>, <code>frontend/src/routes/home/</code>, <code>frontend/src/app/header-credits.tsx</code></div>
-</div>
-
+        <article>
 <h1>Campaign hub</h1>
 
 <p class="lead">
@@ -160,9 +155,30 @@
   <a href="../world-campaign/campaign-hub-payload.html">GET /api/campaigns/mine</a> — so it only
   renders once the payload resolves. A screen reaches the backend <em>only</em> through a
   client-core hook, never raw fetch; the loading spinner and the route-level error boundary handle
-  the other two states. With zero campaigns the hub shows a first-run empty shelf; otherwise it
-  renders the responsive body.
+  the other two states. Above the boundary sits the page header row — the title and a filled
+  <strong>New campaign</strong> button — rendered unconditionally, because starting a campaign is
+  valid whether the shelf is loading, empty, or full. Below it, zero campaigns show the first-run
+  empty shelf; otherwise the responsive body renders.
 </p>
+
+<h3 id="the-shelf-is-ordered-by-activity">The shelf is ordered by activity</h3>
+
+<p>
+  The hub's job for a returning player is "continue where you left off," so the body sorts before it
+  renders. <code>sortCampaignsForHub</code> orders by most-recent activity — a campaign's activity time
+  is when it was last played, falling back to when it was last touched for one never played — and the
+  <strong>premier slot</strong>, the grid's top-left cell where the eye lands, belongs to whatever that
+  puts first.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A pure, stable sort over a copy, never the cache's array</strong> — the payload arrives from
+  a React-Query cache the hub does not own, so the sort returns a new array rather than mutating in
+  place. Equal activity times keep input order (each entry carries its original index as the
+  tiebreaker), so the shelf is deterministic across engines and re-renders instead of reshuffling
+  under the player on an unrelated re-render. The earlier hub had no sort at all, which is how
+  not-yet-started campaigns ended up sitting ahead of active ones in an arbitrary order.
+</aside>
 
 <h3 id="the-cover-card-a-book-cover">The cover card — a book cover</h3>
 
@@ -174,9 +190,20 @@
   italic <em>world · creator</em> line at the top (suppressed when it would only echo the title —
   a campaign name defaults to its world name, so the sub-line renders only once a rename or a
   joined-world creator credit gives it something to add), and a mono "imprint" pinned to the foot — the
-  party seals (square <code>Avatar</code> tiles) over the record/state line. The whole card is one
-  link to the campaign's detail.
+  party seals (square <code>Avatar</code> tiles) over the record/state line, closing on the card's one
+  accent action line. The whole card is one link to the campaign's detail.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Four zones at fixed offsets, so a shelf of cards reads as a shelf</strong> — the card's
+  pieces used to size to their own content, so a one-line title and a two-line title put their
+  sub-lines, seals, and state lines at different heights, and a row of covers read as a ragged pile.
+  Every zone now holds a fixed offset: the title is a two-line band (a clamp plus a reserved height in
+  line-height units, so it tracks the type role rather than a magic pixel), the sub-line truncates to
+  exactly one line, and a card whose state line has been promoted into the action zone keeps its
+  ledger slot as a blank line rather than closing the gap. The premier card is the one deliberate
+  break — it reads one type size up, which is the whole point of the slot.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The imprint reflects the party <em>assembling</em> (MYT-91)</strong> — the foot seals now
@@ -194,12 +221,35 @@
   nothing else. The line is derived once by <code>cardPhaseLine</code> from the payload's
   <code>cardPhase</code>: "shaping your world", "make your character", "waiting for players", or,
   once played, the "<em>N sessions · 2 days ago</em>" record — the only place the hub formats a
-  relative time (mechanical <code>Intl.RelativeTimeFormat</code>, locale-aware). The card and the
-  mobile row render this exact string, so the logic lives in one shared module. MYT-95 adds one more
-  foot line, still as prose: an <strong>owner-only</strong> low-credit nudge, gated on
-  <code>creator === null</code> so a member never sees the owner's billing state (no member-visible
-  owner-balance read exists, by design) and on the fail-open
+  relative time (mechanical <code>Intl.RelativeTimeFormat</code>, locale-aware; the phrase is joined
+  with non-breaking spaces so a count never wraps away from its unit at the card's narrow measure).
+  The card and the mobile row render this exact string, so the logic lives in one shared module.
+  MYT-95 adds one more foot line, still as prose: an <strong>owner-only</strong> low-credit nudge,
+  gated on <code>creator === null</code> so a member never sees the owner's billing state (no
+  member-visible owner-balance read exists, by design) and on the fail-open
   <a href="./billing-credits.html">low-session-credits</a> hook.
+</aside>
+
+<h3 id="one-action-per-card-at-three-weights">One action per card, at three weights</h3>
+
+<p>
+  Every card closes on a single accent line naming what pressing it does, and the <em>weight</em> of
+  that line is the card's whole status vocabulary. The premier card, when it has a play record,
+  carries the loud <strong>continue session</strong> — the returning player's actual job, in the hero
+  cell, with the promoted card treatment. Any other played campaign carries a quiet
+  <strong>resume</strong>. A campaign still waiting on the viewer's character carries its
+  needs-a-character line at a whisper, promoted out of the ledger slot into the action zone. Live and
+  dormant are distinguished by the words and the weight, never by an action appearing and
+  disappearing.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The action line is a label on the card, not a nested control</strong> — the whole card is
+  already one link, so a real button inside it would be two overlapping targets with different
+  meanings. The line names the card's action and the card is the target; there is exactly one thing
+  to press. That is also why a cold-start campaign's cue whispers: a card the player has never opened
+  must not out-shout one they have twenty sessions invested in, but it still has to be findable when
+  scanning, so it keeps the accent and loses the weight.
 </aside>
 
 <aside class="wiki-rationale">
@@ -231,6 +281,24 @@
   tall — uniform height by truncation, not a hard-coded pixel height.
 </aside>
 
+<p>
+  A dashed <code>CoverCardAdd</code> tile <strong>trails</strong> the grid as a peer cell — the
+  design-tool convention — so the shelf terminates in a natural "one more," wrapped in the same
+  <code>unstyled</code> Link the cover cards use. On the mobile index there is no tile: the header
+  button is the create path there, and the list stays a clean table of contents.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Two create affordances on purpose, and neither in the premier slot</strong> — keeping both a
+  toolbar button and an in-grid ghost tile is a validated pattern, and they do different jobs: the
+  header button owns intentional create and its primacy, the trailing tile is in-grid discovery.
+  Between them the create path is always near whatever the player is looking at — top of page or end
+  of shelf — without either one being far away after a scroll. What the tile must <em>not</em> do is
+  lead: a first iteration put it in the top-left cell, which spent the shelf's highest-value real
+  estate on "make another one" and pushed the player's actual campaigns right and down. That cell is
+  the premier slot, and it belongs to the campaign they came back for.
+</aside>
+
 <h3 id="the-empty-shelf">The empty shelf</h3>
 
 <p>
@@ -245,23 +313,42 @@
 
 <p>
   The always-present app frame carries the live session-credit balance.
-  <code>HeaderCredits</code> reads it through the <code>useBalance</code> suspense hook and renders
-  a terse mono number, but because it is a suspense query in a frame that must paint immediately, it
-  wraps itself in its own <code>&lt;Suspense&gt;</code> <em>and</em> a local error boundary.
+  <code>HeaderCredits</code> reads it through the <code>useBalance</code> suspense hook and renders it
+  as a <strong>labelled</strong> mono readout — the words "session credits" leading the number — inside
+  the shared <code>HeaderSlot</code>, which gives every suspense-reading header slot its own
+  <code>&lt;Suspense&gt;</code> and its own error boundary. The <a href="./app-shell.html">app
+  shell</a> owns the frame's composition; this is the slot the hub's balance lives in.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The label is "session credits", not "credits"</strong> — the product has two currencies, and
+  a bare number in the highest-traffic chrome on the site silently equalled the session bucket and
+  taught every player the wrong model. Naming the bucket costs two words and removes the ambiguity;
+  it also doubles as the readout's accessible name, so the visually-hidden label the bare number
+  needed is gone. The <a href="./billing-credits.html">billing surface</a> is where both buckets are
+  itemized.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The credits slot degrades alone</strong> — a slow or failed balance fetch must never tear
   down the whole authed shell through the router error boundary. So the slot loads behind a small
-  spinner and renders nothing on failure; the "+" buy affordance beside it sits
-  <em>outside</em> that boundary, so a player can still act even if the number didn't load. The buy
-  "+" and the settings gear now route to the real <a href="./billing-credits.html">Sessions &amp;
-  Billing</a> surface at <code>/settings</code> (MYT-95 filled the interim stub; the header count
-  tracks session credits only); the frame's logomark and display-name slots remain chrome
-  placeholders for now. The card's
-  click target is <code>/campaigns/:id</code> — the phase-aware
+  spinner and renders nothing on failure; the buy affordance beside it sits <em>outside</em> that
+  boundary, so a player can still act even if the number didn't load. Both it and the settings gear
+  route to the real <a href="./billing-credits.html">Sessions &amp; Billing</a> surface at
+  <code>/settings</code>. The card's click target is <code>/campaigns/:id</code> — the phase-aware
   <a href="./world-gen-experience.html">world-generation experience</a>, which shows the live
   generation graph while a world is still building and the settled reveal once it's done.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The readout refreshes on navigation, not on every spender's good behaviour</strong> — the
+  frame persists across routes, so a balance spent mid-route (ending a session debits server-side)
+  survived as a stale number on the next surface: the hub would briefly show the pre-end count. The
+  slot now invalidates the shared balance cache on every pathname change, which refetches in the
+  background and updates the readout in place (suspense only ever gates the first load). One cheap GET
+  per navigation buys "the header is never stale across a navigation" as a chrome-level contract,
+  rather than depending on every credit-spending mutation site remembering to invalidate. The mount
+  run is skipped — the suspense query is already fetching right then.
 </aside>
 
 <h2 id="integration-points">Integration points</h2>
@@ -289,15 +376,25 @@
   </tr>
   <tr>
     <td><code>routes/home.tsx</code></td>
-    <td><code>HomeRoute</code> (Suspense) · <code>CampaignHub</code> · <code>EmptyShelf</code></td>
+    <td>
+      <code>HomeRoute</code> (the header row + Suspense) · <code>CampaignHub</code> ·
+      <code>EmptyShelf</code>
+    </td>
   </tr>
   <tr>
     <td><code>routes/home/home-hub.tsx</code></td>
-    <td><code>CampaignHubBody</code> — the <code>Show</code> grid ⊕ index switch</td>
+    <td>
+      <code>CampaignHubBody</code> — the <code>Show</code> grid ⊕ index switch, the premier slot, the
+      trailing create tile
+    </td>
+  </tr>
+  <tr>
+    <td><code>routes/home/hub-sort.ts</code></td>
+    <td><code>sortCampaignsForHub</code> — the pure, stable most-recent-activity order</td>
   </tr>
   <tr>
     <td><code>routes/home/home-card.tsx</code></td>
-    <td><code>CampaignCard</code> — the book-cover card</td>
+    <td><code>CampaignCard</code> — the book-cover card, its four zones and its one action line</td>
   </tr>
   <tr>
     <td><code>routes/home/home-index-row.tsx</code></td>
@@ -309,7 +406,10 @@
   </tr>
   <tr>
     <td><code>app/header-credits.tsx</code></td>
-    <td><code>HeaderCredits</code> — the resilient live-balance slot</td>
+    <td>
+      <code>HeaderCredits</code> — the labelled live-balance slot (over <code>HeaderSlot</code>) plus
+      the on-navigation cache invalidation
+    </td>
   </tr>
 </table>
 
@@ -324,7 +424,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-cover-card-a-book-cover">The cover card — a book cover</a></li><li style="padding-left:12px"><a href="#grid-on-the-wall-index-in-the-hand">Grid on the wall, index in the hand</a></li><li style="padding-left:12px"><a href="#the-empty-shelf">The empty shelf</a></li><li style="padding-left:12px"><a href="#the-header-credits">The header credits</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-screen-modules">Appendix: the screen modules</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-shelf-is-ordered-by-activity">The shelf is ordered by activity</a></li><li style="padding-left:12px"><a href="#the-cover-card-a-book-cover">The cover card — a book cover</a></li><li style="padding-left:12px"><a href="#one-action-per-card-at-three-weights">One action per card, at three weights</a></li><li style="padding-left:12px"><a href="#grid-on-the-wall-index-in-the-hand">Grid on the wall, index in the hand</a></li><li style="padding-left:12px"><a href="#the-empty-shelf">The empty shelf</a></li><li style="padding-left:12px"><a href="#the-header-credits">The header credits</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-screen-modules">Appendix: the screen modules</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

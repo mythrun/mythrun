@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html">JWT middleware</a></li><li><a href="../auth-billing/onboarding.html">Onboarding & invites</a></li><li><a href="../auth-billing/access-control-ws-ticket.html">Access control & WS ticket</a></li><li><a href="../auth-billing/stripe-contract.html">Stripe contract</a></li><li><a href="../auth-billing/billing-webhook.html" class="active">Billing webhook</a></li><li><a href="../auth-billing/billing-routes.html">Billing routes</a></li><li><a href="../auth-billing/billing-metering.html">Billing metering</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Auth & Billing › Billing webhook</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>backend/src/routes/webhook.ts</code>, <code>backend/src/billing/webhook.ts</code>, <code>backend/src/billing/webhook-checkout-payment.ts</code>, <code>backend/src/billing/webhook-invoice-paid.ts</code>, <code>backend/src/billing/webhook-subscription-upsert.ts</code>, <code>backend/src/billing/webhook-subscription-deleted.ts</code>, <code>backend/src/billing/webhook-pending-update-applied.ts</code>, <code>backend/src/billing/webhook-pending-update-expired.ts</code>, <code>backend/src/billing/webhook-refund.ts</code>, <code>backend/src/billing/webhook-types.ts</code>, <code>backend/src/repo/stripe-events.ts</code>, <code>backend/src/repo/_types.ts</code></div>
-</div>
-
+        <article>
 <h1>Billing webhook</h1>
 
 <p class="lead">
@@ -526,18 +521,21 @@
 </aside>
 
 <aside class="wiki-rationale">
-  <strong>Why the mismatch can't be repaired at dispatch time</strong> — the obvious fix is "re-fetch
-  the event through the pinned client and dispatch that." It doesn't work: a Stripe Event is
-  <em>immutable</em>. It is rendered once, at the delivering endpoint's <code>api_version</code>, and
-  <code>GET /v1/events/:id</code> returns those exact bytes no matter what
+  <strong>Why the mismatch can't be repaired at dispatch time</strong> — the obvious fix is
+  "re-fetch the event through the pinned client and dispatch that." It doesn't work: a Stripe Event
+  is <em>immutable</em>. It is rendered once, at the delivering endpoint's <code>api_version</code>,
+  and <code>GET /v1/events/:id</code> returns those exact bytes no matter what
   <code>Stripe-Version</code> the request carries. Verified against the live account — the retrieved
   payload is byte-identical across a <code>2024-06-20</code> → <code>2026-04-22.dahlia</code>
   request-version span, while the same header demonstrably re-renders a Subscription (moving
   <code>current_period_*</code> between the subscription and its items). Stripe's own field
-  documentation agrees: <em>"the contents of <code>data</code> never change, so this value remains
-  static regardless of the API version currently in use."</em> Re-rendering objects works; re-rendering
-  events does not. That is why the real fix is a boot-time assertion on the endpoint's version
-  (below) rather than anything the dispatcher can do.
+  documentation agrees:
+  <em
+    >"the contents of <code>data</code> never change, so this value remains static regardless of the
+    API version currently in use."</em
+  >
+  Re-rendering objects works; re-rendering events does not. That is why the real fix is a boot-time
+  assertion on the endpoint's version (below) rather than anything the dispatcher can do.
 </aside>
 
 <aside class="wiki-rationale">
@@ -549,16 +547,18 @@
   account's default API version, or, under <code>stripe listen --latest</code>, at the newest one —
   currently <code>2026-03-25.dahlia</code> and <code>2026-06-24.dahlia</code> respectively, neither
   of which equals the pinned <code>2026-04-22.dahlia</code>. So in dev a local checkout completes,
-  the webhook arrives, the dispatcher returns 200 — and <em>no handler runs, so no credits land</em>.
-  A signed replay of the same event <em>at the pinned version</em> grants perfectly, which is how the
-  gate was confirmed to be the sole blocker. The consequence for the
+  the webhook arrives, the dispatcher returns 200 — and
+  <em>no handler runs, so no credits land</em>. A signed replay of the same event
+  <em>at the pinned version</em> grants perfectly, which is how the gate was confirmed to be the
+  sole blocker. The consequence for the
   <a href="../frontend/billing-credits.html">billing screens</a>: running the Stripe webhook
   forwarder is a necessary precondition for a local billing smoke, but not currently a sufficient
   one — the forwarded events must also carry the pinned version. The same mechanism is a production
   risk: the prod webhook endpoint was created by hand, so if its configured
   <code>api_version</code> ever diverges from the SDK pin, real checkouts are charged and never
-  credited. Aligning the endpoint's version to <code>STRIPE_API_VERSION</code> (the runbook below) is
-  therefore revenue-critical, and managing the endpoint's version declaratively is the durable fix.
+  credited. Aligning the endpoint's version to <code>STRIPE_API_VERSION</code> (the runbook below)
+  is therefore revenue-critical, and managing the endpoint's version declaratively is the durable
+  fix.
 </aside>
 
 <aside class="wiki-rationale">
@@ -567,11 +567,10 @@
   asserts its <code>api_version</code> equals <code>STRIPE_API_VERSION</code>. A drift — or an
   endpoint left unpinned, following the mutable account default — throws, the boot gate turns that
   into a non-zero exit, and ECS rolls the deploy back, so the misconfiguration never serves traffic.
-  Three cases deliberately do <em>not</em> fail the boot, because none is evidence of drift: an empty
-  endpoint list (the Stripe CLI forwards without registering one, and v2 event destinations don't
-  appear in the v1 list), a restricted key lacking <code>webhook_endpoints: read</code>, and a
-  transient Stripe error. Each logs
-  <code>billing.probe_webhook_version_unavailable</code> or
+  Three cases deliberately do <em>not</em> fail the boot, because none is evidence of drift: an
+  empty endpoint list (the Stripe CLI forwards without registering one, and v2 event destinations
+  don't appear in the v1 list), a restricted key lacking <code>webhook_endpoints: read</code>, and a
+  transient Stripe error. Each logs <code>billing.probe_webhook_version_unavailable</code> or
   <code>…_skipped</code> instead. Second, the runtime
   <code>stripe_webhook_api_version_mismatch</code> log feeds a CloudWatch alarm (myth-89am) that
   pages on the first dropped delivery — covering the window the boot probe can't see, namely an
@@ -886,10 +885,10 @@
     different from the SDK pin. Both should be set to the SDK's pinned
     <code>STRIPE_API_VERSION</code> value. In production this pages via the
     <code>stripe-webhook-api-version-mismatch</code> alarm and means paid customers are not being
-    credited right now — treat it as a revenue incident. The log line's <code>event_type</code> names
-    which deliveries were lost. <strong>Recovery:</strong> realign the endpoint's version — note that
-    <code>api_version</code> is <em>create-only</em> on the Stripe API (<code>POST</code>
-    <code>/v1/webhook_endpoints/:id</code> accepts only <code>url</code>,
+    credited right now — treat it as a revenue incident. The log line's
+    <code>event_type</code> names which deliveries were lost. <strong>Recovery:</strong> realign the
+    endpoint's version — note that <code>api_version</code> is <em>create-only</em> on the Stripe
+    API (<code>POST</code> <code>/v1/webhook_endpoints/:id</code> accepts only <code>url</code>,
     <code>enabled_events</code>, <code>description</code>, <code>disabled</code>,
     <code>metadata</code>), so unless the Dashboard exposes a version control on the endpoint this
     means creating a replacement endpoint at the pinned version, moving its new signing secret into

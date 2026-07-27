@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html" class="active">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Character ledger</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>backend/src/session/rules-lawyer.ts</code>, <code>backend/src/session/rules-lawyer-resources.ts</code>, <code>backend/src/session/rules-lawyer-vitals.ts</code>, <code>backend/src/session/rules-lawyer-replay.ts</code>, <code>backend/src/repo/characters-ledger.ts</code>, <code>backend/src/session/srd/spell-slots.ts</code>, <code>backend/migrations/025_character_ledger.sql</code>, <code>docs/superpowers/plans/2026-06-10-myt-70-rules-lawyer.md</code></div>
-</div>
-
+        <article>
 <h1>Character ledger &amp; the Rules Lawyer</h1>
 
 <p class="lead">
@@ -474,6 +469,31 @@
   reconnect path skips it with no warning. A <code>take_rest</code> row, by contrast, carries an
   array payload (one entry per character) and replays as one frame each. Only a genuinely corrupt
   row warns; an expected rejection is not a corruption.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Condition-bearing frames carry the whole set, not the one that moved (myth-hlydp)</strong>
+  — a client that receives only deltas has to reconstruct the condition list, and it will get it
+  wrong, because
+  <em
+    >several kinds of write move conditions without ever emitting a <code>condition</code> frame</em
+  >. An HP write is a condition write: the single owner of the §5a rule applies
+  <code>unconscious</code> at 0 and clears it above 0, and the turn's only report is the
+  <code>hp</code> frame. A rest moves two — the heal-to-max clears <code>unconscious</code>, and a
+  long rest decrements exhaustion — and reports only through the per-character
+  <code>rest</code> frame. So every one of those frames states the full post-write set
+  authoritatively, read after the write inside the same transaction. Sites that already hold a
+  post-mutation snapshot reuse its conditions; only the hot HP path pays for a narrow single-query
+  read, deliberately not the full party fan-out. The replay arm states the same set from the
+  snapshot it already read, so a redelivery converges on identical client state rather than on a
+  differently-derived one.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong><code>restType</code> rides the live frame only</strong> — the rest frame carries whether
+  it was a short or a long rest, and that field is deliberately not persisted: it drives a
+  play-surface wind-down cue, and reconstructing it on replay would make a rest the party took an
+  hour ago re-offer to end the session.
 </aside>
 
 <h2 id="operating-this-piece">Operating this piece</h2>

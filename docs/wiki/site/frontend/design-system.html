@@ -25,18 +25,14 @@
       <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html" class="active">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/character-creation.html">Character-creation experience</a></li><li><a href="../frontend/invites-party.html">Invites & party</a></li><li><a href="../frontend/live-play.html">Live play</a></li><li><a href="../frontend/billing-credits.html">Billing & credits</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › Design system</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>frontend/client-core/package.json</code>, <code>frontend/client-core/src/contract/</code>, <code>frontend/client-core/src/tokens/scales.ts</code>, <code>frontend/client-core/src/tokens/generate-palette.mjs</code>, <code>frontend/client-core/CHANGELOG.md</code>, <code>frontend/client-core/eslint-rules/api-purity.js</code>, <code>frontend/client-core/eslint-rules/no-ad-hoc-color.js</code>, <code>frontend/client-core/eslint.config.js</code>, <code>frontend/ui/package.json</code>, <code>frontend/ui/src/index.ts</code>, <code>frontend/ui/src/components/</code>, <code>frontend/ui/src/brand-marks/</code>, <code>frontend/ui/src/theme/</code>, <code>frontend/ui/src/lib/cn.ts</code>, <code>frontend/ui/src/lib/use-viewport-below-lg.ts</code>, <code>frontend/ui/src/styles/theme.css</code>, <code>frontend/ui/src/styles/semantic.css</code>, <code>frontend/ui/eslint.config.js</code>, <code>frontend/ui/scripts/story-coverage.mjs</code>, <code>frontend/.storybook/main.ts</code>, <code>frontend/.storybook/test-runner.ts</code>, <code>frontend/eslint.config.js</code>, <code>.github/workflows/frontend-check.yml</code></div>
-</div>
-
+        <article>
 <h1>Design system</h1>
 
 <p class="lead">
   mythrunUI — the brand-aligned, token-driven component library the whole app composes. The system
-  before the app: ~35 primitives (layout, responsive, type, controls, overlays, feedback, display,
-  brand) each typed against a platform-neutral contract, styled from a single token vocabulary,
+  before the app: the primitive set (layout, responsive, type, controls, overlays, feedback, display,
+  brand) plus the feature composites each surface contributed — around eighty component directories
+  today — each typed against a platform-neutral contract, styled from a single token vocabulary,
   responsive by construction (they shrink, wrap, and truncate so nothing spills a phone-width row),
   light/dark at runtime, documented in one frontend-level Storybook, and held in place by lint,
   accessibility, and mobile-viewport CI gates. Two packages carry it —
@@ -316,6 +312,17 @@
   line so the surface can't silently regrow copy of its own.
 </p>
 
+<aside class="wiki-rationale">
+  <strong>A copy slot can be required, and sometimes should be</strong> — most label props are
+  required simply because a component cannot render without them. A few are required for a stronger
+  reason: <a href="./billing-credits.html"><code>CreditBalance</code></a> takes an explainer line for
+  each credit bucket, not because the tile would break without one, but because a bare number teaches
+  the reader nothing about the product's two economic units — and an optional prop is a prop the next
+  surface will omit. Making the slot required puts that decision in the contract, where it is reviewed
+  once, rather than in each consumer's judgment. The system still owns no strings; it owns the
+  <em>shape</em> of what must be said.
+</aside>
+
 <h2 id="the-token-foundation-relocated">The token foundation, relocated</h2>
 
 <p>
@@ -389,6 +396,11 @@
     overlays.
   </li>
   <li>
+    <strong>The accent fill is the exclusive mark of an <em>enabled</em> primary.</strong> Disabled
+    and busy are one muted family across every variant — no accent anywhere — each keeping only its
+    own geometry.
+  </li>
+  <li>
     <strong>Motion is quantized, not smoothed — quantization <em>is</em> the easing.</strong> A
     progress fill advances as a hard Bayer threshold-front, not a smooth bar; rotation and pulse move
     in discrete steps with variable dwell. The register that governs surface also governs time.
@@ -411,6 +423,20 @@
   one reusable motion primitive the pass folded into the system; the beats that ride it stay feature
   composites documented on <a href="./live-play.html">live play</a> and
   <a href="./character-creation.html">character creation</a>.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>An unavailable control that still wears the brand colour is a trap</strong> — the earlier
+  disabled treatment kept the primary's accent fill and only muted it, which a staging review found
+  "visually indistinguishable from enabled — a player who has waited ten minutes will click it and get
+  nothing." So the invariant flipped: while non-interactive, every variant mutes to the tertiary ink
+  with no accent at all, and each keeps only its geometry — the primary becomes a paper fill with a
+  muted edge, the secondary softens its border, the ghost is a quiet label on the bare page. It snaps
+  back to the full accent the moment it becomes available, which makes the fill read as the reward for
+  having decided. The rest state reserves that edge with a transparent border so the toggle adds no
+  reflow. Busy rides the same arms, so "working" and "not yet available" share one legible
+  stood-down look, and the cursor is a plain default rather than the not-allowed glyph — which is a
+  slashed circle, and the register bans circles anyway.
 </aside>
 
 <aside class="wiki-rationale">
@@ -454,6 +480,17 @@
   the closed <code>IconName</code> union — replacing the hand-authored placeholders the set is not
   allowed to ship.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>"Copied verbatim from the set" has to be true, not claimed</strong> — the app-frame's
+  settings gear carried a comment naming its provenance in the icon set while its actual path data had
+  been hand-rolled: a four-path shape that matched nothing in the set and read as scattered teeth at
+  header sizes. It is now the authentic glyph, copied from the licensed Pixelarticons Pro set (a
+  superset of the MIT base on the same 24-unit grid), with the source file named. The rule the set
+  exists to enforce is that a glyph is <em>taken</em>, never drawn by hand — a claim in a comment is
+  not the enforcement, and the one place the codebase has a genuinely hand-authored mark
+  (<a href="./live-play.html">DieSpin</a>) says so explicitly and says why.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>A pre-paint inline script, not a React effect</strong> — if the <code>.dark</code> class
@@ -545,7 +582,18 @@
     mechanism the <a href="./app-shell.html">app-frame</a>'s content region uses to floor a short
     route to the viewport; and taught <code>Grid</code>'s <code>auto-fit</code> track to honor
     <code>minColumnPx</code> too, closing a bug where the pixel minimum was silently ignored and the
-    path chooser's cards packed two-up at 375px.)
+    path chooser's cards packed two-up at 375px. The staging-audit waves then grew
+    <code>Stack</code> three more token-typed variants: <code>noShrink</code>, so a nested group holds
+    its size in a flex row instead of inheriting the blanket child unblocker and overlapping its
+    neighbour; a <code>maxWidth</code> reading measure (<code>prose</code> / <code>form</code> /
+    <code>content</code> / <code>wide</code>), which caps and centres a single-column reading surface
+    rather than letting it stretch full-bleed; and two in-frame height floors — <code>page</code>, the
+    viewport minus the app frame's own fixed dressing, and <code>pageBelowBar</code>, that floor minus
+    one flow-affordance row — so a short flow screen can seat its block with grow-weighted spacers
+    instead of pooling at the top edge. <code>Divider</code> gained a <code>strong</code> tone, and
+    <code>Heading</code> a <code>lines</code> box that clamps <em>and</em> reserves its height in
+    line-height units, so a grid of cards holds every zone at one offset whatever a title's length —
+    the mechanism the <a href="./campaign-hub.html">hub card</a> is built on.)
   </li>
   <li>
     <strong>Responsive</strong> — <code>Show</code>, a show/hide switch between two visually
@@ -563,7 +611,9 @@
     campaign's state into), <code>Heading</code>, <code>Link</code> (router-aware, i18n, plus an
     <code>unstyled</code> variant that drops the accent tint from its subtree while keeping the
     focus ring — a whole-card or whole-row link that shouldn't paint its contents link-accent),
-    <code>VisuallyHidden</code>.
+    <code>VisuallyHidden</code>, and <code>HatchLine</code> — a flow's escape-hatch line: a quiet mono
+    prompt followed by the actionable phrase as a <em>real</em> link affordance, persistently
+    underlined, rendered as a button because it switches mode rather than navigating.
   </li>
   <li>
     <strong>Leaves</strong> — <code>Icon</code>, <code>Spinner</code> — composed by the controls
@@ -576,9 +626,19 @@
     <code>aria-expanded</code>/<code>aria-controls</code> disclosure props for a button that toggles a
     revealable region, e.g. the character sheet's "See full sheet"),
     <code>IconButton</code> (requires an accessible name), <code>Input</code>,
-    <code>TextArea</code> (autosizing), <code>Select</code>, <code>Checkbox</code>,
-    <code>Radio</code>/<code>RadioGroup</code>, <code>Switch</code>, and
-    <code>SeamlessInput</code> — the borderless ghost field for one-question creation flows.
+    <code>TextArea</code> (autosizing, and since the play-surface pass a <code>face</code> variant —
+    the default mono data face, or the serif prose face with the branded caret that a player's own
+    writing wears — plus a <code>subdued</code> mute for a field that is gated but still typeable),
+    <code>Select</code>, <code>Checkbox</code>,
+    <code>Radio</code>/<code>RadioGroup</code>, <code>Switch</code>,
+    <code>SeamlessInput</code> — the borderless ghost field for one-question creation flows — and
+    <code>ResizeHandle</code>, the draggable divider for a horizontally resizable docked panel (the
+    WAI-ARIA window-splitter pattern: a focusable separator whose value assistive tech can read and
+    the arrow keys can nudge, controlled, reporting a clamped width as a plain number). Button also
+    carries <code>busy</code> (with an optional label swap, so a working control never goes
+    label-less and its width holds) and <code>flush="start"</code>, a negative inline-start margin
+    exactly equal to the size's padding so a ghost control's visible edge seats on the content grid
+    while its hit area keeps its full padding.
   </li>
   <li>
     <strong>Forms</strong> — <code>FormField</code> (label + helper + error + required/invalid) and
@@ -592,7 +652,10 @@
     and a <code>frame="dashed"</code> variant — an outline waiting to be filled, the hub's
     empty-state "Unwritten" cover), <code>CoverCard</code> (a portrait "made-object" card with a
     full-bleed cover header, an ink seam, and a foot-pinned imprint — the fixed cover geometry the
-    neutral <code>Card</code> doesn't model), <code>Modal</code>, <code>Popover</code>,
+    neutral <code>Card</code> doesn't model, joined by <code>CoverCardAdd</code> — the dashed create
+    tile sharing that footprint so it sits as a peer cell in a grid of covers, presentational like
+    <code>CoverCard</code> so the consumer wraps it in the sanctioned navigable Link),
+    <code>Modal</code>, <code>Popover</code>,
     <code>Tooltip</code>, <code>Tabs</code>, <code>Menu</code>.
   </li>
   <li>
@@ -689,9 +752,11 @@
   route-side in a client-core reducer, not the component — and <code>DieSpin</code>, the 2D
   outlined d20 it spins, are both feature composites documented on
   <a href="./live-play.html">live play</a>. <code>DieSpin</code> is a newly authored 1-bit die glyph —
-  no pixelarticons die exists, so it is the canonical reference for the mark. It is drawn as a
-  facet-band d20 — an open equatorial numeral field, so no outline stroke ever crosses a numeral at
-  any face value — and spun in the quantized-motion register the pass settled: a decelerating dwell
+  no pixelarticons die exists, so it is the canonical reference for the mark, and the one place in the
+  system where a mark is drawn by hand rather than taken from the set. It is drawn as a faceted d20
+  (the full interior fan, its central face enlarged past the true projection so the numeral stamps
+  cleanly inside it at any value), with sibling silhouettes for the other die sizes, and spun in the
+  quantized-motion register the pass settled: a decelerating dwell
   ramp (50→220ms per step) with a single scale-pop recoil, then stillness — steps and dwell, not the
   smooth spin the UX spec named, the brand-overrides-UX rule applied to motion. The
   <a href="./live-play.html#the-knowledge-layer">knowledge layer</a> (MYT-94) drew the line once more:
@@ -723,6 +788,50 @@
   left margin, the mono <code>--font-ui</code> face set against the narration's serif, a terse
   uppercase eyebrow, <code>role="note"</code>.
 </p>
+
+<p>
+  The staging-audit waves drew the line the same way once more. Their feature composites —
+  <code>TableTalk</code> (the marked out-of-character block, a sibling of the errata slip's register)
+  and <code>SessionProgressLine</code> (a word for where the session is, deliberately carrying no
+  numeric prop) — stay documented on <a href="./live-play.html">live play</a>, and
+  <code>SituationRecap</code> / <code>GuidedRail</code> on
+  <a href="./character-creation.html">character creation</a>. What folded back into the system was
+  three reusable pieces and a set of primitive extensions. <strong><code>WhisperLedger</code></strong>
+  is the long-wait whisper column — the current flavor line over a faint newest-first ledger of the
+  ones already shown — shared by both multi-minute waits, in two sizes: <em>hero</em>, where the
+  whisper is the only content on the screen, and <em>sub</em>, where it sits under a title. Its
+  rotation is a matching <code>useWhisperCycle</code> hook (a shuffled permutation walked to
+  exhaustion and reshuffled, never repeating across the boundary, and never advancing at all under
+  <code>prefers-reduced-motion</code>). <strong><code>ResizeHandle</code></strong> and
+  <strong><code>HatchLine</code></strong> are the two new primitives above. And a small
+  <strong>inline-emphasis</strong> scanner renders the Fast Thinker's <code>*</code>/<code>**</code>
+  marks as <code>em</code>/<code>strong</code> in settled prose while the streaming path strips them,
+  so no literal asterisk ever flashes mid-stream.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A hand-rolled two-mark scanner, not a markdown library</strong> — narrative prose has no
+  headings, lists, links, or code, so pulling a full parser and its blast radius to render two inline
+  marks fails the dependency bar. The scanner is the single source of truth for all three consumers:
+  the settled render maps its segments to elements, the streaming render strips the markers, and the
+  model-output validator reuses it to fail loud when an unbalanced marker would reach the DOM. An
+  opener that never closes stays literal text — hidden mid-stream by the strip, visible at settle,
+  which is exactly the fail-loud signal.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The Drawer survives the gesture that opened it, and owns that guard itself</strong> — Radix's
+  dialog arms its outside-dismiss at a gesture's pointerdown and delivers it at the same gesture's
+  trailing click, so a drawer summoned from the surface behind it (a graph-node tap that selects on
+  pointerup) opened and shut in one gesture. The first fix was consumer-side — defer the summon by a
+  macrotask — which is a race won by a hair rather than a guarantee, and one every future consumer
+  would have had to rediscover. The guard is now gesture <em>identity</em> rather than elapsed time:
+  the drawer remembers the pointerdown that was in flight when it opened and refuses any dismissal
+  carrying that same event object, while a dismissal from any later gesture passes through untouched.
+  Nothing depends on when the click lands relative to React's commit, and the listener only exists
+  while the drawer is closed, because the summoning pointerdown is by definition one that happened
+  before it opened.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>DmCorrection is an amendment, not an alarm</strong> — a DM correction is the record being

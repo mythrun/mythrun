@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../frontend/index.html">Overview</a></li><li><a href="../frontend/design-system.html">Design system</a></li><li><a href="../frontend/app-shell.html">App shell & data layer</a></li><li><a href="../frontend/campaign-hub.html">Campaign hub</a></li><li><a href="../frontend/world-gen-experience.html">World-gen experience</a></li><li><a href="../frontend/character-creation.html">Character-creation experience</a></li><li><a href="../frontend/invites-party.html">Invites & party</a></li><li><a href="../frontend/live-play.html" class="active">Live play</a></li><li><a href="../frontend/billing-credits.html">Billing & credits</a></li><li><a href="../frontend/realtime-transport.html">Realtime transport</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Frontend › Live play</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>frontend/src/routes/play.tsx</code>, <code>frontend/src/routes/play/</code>, <code>frontend/client-core/src/session/</code>, <code>frontend/client-core/src/api/play-session.ts</code>, <code>frontend/client-core/src/contract/session/</code>, <code>frontend/ui/src/components/DmMessage/</code>, <code>frontend/ui/src/components/PlayerMessage/</code>, <code>frontend/ui/src/components/MessageStream/</code>, <code>frontend/ui/src/components/RollCard/</code>, <code>frontend/ui/src/components/DieSpin/</code>, <code>frontend/ui/src/components/SessionInput/</code>, <code>frontend/ui/src/components/SessionStartBeat/</code>, <code>frontend/ui/src/components/SessionPreparing/</code>, <code>frontend/ui/src/components/DmCorrection/</code>, <code>frontend/ui/src/components/ThinkingIndicator/</code>, <code>frontend/ui/src/components/EntityMention/</code>, <code>frontend/ui/src/components/EntityPopover/</code>, <code>frontend/ui/src/components/SessionSheet/</code>, <code>frontend/ui/src/components/KnowledgeSidebar/</code>, <code>frontend/client-core/src/contract/session-knowledge.ts</code></div>
-</div>
-
+        <article>
 <h1>Live play</h1>
 
 <p class="lead">
@@ -41,13 +36,16 @@
   DM's prose arrives token by token, the humans' messages post the instant they're typed, a
   mid-session joiner sees the full backlog, a dropped connection resyncs without double-rendering the
   turn it dropped during, a skill check arrives as an in-stream dice card the player rolls before the
-  outcome prose unfolds, and the DM's rare self-correction lands as a set-apart errata slip. Beside
+  outcome prose unfolds, and the DM's rare self-correction lands as a set-apart errata slip. A quiet
+  line says roughly how much evening is left, and near the end — only near the end — the table is
+  offered the choice to land it deliberately. Beside
   the transcript sits a knowledge sidebar — a browsable world wiki, a relationship graph, and the
   player's live character sheet — and recognized names in the DM's settled prose highlight into terse
-  knowledge cards, every surface showing only what the character already knows. The route is a thin
+  knowledge cards, every surface showing only what the character already knows. When the session
+  closes, the screen lands on a recap of what happened. The route is a thin
   composition; all the reasoning — the start flow, the transcript reducer, the reveal gate, the
-  transport view-model, the one-snapshot knowledge cache — lives in the platform-neutral
-  <a href="./app-shell.html">client brain</a>.
+  display order, the progress band, the transport view-model, the one-snapshot knowledge cache —
+  lives in the platform-neutral <a href="./app-shell.html">client brain</a>.
 </p>
 
 <figure class="wiki-diagram">
@@ -314,7 +312,9 @@
   never on the wire the player consumes. MYT-93's dice moment holds the same line: the reveal drives
   entirely off the <code>skill_check</code>/<code>dice_roll</code> frames already on the wire, and the
   client→server <code>roll_complete</code> frame was deliberately excluded — pressing Roll sends
-  nothing, because the number is already server-resolved.
+  nothing, because the number is already server-resolved. The
+  <a href="#where-the-session-is">session-progress signal</a> is the same discipline applied to a
+  harder case: it is the one progress number a player sees, and it carries nothing but mechanics.
 </aside>
 
 <h2 id="how-it-fits-together">How it fits together</h2>
@@ -457,11 +457,13 @@
   The <strong>preparing hold</strong> (<code>PreparingHold</code> + the
   <a href="./design-system.html">mythrunUI</a> <code>SessionPreparing</code> beat) is the
   <code>waiting</code> phase made visible: "the DM is preparing the next session…" over the shared
-  <a href="./design-system.html">BeatFigure</a> in breathe mode — a full-width band of hard 1-bit
-  Bayer cells whose density swells and ebbs as a slow traveling breath, its only sign of life, frozen
-  to a still frame under <code>prefers-reduced-motion</code> — with <code>aria-busy</code> and a
-  polite live region carrying the line for assistive tech. The hold owns no timing: the hook polls behind it, and when a poll
-  finally answers 200 the phase flips to <code>ready</code> on its own. The
+  <a href="./design-system.html">BeatFigure</a> — an ambient square of hard 1-bit Bayer cells whose
+  density swells and ebbs as a slow traveling breath, its only sign of life, frozen to a still frame
+  under <code>prefers-reduced-motion</code> — with the same
+  <a href="./world-gen-experience.html">whisper ledger</a> the world-gen wait uses, plus a coarse
+  estimate of the remaining wait, and with <code>aria-busy</code> and a polite live region carrying
+  the line for assistive tech. The hold still owns no <em>retry</em> timing: the hook polls behind it,
+  and when a poll finally answers 200 the phase flips to <code>ready</code> on its own. The
   <a href="../runtime/session-prep.html">prep-status SSE</a> (<code>useSessionPrep</code>) is kept
   for exactly one job — <strong>latching</strong> a terminal prep <em>failure</em> into the calm
   dead-end fast, a definitive "tonight didn't come together" instead of polling forever behind an
@@ -470,6 +472,22 @@
   re-arm the wait. During <code>reconcile_pending</code> / <code>session_ending</code> the prep bit
   reads ready — prep isn't the blocker — so the latch never false-fires there.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>The estimate is a historical baseline minus elapsed, because there is nothing finer to
+  use</strong> — session prep is a <em>single</em> pipeline stage and the prep-status channel only
+  surfaces a coarse generating → ready/failed lifecycle, so unlike world gen there are no per-stage
+  completions to re-estimate against. The honest fallback is a baseline: average the historical
+  <code>session-prep</code> timings (the stage string embeds the session number, so the aggregate is
+  fragmented across per-session-number rows and averaging them gives one typical duration — coarse by
+  design, which is all a minute-granular display needs) and subtract the elapsed wall clock. The
+  origin is the moment the player entered the hold, so the estimate errs <em>long</em>: prep may have
+  started slightly earlier server-side, and finishing early is the safe direction to be wrong in. It
+  then feeds the same <a href="./world-gen-experience.html#waiting-feedback">shared wait brain</a> as
+  every other long wait, so an overrun degrades to the stalled line rather than sitting on a dead
+  zero, and with no history at all there is simply no number — after a flat window the stalled line
+  still answers "has this broken?"
+</aside>
 
 <h2 id="the-transcript-reducer-the-reconnect-safe-core">The transcript reducer — the reconnect-safe core</h2>
 
@@ -588,6 +606,53 @@
   disabled composer.
 </p>
 
+<h2 id="the-transcript-as-a-record">The transcript as a record — display order and table talk</h2>
+
+<p>
+  The transcript is not only a live feed; it is the durable artifact the table rereads and the
+  product's memory is built on. Two pure derivations, computed route-side and handed to the stream as
+  plain data, keep it honest as a record. Both live in <code>transcript-presentation.ts</code> and
+  neither touches the reducer.
+</p>
+
+<p>
+  <strong>Causal order.</strong> The Fast Thinker may stream prose before it issues its roll tool
+  call, so a check card can arrive <em>after</em> the prose it caused — read back later, the roll
+  happens after its consequences. Once a card is <em>released</em> (its theater done, its gate lifted)
+  it files into its causal slot: immediately before its own turn's first prose. Un-released cards keep
+  arrival order, so the live gesture — the card as the tail centerpiece while the prose behind it is
+  gated invisible — is untouched.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Only the display moves; the gate keeps reading arrival order</strong> — the reveal gate, the
+  composer gate, and the reducer all continue to read the raw item list. Reordering the underlying
+  transcript would mean the reducer's reconnect-safe identity and the gate's derivations both had to
+  reason about a list that rearranges itself as cards are continued. The reorder is a projection for
+  the stream and nothing else, and it returns the input array unchanged when nothing moves, so it
+  costs no render churn in the common case.
+</aside>
+
+<p>
+  <strong>Table talk.</strong> An <code>@DM</code> exchange is out-of-character, and the durable
+  transcript has to keep that boundary. The question and its answering turn group into one block the
+  stream wraps in a marked frame — a terse uppercase eyebrow over a ruled slip, the sibling of the
+  errata slip's register. The rows inside keep their own faces (the question in the players' mono, the
+  answer in the DM's serif, which stays readable at answer length); the boundary lives on the frame,
+  not the faces. The grouping is keyed off the explicit <code>@dm</code> token — a UI command, the
+  sanctioned <a href="../runtime/index.html">ZFC</a> exception — so nothing semantic is inspected.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The frame marks the way in, not just the way out</strong> — before it, an out-of-character
+  answer rendered in the narration serif with no marking at all, so the record discarded a boundary
+  the system knew with certainty at authorship. Marking only the answer's sign-off would be a door on
+  the way out; the eyebrow is the door on the way in. The grouping is deterministic and replay-stable
+  — the question opens a pending exchange, the next DM segment claims it and pins the answering turn,
+  further segments of that turn join, and any other item closes it — so a mid-answer roll never gets
+  swallowed into the block and the same items always group the same way on reread.
+</aside>
+
 <h2 id="the-dice-moment">The dice moment — a reveal gate over an already-resolved roll</h2>
 
 <p>
@@ -657,18 +722,54 @@
   <code>RollCard</code> is the in-stream dice moment made visible: a square, flat-1-bit paper card that
   reads as a mechanical interjection in the DM's serif transcript. It composes the skill and character
   and any advantage/disadvantage posture, a <code>DieSpin</code> in the centre, a Roll button while
-  idle, then the modifier→total→DC readout and a Continue button once revealed. Every mechanical value
+  idle, then the readout and a Continue button once revealed. Every mechanical value
   is <code>--font-ui</code> mono, and — matching the brand's no-status-chips register — the outcome tier
-  is carried by <strong>typographic weight</strong> (a heavier word for a better result), never a
-  coloured badge. There are no circles anywhere on it.
+  is carried by <strong>typographic weight</strong>, never a coloured badge. There are no circles
+  anywhere on it.
 </p>
 
 <p>
-  <code>DieSpin</code> is a <strong>facet-band d20</strong>, authored here as a new mark because no
-  pixelarticons die exists: a hexagonal silhouette with the icosahedron's top and bottom triangular
-  facets drawn and an <strong>open equatorial band</strong> across the middle where the numeral
-  stamps — open geometry precisely so no facet stroke crosses the numeral's field at any value,
-  single- or two-digit (an earlier centre-triangle sliced it). It spins in a <strong>stepped</strong>
+  The card is also where a player who has never played D&amp;D learns how a check works, so it reads
+  as one causal sentence. <strong>Before</strong> the roll it shows the skill and the player's
+  <em>own</em> modifier — their competence, theirs to weigh ("I need a 7 or better") — under a single
+  quiet framing line that turns the stat fragment into a sentence. Only the DC stays hidden.
+  <strong>After</strong>, the readout runs die → arithmetic → comparison → verdict: the whole equation
+  with the die's own numeral as its left operand, then the explicit pass/fail against the now-revealed
+  DC, then the outcome word promoted to the card's typographic peak. A natural 20 — the die's face,
+  not the modified total — takes the system's own "loud": the inverted plate, ink field with paper
+  letters, at display size. Theme-aware, no colour, one move.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The equation repeats the die's number rather than pointing at it</strong> — a readout
+  reading "+6 = 16" asks the reader to reach back up into the die to reconstruct where 16 came from.
+  Writing it whole ("10 + 6 = 16") costs three characters and makes the card self-contained. The
+  modifier moves <em>above</em> the die for the same reason it is revealed early: it is the player's
+  own number and knowing it is what makes the roll suspenseful rather than arbitrary. The outcome word
+  is promoted because it is the card's whole point and it had been rendering at footnote size —
+  weight still carries the tier, it just carries it at a size worth reading.
+</aside>
+
+<p>
+  Once a card is <strong>released</strong> — Continue pressed, or replayed history — the theater is
+  over, and the full card sitting below fresh narration would file the roll after its consequences.
+  So it collapses to a compact one-line <strong>receipt</strong>: skill, the whole equation, the
+  verdict against the DC, on a quiet hairline rather than the card's stronger edge. The receipt
+  recedes; the prose around it is the point. The <a href="#the-transcript-as-a-record">causal
+  order</a> above is what files it back between the player's message and the outcome prose.
+</p>
+
+<p>
+  <code>DieSpin</code> is a <strong>faceted d20</strong>, authored here as a new mark because no
+  pixelarticons die exists: the pointy-top hexagonal silhouette with the icosahedron's full interior
+  fan drawn — a central triangular face plus the edges tying it to every silhouette vertex, the
+  classic front-face-with-a-number construction. The central face is drawn a touch larger than the
+  true projection so the numeral stamps cleanly <em>inside</em> it at any value, single- or two-digit.
+  The geometry stays open (no knockout plate) because the die renders both on the page ground
+  standalone and on a card surface inside RollCard, and a filled plate would mismatch one of them. The
+  same construction language extends to the other dice: a flavour roll threads its own sides and gets
+  its own silhouette — triangle, square, rhombus, kite, pentagon — each unmistakable by outline, with
+  the numeral always stamping at the same centre. It spins in a <strong>stepped</strong>
   rotation — eight discrete 45° steps, the motion analog of the brand's stepped Bayer dither, never a
   smooth CSS interpolation — and stamps the used die's numeral upright in its centre when it lands.
   The <strong>easing lives in time, not the angle</strong>: the per-step dwell ramps (~50 → 220&nbsp;ms)
@@ -687,29 +788,155 @@
   refinement a design-lead pass landed is <em>where the easing lives</em>: the angle never
   interpolates, so deceleration is carried entirely by a ramping dwell schedule (each step held longer
   than the last) capped by one discrete recoil frame — the same "quantization is the easing" grammar
-  the shared <a href="./design-system.html">BeatFigure engine</a> uses. The open facet-band geometry
-  and the dwell ramp are the tuned result of that pass, not placeholders.
+  the shared <a href="./design-system.html">BeatFigure engine</a> uses. The dwell ramp is the tuned
+  result of that pass, not a placeholder.
 </aside>
 
-<h2 id="the-stage-six-components-two-registers">The stage — six components, two registers</h2>
+<aside class="wiki-rationale">
+  <strong>The facet-band hexagon read as a hex nut</strong> — an earlier cut drew only the two pole
+  facets and left the equator open, which solved the numeral-clearance problem and lost the die: at a
+  glance it was a hexagonal fastener, not an icosahedron. Drawing the full interior fan makes it
+  unmistakably a d20 both at rest and at its result, and enlarging the central face past its true
+  projection recovers the clearance the open band existed for. The landed numeral also carries reveal
+  weight — bold, a step larger than the equation below it — because the roll is the one moment of
+  chance in the loop: the number lands before the arithmetic explains it.
+</aside>
+
+<h2 id="where-the-session-is">Where the session is, and what that permits</h2>
 
 <p>
-  <code>SessionShell</code> composes six <a href="./design-system.html">mythrunUI</a> components into a
-  full-height flex column: the scroller, the thinking line, and the input, beside the
+  The wire carries one number saying how far through its mechanical ceiling the session is: a
+  fraction the server computes from cumulative token spend against the session budget and the Fast
+  Thinker's context fill against its usable window, whichever ceiling is nearer, because the session
+  ends when either is reached. It is monotonic and coarse by the server's own guarantee, and it rides
+  three frames — <code>turn_end</code> (the once-per-turn beat, after persist and flush),
+  <code>session_reconnect</code>, and <code>session_ready</code>. The client reads all three
+  identically, holds the raw value, and derives exactly two things from it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The fraction is purely mechanical, and that is the enforced-ignorance argument</strong> —
+  this is the one progress number the <em>player</em> sees, so under enforced ignorance it may never
+  encode plot state, NPC secrets, or any narrative judgment about how close the story is to an
+  ending. Token spend and context fill carry none of that; there is nothing narrative in them to leak.
+  The narrative side of a session converging lives with the Slow Thinker, on the secret side of the
+  boundary, and never rides this field.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>In practice it arrives on <code>session_reconnect</code>, not <code>session_ready</code></strong>
+  — the shipped client connects with <code>seedLastSeq: 0</code>, so the server always takes the
+  reconnect branch and <code>session_ready</code> never reaches a real browser. Carrying the fraction
+  on only the two frames one would naively pin would have left every real join blank until the first
+  turn completed. The field is optional and additive everywhere, and absence means "no statement," not
+  "reset to zero" — the corrected-turn whole-turn replace reuses the reconnect frame and deliberately
+  carries no progress, so an audit-corrected retry must not blank the readout. The client validates
+  the payload structurally on the way in, exactly as it does any parsed network JSON, and takes no
+  second opinion about the value: monotonicity and coarseness are the server's, and a second opinion
+  is how two surfaces start disagreeing.
+</aside>
+
+<h3 id="a-word-never-a-number">A word, never a number</h3>
+
+<p>
+  The fraction collapses into four coarse bands — early, middle, late, close — and only the band's
+  word reaches the screen, as one quiet line of chrome above the transcript. There is no numeric
+  variant and no meter. Emphasis is typographic: the line's ink lifts as the session closes, quiet
+  while there is room and full ink when the landing is near, which is the register's only emphasis
+  channel and means the last stretch reads without ever becoming an alarm. It is a polite live
+  region, not decoration — a band change is rare (three per session at most) and is exactly the thing
+  a player needs told.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A percentage would be a spend meter parked over the fiction</strong> — the signal is
+  cost-derived, so "62%" reads as "62% of your money used," which is both the wrong thing to hold in
+  mind mid-scene and squarely outside a paper-y, un-gamified register that already bans bars, chips,
+  badges, and dots. What the player actually needs is <em>narrative room</em> — how much evening is
+  left to plan a landing in — which is forward-looking where a spent percentage is backward-looking.
+  Four bands are enough to pace a story and too few to watch tick. The number never reaches the
+  component at all: the surface bands it and passes a word, so there is no numeric prop to regress
+  into.
+</aside>
+
+<h3 id="the-voluntary-end-gated">The voluntary end, gated</h3>
+
+<p>
+  The same signal decides whether the table may end the session on purpose. A Mythrun session is a
+  play <em>unit</em>, not a sitting: leaving is free, rejoining is the normal case, and the credit is
+  debited at session <em>start</em>. So the end control does not mount at all until the session is
+  genuinely near its end — and with no signal at all (a pre-first-turn join, an older frame) it stays
+  absent, the safe default for something that cannot be undone.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Early, ending is pure value destruction; late, it is craft</strong> — because the credit is
+  already spent and the session can be resumed indefinitely, ending early refunds nothing and throws
+  away what the player paid for. An always-available end control is therefore a footgun. Near the end
+  the calculus inverts: "end here, on this beat" lets the player pick the landing instead of letting
+  the budget cliff pick a random mid-scene moment. That is one threshold, and the <code>late</code>
+  band starts at the same place, single-sourced, so the line that says the end is near and the control
+  that offers to take it can never disagree.
+</aside>
+
+<p>
+  Pressing it opens a one-beat inline confirm — no modal — with two bordered controls and the
+  consequence stated under the question, before the decision rather than under the buttons. The
+  disclosure leads with what ending <strong>forecloses</strong>: the session cannot be resumed. The
+  cost is stated second, as record.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The disclosure had to stop reading as a receipt</strong> — an earlier version disclosed only
+  the cost, in the past tense ("this session used one credit"), which is the most reassuring possible
+  framing for the most destructive action on the screen. And because a session is a play unit, a
+  player can quite reasonably read "end" as banking the remainder for later. It is not. Leading with
+  irreversibility is what makes the confirm informative rather than ceremonial. It sits under the
+  question because, placed under the buttons, it parsed as a consequence <em>of confirming</em>
+  ("ending will cost a credit") rather than the statement of record it is.
+</aside>
+
+<p>
+  A second, gentler exit hangs off the long rest the rules engine already detects: a dismissible
+  wind-down offer — a night's rest is the most natural session boundary the genre has. It keys off the
+  <strong>structured</strong> rest discriminator on the ledger frame, never the human-readable summary
+  prose, and only on a <em>live</em> frame: a long rest replayed from an hour ago must not re-pop the
+  offer. It carries the same near-the-end gate as the control, because it ends the session too — a
+  long rest at 15% would otherwise be an invitation to destroy a paid session at the one moment it
+  feels most natural to accept.
+</p>
+
+<p>
+  Confirming either one sets a local <strong>ending latch</strong> immediately, before the farewell
+  turn's first frame arrives, so the end can't be double-fired and the screen stops asking for input
+  at once. The whole between-turns chrome row is then <em>swept</em>: a stale question with one dead
+  button must not keep asking. The composer goes inert rather than merely send-gated, and the one
+  end-transition signal — the DM is closing the session — lives at the live edge in place of the
+  generic turn indicator. One signal, one place.
+</p>
+
+<h2 id="the-stage-two-registers">The stage — two registers</h2>
+
+<p>
+  <code>SessionShell</code> composes the <a href="./design-system.html">mythrunUI</a> play components
+  into a viewport-bounded flex column: the between-turns chrome row on top, the scroller filling the
+  middle, the thinking line and the input pinned below, beside the
   <a href="#the-knowledge-layer">knowledge sidebar</a>. The register split <em>is</em> the meaning — the DM speaks in narrative, the humans at the table speak in
   the mechanical voice:
 </p>
 
 <ul>
   <li>
-    <strong><code>MessageStream</code></strong> — the transcript scroller. Auto-follows the tail with
-    a "jump to now" affordance, and positions <em>instantly</em> under
-    <code>prefers-reduced-motion</code> (no smooth-scroll vestibular trigger). It dispatches each
-    transcript item to its renderer — <code>dm</code> to DmMessage, <code>player</code> to
-    PlayerMessage, <code>skill_check</code>/<code>dice_roll</code> to the
-    <a href="#the-dice-moment">RollCard</a>, <code>dm_correction</code> to the DmCorrection errata
-    slip, the rest to a mono system line — holds a gated turn's DM prose off-screen, and carries the
-    connection system line.
+    <strong><code>MessageStream</code></strong> — the transcript scroller. Auto-follows the tail, and
+    positions <em>instantly</em> under <code>prefers-reduced-motion</code> (no smooth-scroll
+    vestibular trigger). It dispatches each transcript item to its renderer — <code>dm</code> to
+    DmMessage, <code>player</code> to PlayerMessage, <code>skill_check</code>/<code>dice_roll</code>
+    to the <a href="#the-dice-moment">RollCard</a>, <code>dm_correction</code> to the DmCorrection
+    errata slip, the rest to a mono system line — folds a
+    <a href="#the-transcript-as-a-record">table-talk</a> block into its marked frame, holds a gated
+    turn's DM prose off-screen, and carries the connection system line. Scroll up and a labelled pill
+    appears at the bottom centre; once content lands below the fold it swaps to the new-messages
+    label and announces through a polite live region.
   </li>
   <li>
     <strong><code>DmMessage</code></strong> — the DM's prose in <strong>Source Serif 4</strong>
@@ -725,18 +952,24 @@
     one.
   </li>
   <li>
-    <strong><code>SessionInput</code></strong> — the composer, with a prominent <code>@DM</code>
-    summon. The summon uses the <strong>explicit-text path</strong>: it composes the visible
+    <strong><code>SessionInput</code></strong> — the composer. The field wears the serif prose face
+    and the branded caret, the one face a player's own writing wears, so the authorship moment shares
+    the world's voice instead of reading as an unfinished form control. Its two actions are grouped
+    together at the right of one row rather than pinned to opposite ends, and the in-world / out-of-character
+    split rides the variant hierarchy: <strong>Send</strong> is the accent primary — the character's
+    in-world action — and the <code>@DM</code> summon is the bordered secondary beside it, prominent
+    but quiet. The summon uses the <strong>explicit-text path</strong>: it composes the visible
     <code>@dm</code> token into the sent message, which persists and broadcasts as an ordinary
     <code>player_message</code> the backend's explicit-trigger path recognizes — so the whole table
-    sees the summon. The invisible <code>dm_invoke</code> frame is deliberately not used. Since
-    MYT-102 the composer also hard-caps its length at a client mirror of the server's
-    <code>MAX_MESSAGE_TEXT_LEN</code> (a native <code>maxLength</code> that blocks typing and paste
-    past the cap, plus a send guard for a programmatically over-cap value), so an over-long message
-    can't optimistically render and then be silently dropped by the server — or exceed the WS payload
-    cap and trigger a reconnect storm. The <a href="../runtime/session-transport.html">transport</a>
-    enforces the same 4&nbsp;KB bound server-side; the client cap keeps the failure from ever reaching
-    the wire.
+    sees the summon. The invisible <code>dm_invoke</code> frame is deliberately not used. Hovering or
+    focusing the summon shifts the empty field's placeholder to the out-of-character line, disclosing
+    that the same box is action via Send and question via the summon. The composer also hard-caps its
+    length at a client mirror of the server's <code>MAX_MESSAGE_TEXT_LEN</code> (a native
+    <code>maxLength</code> that blocks typing and paste past the cap, plus a send guard for a
+    programmatically over-cap value), so an over-long message can't optimistically render and then be
+    silently dropped by the server — or exceed the WS payload cap and trigger a reconnect storm. The
+    <a href="../runtime/session-transport.html">transport</a> enforces the same 4&nbsp;KB bound
+    server-side; the client cap keeps the failure from ever reaching the wire.
   </li>
   <li>
     <strong><code>SessionStartBeat</code></strong> — the 1-bit loading beat for the short
@@ -758,22 +991,71 @@
   visible <code>@dm</code> token into a normal message instead. A summon is a social act at the table;
   routing it through the visible transcript means the other players see who called the DM and why,
   rather than the DM answering an invisible prod. <code>composeSummon</code> is a deterministic string
-  helper (a protocol token, not user copy, so it is not an i18n key).
+  helper (a protocol token, not user copy, so it is not an i18n key) — and since the
+  <a href="#the-transcript-as-a-record">table-talk grouping</a> keys on the same token, the definition
+  lives in <code>client-core</code> with the route wire re-exporting it, so the composer and the
+  grouping can never disagree about what a summon is.
+</aside>
+
+<h3 id="the-composer-says-who-the-game-is-waiting-on">The composer says who the game is waiting on</h3>
+
+<p>
+  Sending is not always the expected next action, and the composer now says so. One derivation,
+  <code>composerGate</code>, produces the state — and the status line, the Send disable, and the roll
+  card all read that same derivation, so they cannot disagree at any point of the turn state machine.
+  It names the <strong>blocking party</strong>: an end in flight gates everything; then the
+  player-blocking states (a check awaiting Roll, a revealed check awaiting Continue) outrank the
+  DM-blocking one (a turn visibly in flight). Each carries a quiet caption naming why, in a polite
+  live region so the reason is announced rather than swallowed.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A check pending must outrank "the DM is writing"</strong> — with a check on screen the
+  post-check prose is already streaming, invisibly, behind the reveal gate. Reading the raw streaming
+  flag would put "the DM is writing…" on the screen while the game is in fact waiting on the
+  <em>player</em> to press Roll — telling the one person who can unblock it to sit still. So the
+  DM-writing test excludes gated turns, and the player-blocking states win the precedence.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Busy is not disabled, and the visual has to agree with the functional</strong> — the worst
+  bug the first play run produced was a Send button that looked live during a stream and silently
+  no-op'd, so a player typed, pressed, and lost their turn to nothing. The fix is two states, not one.
+  <code>busy</code> is transient: the field stays typeable so drafting ahead is preserved, but both
+  send paths gate (including the Enter key, so a keyboard send can't slip past the gated button) and
+  a caption says who is being waited on. <code>disabled</code> is terminal — the session ended, or the
+  player has confirmed an end — and hard-gates the field itself. Crucially the <em>appearance</em>
+  follows: while gated, the field drops to the muted treatment and its visible placeholder blanks (the
+  caption carries the reason; the accessible name is unaffected), and Send stands down from the solid
+  accent to a quiet ghost. The accent fill stays the exclusive mark of a pressable Send, so the gate
+  lifting is a decisive flip rather than a state the player has to test by clicking.
 </aside>
 
 <h3 id="the-full-bleed-frame">The full-bleed frame</h3>
 
 <p>
   The play route escapes the app frame's padded content box: it carries a <code>fullBleed</code>
-  route handle that <a href="./app-shell.html">AppFrame</a> reads to render header-plus-stage as
-  exactly one viewport, so the transcript scrolls <em>inside</em> its column and the page never
-  scrolls. The unbroken <code>min-h-0</code> flex-scroll chain (the full-bleed AppFrame root → the
-  play route root → the transcript column → <code>MessageStream</code>) is the one place the play
-  routes use a raw layout element — the layout scaffold isn't expressible through mythrunUI
-  <code>Stack</code> props (which ban <code>className</code>), so it takes the sanctioned, reasoned
+  route handle that <a href="./app-shell.html">AppFrame</a> reads, so the transcript scrolls
+  <em>inside</em> its column and the page never scrolls. The stage row also takes a hard height
+  <strong>ceiling</strong> — the dynamic viewport minus the header's allowance — which is what makes
+  the row two independent scroll regions. The unbroken <code>min-h-0</code> flex-scroll chain (the
+  stage root → the transcript column → <code>MessageStream</code>) is the one place the play routes
+  use a raw layout element: the scaffold isn't expressible through mythrunUI <code>Stack</code> props
+  (which ban <code>className</code>), so it takes the sanctioned, reasoned
   <code>no-ad-hoc-ui</code> escape hatch, while every piece of visible content composes the design
   system.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>A viewport floor without a ceiling lets the whole page scroll</strong> — the app frame's
+  root is a <em>minimum</em> height, so with only that in place the stage grew past the viewport and
+  the page itself scrolled: the sidebar rode away, the composer sank off the bottom, and the live edge
+  sat beside a dead right gutter. Adding the ceiling pins the composer, keeps the transcript scrolling
+  inside its own column, and holds the sidebar at every scroll position — the same allowance the
+  sidebar rail already used, so the two halves agree. The chrome above and below the stream shares the
+  stream's own horizontal inset, so the position line, the transcript cards, the status line, and the
+  composer all sit on one left grid line instead of three near-misses.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>A route handle, not ad-hoc negative margins — and a declared shared file</strong> — the
@@ -784,20 +1066,36 @@
   the screen would have collided; a route-handle variant keeps the frame's one composition root intact.
 </aside>
 
-<h3 id="session-end-lands-on-the-recap-route">Session end lands on the recap route</h3>
+<h3 id="session-end-lands-on-the-recap">Session end lands on the recap</h3>
 
 <p>
-  When <code>session_end</code> arrives the shell shows a brief "session complete" transition and
-  navigates to <code>/campaigns/:id/recap</code>. That is where MYT-92 stops.
+  When <code>session_end</code> arrives the shell shows a brief transition and navigates to
+  <code>/campaigns/:id/recap</code>, which is now a real screen over a real read. The recap is shaped
+  as a <strong>document</strong>, not a scoreboard: an identity header (the campaign, the session
+  number, a muted date and party record), the summary set as the writer's own paragraphs, the open
+  threads as a numbered index with hanging indent and mono markers so they are referable at the table,
+  and a quiet copy-link exit beside the way back to the campaign. The credit receipt is a footnote
+  below the button, so the document never ends on billing. There is no transcript dump and no
+  fanfare — closure, not a score.
+</p>
+
+<p>
+  The analysis behind it is asynchronous — an Opus job writes it seconds to minutes after finalize —
+  so the read answers <code>pending</code> with facts only until the prose lands, and the route polls.
+  The pending beat makes the wait a contract ("you don't have to stay") and seats itself in the upper
+  third, with the empty page below the rule reading as the recap's future home; the poll streams the
+  finished document into it.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>The recap is a stub route, deliberately — not silently dropped</strong> — the session's
-  summary exists in the database (<a href="../runtime/session-reconcile.html">post-session analysis</a>
-  writes <code>sessions.summary</code>), but there is no player-facing recap read yet. So MYT-92's
-  done-when was softened to "session end lands on the recap route," with the real recap screen and a
-  minimal recap read filed as a follow-up bead (which also resolves the campaignId-vs-sessionId param
-  question). The UX-spec recap experience is explicitly deferred, not quietly abandoned.
+  <strong>Enforced ignorance holds at the wire, not at the renderer</strong> — a session's row also
+  carries the secret-aware handoff and the Slow Thinker's running summary. The recap schema does not
+  model them and the endpoint does not read the column they live in, so there is no filtering step for
+  a future change to get wrong and nothing for a renderer to remember to hide. What crosses is the
+  secret-free summary and open threads the post-session analysis writes from player-witnessed material.
+  The route itself moved into the <a href="./app-shell.html">authed branch</a> for the matching reason:
+  the read is membership-gated, so it belongs inside the frame. A public share link would be a separate
+  tokenized surface, not this campaign-id read.
 </aside>
 
 <h2 id="the-knowledge-layer">The knowledge layer — what the character knows, beside the table</h2>
@@ -856,10 +1154,13 @@
 <ul>
   <li>
     <strong>World Wiki</strong> — the shipped <a href="./world-gen-experience.html">WorldWiki</a> over
-    <code>cache.wiki</code>, with client-side search. There are <strong>no stat blocks</strong>: the
-    <code>WorldSnapshotSchema</code> strips prose kernels and stat blocks server-side, so the model
-    carries only names, known facts, related entities, and the world introduction — the wiki
-    structurally <em>cannot</em> surface a mechanical secret.
+    <code>cache.wiki</code>, with client-side search. Its browse groups lead with the people and
+    places <strong>this session has actually named</strong>, so the scene's antagonist and a
+    session-one shopkeeper are not rendered as alphabetical equals. There are
+    <strong>no stat blocks</strong>: the <code>WorldSnapshotSchema</code> strips stat blocks
+    server-side, so the model carries only names, known facts, related entities, the entity prose
+    kernels, and the world introduction — the wiki structurally <em>cannot</em> surface a mechanical
+    secret.
   </li>
   <li>
     <strong>Relationship Graph</strong> — the same
@@ -879,6 +1180,19 @@
   also switches the active tab to the wiki so the tap lands on that entity's page. A chat-highlight
   click drives the same seam from the transcript.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>"Named this session" is the matcher's output, not a judgment</strong> — the transcript
+  already knows which entities the session has mentioned, because the same mechanical name matcher
+  that underlines them in the prose has been running over every settled DM row. The sidebar just asks
+  it: <code>accumulateNamedEntities</code> folds each not-yet-scanned settled row through the matcher
+  and keeps the ids it hit, in first-named order, and each browse group splits into those and the
+  rest. Nothing is classified, ranked, or scored, and membership is <strong>cumulative and never
+  decays</strong> — an entity named in turn one still counts at turn forty. Decay would need a notion
+  of "the current scene," and nothing on the wire marks a scene boundary; inventing one is exactly
+  the local intelligence ZFC forbids. Only settled prose is scanned, so a growing turn neither churns
+  the scan nor matches a half-typed name.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The graph renders exactly the snapshot's edges and synthesizes none — the structural
@@ -938,12 +1252,34 @@
   <code>adjust_hp</code> frame sends the new HP; a rest frame <em>also</em> sends the restored HP). So
   <code>reduceLedger</code> folds by <em>field presence</em> — any frame carrying
   <code>hp</code>/<code>maxHp</code>/<code>gold</code> sets it — which makes re-applying a frame
-  idempotent, so a reconnect replay of the same frame is harmless. Conditions are the exception: the
-  frame boundary drops the apply/clear flag, so a deterministic active-condition set isn't derivable
-  without parsing prose (a ZFC violation). The overlay therefore keeps a chronological
-  <em>condition log</em> and renders it as recent changes; a maintained active set is a filed follow-up
-  that needs a wire flag. The live E2E confirmed the full
+  idempotent, so a reconnect replay of the same frame is harmless. The live E2E confirmed the full
   <code>ledger_update → reduceLedger → data-live</code> path against a real damage frame.
+</aside>
+
+<p>
+  Conditions used to be the exception to that rule, and are no longer. The frame now carries the
+  character's <strong>full post-mutation condition set</strong> — each condition with its level, for
+  the one condition that tracks one — as authoritative data alongside the HP and gold post-values,
+  so the overlay sets it by the same presence fold. The overlay keeps both: the chronological
+  condition log the sheet renders as recent changes, and the maintained active set. Rendering that set
+  is a still-open design call — the paper register bans chips, badges, and dots, so state is prose —
+  so the sheet reads the log today and the data is folded and ready.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The full set, not a direction flag — and absent is not empty</strong> — the obvious wire fix
+  was a per-frame apply/clear flag, and it cannot work: a long rest mutates two conditions in one
+  operation (clearing unconscious via the HP-to-max write while decrementing exhaustion) yet emits a
+  single rest frame, and every HP write silently syncs the HP-derived unconscious row while emitting
+  only an HP frame. One condition-plus-direction pair per frame can express neither. A full list can,
+  which is why it rides the HP and rest frames too and not just the condition frame. Three states
+  matter and confusing two of them silently wipes a player's conditions on every gold spend: a frame
+  whose tool cannot touch conditions <em>omits</em> the field, which means "no statement" and holds
+  the last known set; an <em>empty array</em> is a statement — this character has none — and clears
+  it; and a null overlay means no frame has spoken yet, so the base sheet stands. Carrying the
+  exhaustion level as structured data rather than leaving it in the prose summary is the same
+  argument: re-parsing prose to recover mechanics is precisely the local intelligence the
+  architecture bans.
 </aside>
 
 <h3 id="the-rail-the-drawer-and-one-structural-mount">The rail, the drawer, and one structural mount</h3>
@@ -1002,9 +1338,17 @@
     in the graph.
   </li>
   <li>
-    Kill and restore the connection mid-turn: the turn resyncs without double-rendering. Then end the
-    session (the <code>end_session</code> summon) — the DM renders a send-off, then the screen lands on
-    the recap route.
+    Watch the between-turns chrome: the position line appears once a turn has completed and lifts its
+    ink as the session runs on, and the end control does <strong>not</strong> mount until the session
+    is genuinely near its end. Press it and the confirm should lead with irreversibility, not cost;
+    confirming should sweep the whole row, go the composer inert, and leave one closing signal at the
+    live edge.
+  </li>
+  <li>
+    Kill and restore the connection mid-turn: the turn resyncs without double-rendering, and the
+    position line holds its last value rather than blanking. Then end the session — the DM renders a
+    send-off, then the screen lands on the recap, which shows its pending beat until the analysis job
+    writes the summary and then streams the document in.
   </li>
   <li>
     To inspect the wire, watch the WS frames and the <code>session_messages</code> /
@@ -1029,7 +1373,10 @@
   <a href="./app-shell.html">client brain</a>. The <a href="#the-dice-moment">dice moment</a> (MYT-93)
   is the first surface built on this reducer's first-class item shape; the
   <a href="#the-knowledge-layer">knowledge layer</a> (MYT-94) is the next consumer, reading the
-  <code>ledger_update</code> item into its live sheet overlay. That layer reuses the
+  <code>ledger_update</code> item into its live sheet overlay. The between-sessions hold and the
+  <a href="#where-the-session-is">session-position</a> chrome both read shared brains — the
+  <a href="./world-gen-experience.html#waiting-feedback">wait vocabulary</a> and the transport's own
+  progress field — rather than deriving second opinions. That layer reuses the
   <a href="./world-gen-experience.html">world-gen reveal</a>'s WorldWiki and WorldGenGraph and its
   canonical snapshot→graph adapter, and the <a href="./character-creation.html">creation reveal</a>'s
   curated-sheet adapter, both fed by the one member-readable world snapshot the server filters to the
@@ -1057,7 +1404,38 @@
     <td><code>use-session.ts</code></td>
     <td>
       The play view-model over the WS client — folds frames, owns out-of-band presence
-      (<code>foldOutOfBand</code>), sends optimistically, resends on reconnect.
+      (<code>foldOutOfBand</code>, including the last-known progress fraction), sends optimistically,
+      resends on reconnect.
+    </td>
+  </tr>
+  <tr>
+    <td><code>session-progress.ts</code></td>
+    <td>
+      The wire read (<code>frameProgressFraction</code>) plus the two derivations the surface uses —
+      <code>progressBand</code> (the four-word vocabulary; there is no numeric variant) and
+      <code>canOfferEnd</code> (the single threshold the <code>late</code> band shares).
+    </td>
+  </tr>
+  <tr>
+    <td><code>transcript-presentation.ts</code></td>
+    <td>
+      <code>orderForDisplay</code> (a released card files into its causal slot) and
+      <code>buildTableTalkView</code> (an <code>@dm</code> exchange groups into one marked block) —
+      pure display projections over the settled transcript; also the canonical <code>@dm</code> token.
+    </td>
+  </tr>
+  <tr>
+    <td><code>named-entities.ts</code></td>
+    <td>
+      <code>accumulateNamedEntities</code> — which entities the session has named, from the same
+      mechanical matcher the highlighter uses; cumulative, settled-prose only.
+    </td>
+  </tr>
+  <tr>
+    <td><code>session-prep-eta.ts</code></td>
+    <td>
+      The between-sessions baseline — the historical <code>session-prep</code> average minus elapsed,
+      feeding the shared wait brain.
     </td>
   </tr>
   <tr>
@@ -1107,7 +1485,8 @@
     <td>
       The in-session sheet view-model (the viewer's own curated sheet via the promoted client-core
       adapter) + <code>reduceLedger</code>, the authoritative-SET overlay folded from the viewer's own
-      <code>ledger_update</code> frames (live HP/gold + a chronological condition log).
+      <code>ledger_update</code> frames (live HP/gold, the chronological condition log, and the
+      maintained active-condition set).
     </td>
   </tr>
   <tr>
@@ -1144,8 +1523,25 @@
   <tr>
     <td><code>play/session-shell.tsx</code> · <code>session-compose.ts</code></td>
     <td>
-      The live stage (the six components + the knowledge sidebar + the route-side send /
-      connection-line / typing-name wiring); the pure compose helpers (<code>composeSummon</code>, …).
+      The live stage (the components + the knowledge sidebar + the between-turns chrome row + the
+      route-side send / connection-line / typing-name wiring, and the balance refresh on mount); the
+      pure compose helpers — <code>composeSummon</code>, <code>composerGate</code> (the one gate
+      derivation the caption, Send, and the roll card all read), <code>latestLiveLongRestTurn</code>.
+    </td>
+  </tr>
+  <tr>
+    <td><code>play/session-lifecycle.tsx</code></td>
+    <td>
+      The two ways a table calls it a night — the gated end control with its one-beat confirm and
+      irreversibility disclosure, and the dismissible wind-down offer. Presentational; the shell owns
+      the gate and the wire.
+    </td>
+  </tr>
+  <tr>
+    <td><code>routes/recap.tsx</code></td>
+    <td>
+      The post-play recap document — the polling read of the secret-free summary and open threads, its
+      pending beat, and the copy-link exit.
     </td>
   </tr>
   <tr>
@@ -1174,9 +1570,24 @@
   <tr>
     <td><code>MessageStream</code></td>
     <td>
-      The scroller — auto-follow + jump-to-now; instant positioning under reduced motion. Dispatches
-      each item to its renderer (incl. <code>dm_correction</code> → DmCorrection) and holds a gated
-      turn's DM prose off-screen.
+      The scroller — auto-follow, a labelled bottom-centre pill that swaps to a new-messages label
+      and announces politely once content lands below the fold; instant positioning under reduced
+      motion. Dispatches each item to its renderer (incl. <code>dm_correction</code> → DmCorrection),
+      wraps a table-talk block in its frame, and holds a gated turn's DM prose off-screen.
+    </td>
+  </tr>
+  <tr>
+    <td><code>TableTalk</code></td>
+    <td>
+      The out-of-character block — a square unfilled slip with a heavy ink left rule under a terse
+      uppercase eyebrow, <code>role="note"</code>; the rows inside keep their own faces.
+    </td>
+  </tr>
+  <tr>
+    <td><code>SessionProgressLine</code></td>
+    <td>
+      The session-position line — a word, never a meter; ink lifts by band. A polite live region, not
+      decoration. There is no numeric prop.
     </td>
   </tr>
   <tr>
@@ -1201,8 +1612,12 @@
   <tr>
     <td><code>SessionInput</code></td>
     <td>
-      Compose + send + the visible <code>@DM</code> explicit-text summon; a server-mirrored
-      <code>maxLength</code> cap (MYT-102) blocks an over-long message at the composer.
+      The serif prose field with the branded caret; Send (accent) and the visible <code>@DM</code>
+      explicit-text summon (bordered) grouped at the right, with the summon's hover/focus shifting the
+      placeholder to the out-of-character line. A <code>busy</code> state distinct from
+      <code>disabled</code> gates both send paths behind a quiet reason line while keeping the field
+      typeable, and mutes the field and Send so the look agrees with the state. A server-mirrored
+      <code>maxLength</code> cap blocks an over-long message at the composer.
     </td>
   </tr>
   <tr>
@@ -1227,16 +1642,19 @@
   <tr>
     <td><code>RollCard</code></td>
     <td>
-      The in-stream dice moment — skill + posture → Roll → readout → Continue; tier as typographic
-      weight, the <code>constraint</code> never rendered; phase passed in (no reveal runtime).
+      The in-stream dice moment — skill + the player's own modifier + posture → Roll → the equation,
+      the comparison against the DC, and the promoted outcome word (a natural 20 on the inverted
+      plate) → Continue, collapsing to a one-line receipt once released. Tier as typographic weight,
+      the <code>constraint</code> never rendered; phase passed in (no reveal runtime).
     </td>
   </tr>
   <tr>
     <td><code>DieSpin</code></td>
     <td>
-      The facet-band d20 — eight discrete 45° steps with an open equatorial numeral field; the easing
-      is a ramping dwell (~50→220ms) capped by one scale-pop recoil, then stillness; reduced-motion
-      instant land; result announced via a polite live region.
+      The faceted d20 — the full interior fan with the numeral stamped inside its enlarged central
+      face, plus per-die silhouettes for the other sizes; eight discrete 45° steps, the easing a
+      ramping dwell (~50→220ms) capped by one scale-pop recoil, then stillness; reduced-motion instant
+      land; result announced via a polite live region.
     </td>
   </tr>
   <tr>
@@ -1267,9 +1685,12 @@
 
 <p>
   <code>frontend/src/routes/play.tsx</code>, <code>frontend/src/routes/play/</code>
-  (incl. <code>knowledge-panel.tsx</code>), <code>frontend/client-core/src/session/</code> (the
+  (incl. <code>knowledge-panel.tsx</code>, <code>session-lifecycle.tsx</code>),
+  <code>frontend/src/routes/recap.tsx</code>, <code>frontend/client-core/src/session/</code> (the
   transcript reducer + types, the optimistic layer, <code>use-session</code>,
-  <code>use-session-prep</code>, <code>start-flow</code>, <code>roll-reveal</code>, and the MYT-94
+  <code>use-session-prep</code>, <code>session-prep-eta</code>, <code>start-flow</code>,
+  <code>roll-reveal</code>, <code>session-progress</code>, <code>transcript-presentation</code>,
+  <code>named-entities</code>, and the MYT-94
   knowledge brain — <code>knowledge-cache</code>, <code>entity-index</code>, <code>ledger-reducer</code>,
   <code>use-session-sheet</code>), <code>frontend/client-core/src/api/play-session.ts</code>,
   <code>frontend/client-core/src/contract/session/</code> +
@@ -1289,7 +1710,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-start-flow-probe-first-then-one-classifier">The start flow — probe first, then one classifier</a></li><li style="padding-left:0"><a href="#the-transcript-reducer-the-reconnect-safe-core">The transcript reducer — the reconnect-safe core</a></li><li style="padding-left:0"><a href="#the-errata-slip-when-the-dm-amends-the-record">The errata slip — when the DM amends the record</a></li><li style="padding-left:0"><a href="#optimistic-own-messages">Optimistic own-messages</a></li><li style="padding-left:0"><a href="#presence-and-the-parts-the-reducer-won-t-touch">Presence, and the parts the reducer won't touch</a></li><li style="padding-left:0"><a href="#the-dice-moment">The dice moment — a reveal gate over an already-resolved roll</a></li><li style="padding-left:12px"><a href="#the-card-and-the-die">The card and the die</a></li><li style="padding-left:0"><a href="#the-stage-six-components-two-registers">The stage — six components, two registers</a></li><li style="padding-left:12px"><a href="#the-full-bleed-frame">The full-bleed frame</a></li><li style="padding-left:12px"><a href="#session-end-lands-on-the-recap-route">Session end lands on the recap route</a></li><li style="padding-left:0"><a href="#the-knowledge-layer">The knowledge layer — what the character knows, beside the table</a></li><li style="padding-left:12px"><a href="#one-snapshot-three-projections">One snapshot, three projections</a></li><li style="padding-left:12px"><a href="#the-three-tabs">The three tabs</a></li><li style="padding-left:12px"><a href="#entity-highlighting">Entity highlighting in settled prose</a></li><li style="padding-left:12px"><a href="#the-in-session-sheet">The in-session sheet and its live overlay</a></li><li style="padding-left:12px"><a href="#the-rail-the-drawer-and-one-structural-mount">The rail, the drawer, and one structural mount</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#walk-a-live-session-end-to-end-dev">Walk a live session end-to-end (dev)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-modules">Appendix: the modules</a></li><li style="padding-left:12px"><a href="#client-core-the-brain-client-core-session">Client-core — the brain (client-core/session)</a></li><li style="padding-left:12px"><a href="#web-the-composition-routes-play">Web — the composition (routes/play)</a></li><li style="padding-left:12px"><a href="#mythrunui-the-play-components">mythrunUI — the play components</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#the-start-flow-probe-first-then-one-classifier">The start flow — probe first, then one classifier</a></li><li style="padding-left:0"><a href="#the-transcript-reducer-the-reconnect-safe-core">The transcript reducer — the reconnect-safe core</a></li><li style="padding-left:0"><a href="#the-errata-slip-when-the-dm-amends-the-record">The errata slip — when the DM amends the record</a></li><li style="padding-left:0"><a href="#optimistic-own-messages">Optimistic own-messages</a></li><li style="padding-left:0"><a href="#presence-and-the-parts-the-reducer-won-t-touch">Presence, and the parts the reducer won't touch</a></li><li style="padding-left:0"><a href="#the-transcript-as-a-record">The transcript as a record — display order and table talk</a></li><li style="padding-left:0"><a href="#the-dice-moment">The dice moment — a reveal gate over an already-resolved roll</a></li><li style="padding-left:12px"><a href="#the-card-and-the-die">The card and the die</a></li><li style="padding-left:0"><a href="#where-the-session-is">Where the session is, and what that permits</a></li><li style="padding-left:12px"><a href="#a-word-never-a-number">A word, never a number</a></li><li style="padding-left:12px"><a href="#the-voluntary-end-gated">The voluntary end, gated</a></li><li style="padding-left:0"><a href="#the-stage-two-registers">The stage — two registers</a></li><li style="padding-left:12px"><a href="#the-composer-says-who-the-game-is-waiting-on">The composer says who the game is waiting on</a></li><li style="padding-left:12px"><a href="#the-full-bleed-frame">The full-bleed frame</a></li><li style="padding-left:12px"><a href="#session-end-lands-on-the-recap">Session end lands on the recap</a></li><li style="padding-left:0"><a href="#the-knowledge-layer">The knowledge layer — what the character knows, beside the table</a></li><li style="padding-left:12px"><a href="#one-snapshot-three-projections">One snapshot, three projections</a></li><li style="padding-left:12px"><a href="#the-three-tabs">The three tabs</a></li><li style="padding-left:12px"><a href="#entity-highlighting">Entity highlighting in settled prose</a></li><li style="padding-left:12px"><a href="#the-in-session-sheet">The in-session sheet and its live overlay</a></li><li style="padding-left:12px"><a href="#the-rail-the-drawer-and-one-structural-mount">The rail, the drawer, and one structural mount</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#walk-a-live-session-end-to-end-dev">Walk a live session end-to-end (dev)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-modules">Appendix: the modules</a></li><li style="padding-left:12px"><a href="#client-core-the-brain-client-core-session">Client-core — the brain (client-core/session)</a></li><li style="padding-left:12px"><a href="#web-the-composition-routes-play">Web — the composition (routes/play)</a></li><li style="padding-left:12px"><a href="#mythrunui-the-play-components">mythrunUI — the play components</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

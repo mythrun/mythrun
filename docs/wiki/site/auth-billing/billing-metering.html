@@ -25,12 +25,7 @@
       <aside class="wiki-sidebar"><ul><li><a href="../auth-billing/index.html">Overview</a></li><li><a href="../auth-billing/identity.html">Identity</a></li><li><a href="../auth-billing/jwt-middleware.html">JWT middleware</a></li><li><a href="../auth-billing/onboarding.html">Onboarding & invites</a></li><li><a href="../auth-billing/access-control-ws-ticket.html">Access control & WS ticket</a></li><li><a href="../auth-billing/stripe-contract.html">Stripe contract</a></li><li><a href="../auth-billing/billing-webhook.html">Billing webhook</a></li><li><a href="../auth-billing/billing-routes.html">Billing routes</a></li><li><a href="../auth-billing/billing-metering.html" class="active">Billing metering</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Auth & Billing › Billing metering</div>
-        <article><div class="wiki-drift-banner" role="alert">
-  <strong>⚠️ Source has drifted.</strong>
-  <span>The source files this page documents have changed since the page was last updated. Verify before trusting.</span>
-  <div class="wiki-drift-paths">source: <code>backend/migrations/008_billing_metering.sql</code>, <code>backend/src/billing/model-pricing.ts</code>, <code>backend/src/repo/sessions.ts</code>, <code>backend/src/repo/sessions-errors.ts</code>, <code>backend/src/repo/credits.ts</code>, <code>backend/src/repo/worlds.ts</code>, <code>backend/src/repo/uuidv5.ts</code>, <code>backend/src/llm/prompts/billing/pricing-extract.txt</code>, <code>backend/scripts/check-pricing.ts</code>, <code>.github/workflows/llm-price-check.yml</code></div>
-</div>
-
+        <article>
 <h1>Billing metering</h1>
 
 <p class="lead">
@@ -402,10 +397,21 @@
 <p>
   <a href="../data/repository.html"><code>repo.sessions.budgetSummary</code></a> is the read-side
   for non-hot-path consumers (receipts, dashboards, end-of-session reports, future crash-recovery
-  state). Plain SELECT, returns the row or <code>null</code> for sessions with no LLM calls yet. The
-  Session Runtime hot path deliberately does <em>not</em> call <code>budgetSummary</code> — it uses
-  <code>recordUsage</code>'s return value, saving one round-trip per turn.
+  state). Plain SELECT, returns the row or <code>null</code> for sessions with no LLM calls yet.
 </p>
+
+<div class="callout callout-warning">
+  <strong
+    >Both of these are currently unwired, and that is not a nuance — it shaped a real bug.</strong
+  >
+  <code>recordUsage</code> has no caller anywhere in production, so <code>session_usage</code> is
+  permanently empty and <code>budgetSummary</code> always returns <code>null</code>. The durable
+  per-session cost trail described on this page therefore does not exist yet. Worse, the Session
+  Runtime's budget auto-end was built to read <code>budgetSummary</code>, which meant it saw zero on
+  every turn and <em>never fired once</em> — sessions had no enforced stop until that read was moved
+  to the Redis usage counter. Treat this section as the design of the durable trail, not a
+  description of a live feed, until a writer is wired up.
+</div>
 
 <p>
   Bad <code>sessionId</code> is a tripwire, not a silent no-op: <code>recordUsage</code> throws
@@ -596,8 +602,8 @@
   prompts-as-files convention. It instructs Haiku to extract by display name, ignore the 1-hour
   cache write rate, and produce the four required rates per model. The script then maps display
   names back to <code>MODEL_PRICING</code> slugs via the <code>MODEL_DISPLAY_NAMES</code> table
-  (Anthropic's docs page lists models by display name like &ldquo;Claude Opus 4.7&rdquo; — not by
-  slug like <code>claude-opus-4-7</code>).
+  (Anthropic's docs page lists models by display name like &ldquo;Claude Opus 5&rdquo; — not by slug
+  like <code>claude-opus-5</code>).
 </p>
 
 <h2 id="operating-this-piece">Operating this piece</h2>
@@ -694,12 +700,14 @@
   the <code>session_usage</code>, <code>credit_ledger</code>, and <code>worlds</code> tables
   migration 008 modifies. The <a href="../runtime/llm.html">LLM client</a> emits the
   <code>event: 'llm.call'</code> log line with token counts; this page's <code>recordUsage</code> is
-  where those tokens become a durable cost record. The
-  <a href="./billing-webhook.html">billing webhook</a>'s subscription and purchase handlers call
-  <code>grantInTx</code>, which means trial-burn fires inside their transactions on the first paid
-  grant. The Session Runtime (next milestone) consumes <code>recordUsage</code>'s return value to
-  compute the cost-cap wrap-up signal, calls <code>tryDebitForSession</code> at session-start, and
-  reads <code>consumedSourceType === 'trial'</code> as the trial-mode entry signal.
+  where those tokens were <em>intended</em> to become a durable cost record — the wiring that would
+  make that true has not been built. The <a href="./billing-webhook.html">billing webhook</a>'s
+  subscription and purchase handlers call <code>grantInTx</code>, which means trial-burn fires
+  inside their transactions on the first paid grant. The Session Runtime calls
+  <code>tryDebitForSession</code> at session-start and reads
+  <code>consumedSourceType === 'trial'</code> as the trial-mode entry signal; its cost-cap and
+  wind-down signals, however, come from the Redis usage counter
+  (<code>sessionState.totalUsageTokens</code>), not from this table.
 </p>
 
 <h2 id="appendix-file-map">Appendix: file map</h2>
