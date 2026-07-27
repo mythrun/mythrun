@@ -19,12 +19,29 @@ describe('WhisperLedger', () => {
     expect(getAllByTestId('whisper-ledger-line').map((l) => l.textContent)).toEqual(HISTORY)
   })
 
-  it('fades the ledger by age — the oldest line most faded', () => {
+  it('cues age by MARK SIZE, not opacity — the oldest mark smallest', () => {
+    // The cue used to be an opacity ramp on the whole line. That was the age
+    // fade and simultaneously a WCAG AA failure: composited on the paper
+    // ground, ink-tertiary reaches only 3.49:1 at .80 and 1.39:1 at .25
+    // against a 4.5:1 floor, and no ink token in the system can carry a ramp
+    // that deep. Age moved onto the decorative mark, which is aria-hidden and
+    // therefore has no contrast floor to clear.
     const { getAllByTestId } = render(<WhisperLedger current="Now." history={HISTORY} />)
-    const [newest, mid, oldest] = getAllByTestId('whisper-ledger-line')
-    expect(newest?.className).toMatch(/opacity-80/)
-    expect(mid?.className).toMatch(/opacity-60/)
-    expect(oldest?.className).toMatch(/opacity-40/)
+    const [newest, mid, oldest] = getAllByTestId('whisper-ledger-mark')
+    expect(newest?.className).toMatch(/size-\[5px\]/)
+    expect(mid?.className).toMatch(/size-\[4px\]/)
+    expect(oldest?.className).toMatch(/size-\[3px\]/)
+  })
+
+  it('holds every ledger line at ONE passing ink — no opacity anywhere on the line', () => {
+    // The regression guard for the fix above: if a future change reintroduces a
+    // per-line opacity ramp, the axe colour-contrast check in the story only
+    // catches it in the CI-only Playwright sweep. This catches it here.
+    const { getAllByTestId } = render(<WhisperLedger current="Now." history={HISTORY} />)
+    for (const line of getAllByTestId('whisper-ledger-line')) {
+      expect(line.className).not.toMatch(/opacity-/)
+      expect(line.className).toMatch(/text-ink-tertiary/)
+    }
   })
 
   it('renders no ledger list at all before anything has settled (reduced motion / fresh mount)', () => {

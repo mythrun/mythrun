@@ -54,7 +54,11 @@ const ARROW_CLASS = cn(
   'shrink-0 font-ui text-xl leading-[1.4] text-accent-fg',
   'transition-transform duration-[var(--duration-fast)] group-hover:translate-x-[2px]',
 )
-const ACTION_LABEL_CLASS = 'text-sm tracking-wide'
+// Collapsed below `sm` (ux overflow gate): the cue block is `shrink-0`, so at
+// 375px the verb held ~115px that the prose column needed, squeezing a fixed
+// item below its own text. The arrow alone still carries 'enter here'; the
+// verb returns as soon as there is room for it.
+const ACTION_LABEL_CLASS = 'hidden sm:inline text-sm tracking-wide'
 
 export const GhostHookList = forwardRef<HTMLDivElement, GhostHookListProps>(
   function GhostHookList({ items, actionLabel, ...rest }, ref) {

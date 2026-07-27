@@ -70,10 +70,23 @@ const LEDGER_LINE_CLASS: Record<WhisperSize, string> = {
 // The settled line's 1-bit completion mark (myth-1yxfr): a filled square in the
 // line's own ink (bg-current rides the li's color + age opacity). Square, never
 // a dot — the paper register has no circles.
-const MARK_CLASS = 'size-[5px] shrink-0 self-center rounded-none bg-current'
-// The age fade — index 0 is the most recently settled line. Decorative
-// (aria-hidden) texture; the terminal opacity keeps the oldest line a ghost.
-const AGE_OPACITY = ['opacity-80', 'opacity-60', 'opacity-40', 'opacity-25'] as const
+const MARK_CLASS = 'shrink-0 self-center rounded-none bg-current'
+// The age cue. This used to be an opacity ramp on the whole line
+// (opacity-80/60/40/25), which was the age-fade AND an accessibility failure:
+// composited over the paper ground, ink-tertiary lands at 3.49:1 at .80 and
+// 1.39:1 at .25 against a 4.5:1 AA floor, and NO ink token in the system can
+// carry a ramp that deep — ink-secondary, the darkest, still only reaches
+// 3.37:1 by .60. The fade and AA were structurally incompatible, so the cue
+// moved off tone entirely rather than being quietly exempted.
+//
+// Age is now carried by the MARK's size. That works because the ledger already
+// encodes age spatially — index 0 is the newest and the well clips the oldest
+// off the bottom — so the mark reinforces a gradient the eye is already reading
+// down the stack, instead of inventing one. The mark is decorative and
+// aria-hidden, so shrinking it costs no legibility; the line's text now holds a
+// single passing ink at full opacity (ink-tertiary, 5.18:1). Squares only — the
+// paper register has no circles, at any size.
+const AGE_MARK_SIZE = ['size-[5px]', 'size-[4px]', 'size-[3px]', 'size-[2px]'] as const
 
 export const WhisperLedger = forwardRef<HTMLDivElement, WhisperLedgerProps>(
   function WhisperLedger({ current, history, size = 'hero', 'data-testid': dataTestId }, ref) {
@@ -101,12 +114,13 @@ export const WhisperLedger = forwardRef<HTMLDivElement, WhisperLedgerProps>(
                   // wholesale on each advance anyway.
                   key={`${String(i)}-${line}`}
                   data-testid="whisper-ledger-line"
-                  className={cn(
-                    LEDGER_LINE_CLASS[size],
-                    AGE_OPACITY[Math.min(i, AGE_OPACITY.length - 1)],
-                  )}
+                  className={LEDGER_LINE_CLASS[size]}
                 >
-                  <span aria-hidden="true" data-testid="whisper-ledger-mark" className={MARK_CLASS} />
+                  <span
+                    aria-hidden="true"
+                    data-testid="whisper-ledger-mark"
+                    className={cn(MARK_CLASS, AGE_MARK_SIZE[Math.min(i, AGE_MARK_SIZE.length - 1)])}
+                  />
                   {line}
                 </li>
               ))}

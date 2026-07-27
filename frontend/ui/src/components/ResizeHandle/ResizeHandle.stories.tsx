@@ -21,10 +21,19 @@ const MIN = 240
 const MAX = 520
 
 function ResizableRail(): React.JSX.Element {
-  const [width, setWidth] = useState(340)
+  // Opens at MIN so the demo fits a 375px viewport: the docked panel is
+  // `shrink-0` by design (it is what the handle resizes), so 340 + handle +
+  // page padding overflowed mobile at 416px. Dragging still walks it to MAX.
+  const [width, setWidth] = useState(MIN)
   return (
     <div className="flex min-h-dvh bg-bg p-[var(--space-6)]">
-      <div className="min-w-0 flex-1 p-[var(--space-4)] font-body text-ink">
+      {/* The explanatory column collapses below `sm`. A drag-to-resize side rail
+          is a pointer pattern; at 375px the docked panel (shrink-0, since it is
+          what the handle resizes) plus the page chrome leaves this column ~27px,
+          which squeezed its own text out of its box. Hiding the prose rather
+          than truncating it keeps the story honest about what the component is
+          for, instead of showing a clipped sentence nobody would ship. */}
+      <div className="hidden min-w-0 flex-1 p-[var(--space-4)] font-body text-ink sm:block">
         <p>The main column. Drag the divider on the right — or focus it and press ← / → — to resize the panel.</p>
       </div>
       <ResizeHandle value={width} min={MIN} max={MAX} onChange={setWidth} edge="leading" label="Resize the panel" />
