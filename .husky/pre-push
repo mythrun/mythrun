@@ -10,14 +10,14 @@
 #   4. backend vitest suite with 100% coverage thresholds on
 #      lines / branches / functions / statements (config:
 #      backend/vitest.config.ts COVERAGE_EXCLUDES + thresholds)
-#   5. wiki source-hash freshness (`pnpm wiki:check`) — mirrors the wiki
+#   5. wiki typecheck + tests + source-hash freshness — mirrors the wiki
 #      CI workflow. Requires backend/.env.development so the schema page
 #      can resolve against a live Postgres.
 #   6. dev-tool verifier (`pnpm dev-tool:verify`) — only when the diff
 #      touches backend/dev-tool/** or the backend contract route sources.
 #
 # Order: cheapest first, slowest last. Auth Lint is a single grep (~1s),
-# typecheck ~3s, lint ~10s, full coverage suite ~3min, wiki:check ~2s.
+# typecheck ~3s, lint ~10s, full coverage suite ~3min, wiki gate ~12s.
 #
 # CI re-asserts all six steps (lint-auth.yml + deploy.yml + wiki.yml);
 # this hook makes red CI impossible from this machine. If any gate is
@@ -31,7 +31,10 @@
 #   pnpm --filter @mythrun/backend typecheck
 #   pnpm --filter @mythrun/backend lint
 #   pnpm --filter @mythrun/backend test:coverage
-#   set -a && . backend/.env.development && set +a && pnpm wiki:check
+#   set -a && . backend/.env.development && set +a \
+#     && pnpm --filter @mythrun/wiki typecheck \
+#     && pnpm --filter @mythrun/wiki test \
+#     && pnpm wiki:check
 #   pnpm dev-tool:verify
 
 set -e
@@ -64,10 +67,22 @@ pnpm --filter @mythrun/backend lint
 echo "→ pre-push gate (4/7): backend vitest suite + 100% coverage threshold"
 pnpm --filter @mythrun/backend test:coverage
 
-echo "→ pre-push gate (5/7): wiki source-hash freshness"
+echo "→ pre-push gate (5/7): wiki typecheck + tests + source-hash freshness"
 # Source backend/.env.development so DATABASE_URL is set for the schema
-# fragment build. The check itself is a fast hash diff against the live
-# source tree (~2s). Mirrors the wiki CI workflow.
+# fragment build and the schema-extractor integration test.
+#
+# This runs all THREE steps the Wiki CI workflow runs (typecheck, test,
+# check) — it previously ran only `wiki:check` while claiming to mirror CI,
+# which is how a red Wiki job reached origin on 2026-07-26: migration 037
+# added `tripwire_verdicts` without adding it to the wiki's TABLE_CLUSTERS
+# map, so the schema extractor dropped it into the 'Other' cluster and
+# `schemaExtractor.test.ts` failed. `wiki:check` is a source-HASH diff and
+# is structurally incapable of catching that — only the test suite compares
+# the map against the live database. A gate that mirrors CI in name but not
+# in content is worse than no gate, because it buys false confidence.
+#
+# Cost is ~10s (the suite is fast; the schema test needs the DB that
+# wiki:check already required).
 #
 # The sourcing is scoped to a subshell: `set -a` exports EVERYTHING in that
 # env file — including NODE_ENV=development — and an exported NODE_ENV leaks
@@ -79,6 +94,8 @@ echo "→ pre-push gate (5/7): wiki source-hash freshness"
 # wiki:check failure.
 (
   set -a && . backend/.env.development && set +a
+  pnpm --filter @mythrun/wiki typecheck
+  pnpm --filter @mythrun/wiki test
   pnpm wiki:check
 )
 

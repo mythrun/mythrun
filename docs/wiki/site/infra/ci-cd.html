@@ -807,10 +807,9 @@
   gitignored <code>dist/</code> is what every later backend and frontend check resolves against),
   then runs a seven-stage gate that mirrors what CI is going to re-assert on the push it just
   accepted. The hook runs in cheapest-first order — a one-second grep, a ~3 s typecheck, a ~10 s
-  lint, the ~3 min coverage suite, a ~2 s wiki source-hash diff, (when the diff touches the dev-tool
-  surface) a ~30 s JSDOM verifier run, and (when the diff touches the frontend) the frontend
-  typecheck + lint + coverage chain. Any non-zero step refuses the push and prints the diagnostic
-  the operator needs.
+  lint, the ~3 min coverage suite, the ~12 s wiki gate, (when the diff touches the dev-tool surface)
+  a ~30 s JSDOM verifier run, and (when the diff touches the frontend) the frontend typecheck + lint
+  + coverage chain. Any non-zero step refuses the push and prints the diagnostic the operator needs.
 </p>
 
 <aside class="wiki-rationale">
@@ -848,12 +847,14 @@
     anything below fails the run.
   </li>
   <li>
-    <strong>Wiki source-hash freshness.</strong> Sources <code>backend/.env.development</code> so
-    <code>DATABASE_URL</code> is set for the schema fragment build, then runs
-    <code>pnpm wiki:check</code>
-    — a hash diff of every page's declared sources against the live tree. ~2 s. Mirrors the Wiki CI
-    workflow. Added 2026-05-14 after three consecutive red CI runs from wave-3/wave-4 source
-    additions that the earlier four-gate hook didn't catch.
+    <strong>Wiki typecheck + tests + source-hash freshness.</strong> Sources
+    <code>backend/.env.development</code> so <code>DATABASE_URL</code> is set for the schema
+    fragment build and the schema-extractor integration test, then runs all three steps the Wiki CI
+    workflow runs: <code>pnpm --filter @mythrun/wiki typecheck</code>,
+    <code>pnpm --filter @mythrun/wiki test</code>, and <code>pnpm wiki:check</code> — the last being
+    a hash diff of every page's declared sources against the live tree. ~12 s. Added 2026-05-14
+    after three consecutive red CI runs from wave-3/wave-4 source additions that the earlier
+    four-gate hook didn't catch.
   </li>
   <li>
     <strong>Dev-tool verifier.</strong> Conditional — only runs when the diff touches

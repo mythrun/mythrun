@@ -65,9 +65,7 @@ export const TABLE_CLUSTERS: Readonly<Record<string, ClusterName>> = {
   // Identity & billing
   users: 'Identity & billing',
   credit_ledger: 'Identity & billing',
-  subscription_tiers: 'Identity & billing',
   user_subscriptions: 'Identity & billing',
-  session_packs: 'Identity & billing',
   purchases: 'Identity & billing',
   stripe_events: 'Identity & billing',
   billing_history: 'Identity & billing',
@@ -102,6 +100,7 @@ export const TABLE_CLUSTERS: Readonly<Record<string, ClusterName>> = {
   world_snapshots: 'Campaigns & play',
   session_preps: 'Campaigns & play',
   session_usage: 'Campaigns & play',
+  tripwire_verdicts: 'Campaigns & play',
   // Pipeline & ops
   pipeline_runs: 'Pipeline & ops',
   world_marketplace: 'Pipeline & ops',
