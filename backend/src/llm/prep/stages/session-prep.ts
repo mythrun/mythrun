@@ -157,13 +157,19 @@ async function runPrepStream(
     },
   })
 
-  if (onProseDelta) {
-    try {
-      await drainProseDeltas(result, onProseDelta)
-    } catch {
-      // A truncated stream can throw mid-drain; `await result.object` below is
-      // authoritative, so swallow here rather than let a delta blip escape.
-    }
+  // myth-xbdkq — DRAIN UNCONDITIONALLY. This used to be `if (onProseDelta)`,
+  // which made the delta sink accidentally load-bearing: `result.object` below
+  // NEVER SETTLES unless something first consumes the stream, so a caller that
+  // omitted the sink would hang for the full SESSION_PREP_TIMEOUT_MS (9 minutes)
+  // and then fail. Verified against the real API on both Opus 4.7 and Opus 5:
+  // `await .object` alone hangs past 90s; drain-then-await returns in ~2.5s. It
+  // never bit only because the single production caller happens to pass a sink.
+  // The sink is now optional to the DRAIN, not the other way round.
+  try {
+    await drainProseDeltas(result, onProseDelta)
+  } catch {
+    // A truncated stream can throw mid-drain; `await result.object` below is
+    // authoritative, so swallow here rather than let a delta blip escape.
   }
 
   try {
@@ -190,13 +196,19 @@ async function runPrepStream(
 // AI SDK's mid-escape truncation, where a partial briefly rewrites an in-flight
 // escape (e.g. a dangling `\` resolves to `\n`) so the prefix diverges — we
 // resync `prev` and emit nothing for that tick rather than slice garbage.
+// `onProseDelta` is OPTIONAL here by design (myth-xbdkq): the drain must happen
+// whether or not anyone is listening, because consuming the stream is what makes
+// `result.object` settle. With no sink this degenerates to a pure pump.
 async function drainProseDeltas(
   result: ReturnType<typeof streamObject<SessionPrep>>,
-  onProseDelta: NonNullable<GenerateSessionPrepArgs['onProseDelta']>,
+  onProseDelta: GenerateSessionPrepArgs['onProseDelta'],
 ): Promise<void> {
   const FIELDS = ['ft_context', 'sd_playbook'] as const
   const prev: Record<(typeof FIELDS)[number], string> = { ft_context: '', sd_playbook: '' }
   for await (const partial of result.partialObjectStream) {
+    // Pump-only mode: keep consuming so `.object` can settle, but skip the
+    // per-field diffing when there is nobody to hand the deltas to.
+    if (onProseDelta === undefined) continue
     for (const field of FIELDS) {
       const value = partial[field]
       if (typeof value !== 'string') continue

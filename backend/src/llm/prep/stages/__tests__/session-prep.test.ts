@@ -113,6 +113,51 @@ describe('generateSessionPrep', () => {
     expect(po.mythrun.stage).toBe('session_prep')
   })
 
+  // myth-xbdkq — REGRESSION. `scripted()` above resolves `.object` eagerly, which
+  // is why the entire existing suite was blind to this: the real AI SDK settles
+  // `.object` only once something consumes `partialObjectStream`, so awaiting it
+  // without draining hangs until the 9-minute prep timeout. Verified live against
+  // both Opus 4.7 and Opus 5 (>90s hang vs ~2.5s drained), so this is an SDK
+  // contract, not a model behaviour.
+  //
+  // `lazyScripted` is the faithful mock: `.object` is gated on the generator
+  // running to completion. The call below passes NO onProseDelta — the arm that
+  // used to skip the drain entirely. Before the fix this test hangs and fails on
+  // timeout; after it, it returns immediately.
+  function lazyScripted(object: { ft_context: string; sd_playbook: string; opening: string }) {
+    let consumed!: () => void
+    const drained = new Promise<void>((resolve) => {
+      consumed = resolve
+    })
+    function* gen(): Generator<Record<string, string>> {
+      yield { ft_context: object.ft_context }
+      // Reached only when the consumer asks for the value past the last yield,
+      // i.e. when the stream has actually been drained to completion.
+      consumed()
+    }
+    return {
+      partialObjectStream: gen(),
+      object: drained.then(() => object),
+      usage: drained.then(() => ({ inputTokens: 10, outputTokens: 20, totalTokens: 30 })),
+    } as unknown as ReturnType<typeof import('../../../ai.js').streamObject>
+  }
+
+  it('completes with NO delta sink — the stream is drained regardless (myth-xbdkq)', async () => {
+    streamObjectMock.mockReturnValueOnce(
+      lazyScripted({ ft_context: 'x'.repeat(200), sd_playbook: 'y'.repeat(100), opening: 'o'.repeat(150) }),
+    )
+    const repo = {} as never
+    // No onProseDelta. If the drain is ever made conditional on it again, this
+    // never resolves and the test fails on timeout rather than passing quietly.
+    const result = await generateSessionPrep(repo, {
+      campaignId: 'camp1',
+      worldId: 'w1',
+      sessionNumber: 1,
+    })
+    expect(result.ft_context).toBe('x'.repeat(200))
+    expect(result.usage.outputTokens).toBe(20)
+  }, 10_000)
+
   it('sessionPrepSchema requires a real opening (MYT-101 floor)', async () => {
     const { sessionPrepSchema } = await import('../session-prep.js')
     const base = { ft_context: 'x'.repeat(200), sd_playbook: 'y'.repeat(100) }

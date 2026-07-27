@@ -165,13 +165,14 @@ describe('processTurnJob — farewell turns', () => {
       setRespondedSeq: setRespondedSpy,
     }
 
+    // myth-05p52 — seed the REAL Redis counter the auto-end now reads.
+    await sessionState.incrUsageSt(CAMPAIGN, SESSION_TOKEN_BUDGET + 5_000)
+
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
       // At-budget usage — a real turn would auto-end here; a farewell must not.
-      repo: fakeRepo({
-        budgetSummary: { inputTokens: SESSION_TOKEN_BUDGET, outputTokens: 5_000 },
-      }),
+      repo: fakeRepo(),
       triggerState: recordingTrigger,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),

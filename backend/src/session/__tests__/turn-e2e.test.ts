@@ -84,8 +84,6 @@ const e2eRepo: TurnWorkerRepo = {
   },
   sessions: {
     getById: () => Promise.resolve({ sessionNumber: 1 }),
-    // No usage recorded in this flow → null → under budget → no auto-end.
-    budgetSummary: () => Promise.resolve(null),
   },
   sessionPreps: { getBy: () => Promise.resolve(null) },
   campaigns: { getWorldId: () => Promise.resolve('w-e2e'), listMembers: () => Promise.resolve([]) },

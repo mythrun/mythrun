@@ -236,10 +236,6 @@ export function fakeRepo(overrides?: {
   partyLedgerCalls?: string[]
   /** MYT-70 §7: the party-ledger snapshot the read returns (default []). */
   partyLedger?: PartyLedgerSnapshot
-  /** MYT-74a T12: the durable cumulative usage the budget auto-end reads. Default
-   *  `null` (a fresh session with no recorded usage) → 0 cumulative tokens → under
-   *  budget → no auto-end. */
-  budgetSummary?: { inputTokens: number; outputTokens: number } | null
   /** myth-dwyuw: the transcript rows `augmentFtContextWithEntityCards` scans as
    *  its name-detection haystack (also the controller's history rebuild). Default
    *  [] → augment early-returns the base ft_context. */
@@ -260,7 +256,6 @@ export function fakeRepo(overrides?: {
   const session = overrides?.session === undefined ? { sessionNumber: 1 } : overrides.session
   const prep = overrides?.ftContext == null ? null : { ftContext: overrides.ftContext }
   const trailing = overrides?.trailingRows ?? []
-  const budget = overrides?.budgetSummary ?? null
   return {
     sessionMessages: {
       turnRowsExist: () => Promise.resolve(overrides?.turnRowsExist ?? false),
@@ -276,7 +271,6 @@ export function fakeRepo(overrides?: {
     },
     sessions: {
       getById: () => Promise.resolve(session),
-      budgetSummary: () => Promise.resolve(budget),
     },
     sessionPreps: {
       getBy: () => Promise.resolve(prep),

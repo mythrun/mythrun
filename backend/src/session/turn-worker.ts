@@ -159,7 +159,6 @@ export interface TurnWorkerRepo {
     /** MYT-74a T12 — the durable cumulative session usage row, read on the
      *  post-flush success phase to decide the budget-100% auto-end. `null` when
      *  the session has recorded no LLM usage yet (a brand-new session). */
-    budgetSummary(sessionId: string): Promise<{ inputTokens: number; outputTokens: number } | null>
   }
   readonly sessionPreps: {
     getBy(campaignId: string, sessionNumber: number): Promise<{ ftContext: string } | null>
@@ -758,10 +757,32 @@ export async function processTurnJob(
     // re-triggering the end orchestration off it is meaningless). OWN try/catch — a
     // failure to enqueue the end must NEVER mask the turn outcome (mirrors the
     // st-evaluation isolation).
+    //
+    // myth-05p52 — this arm READ THE WRONG COUNTER AND HAD NEVER ONCE FIRED.
+    // It used `repo.sessions.budgetSummary`, which reads the Postgres
+    // `session_usage` table — and `repo.sessions.recordUsage`, the only thing
+    // that writes that table, HAS NO CALLER anywhere in production. So the
+    // summary was permanently null, `cumulativeTokens` was permanently 0, and
+    // the guard below was permanently false: no session has ever hit the budget
+    // cliff. Sessions ended only when a player chose to end one, or when the FT
+    // context finally overflowed and the provider rejected the call mid-turn —
+    // which is an error, not an ending (no farewell, no finalize, no recap).
+    //
+    // Now reads `sessionState.totalUsageTokens`, the SAME Redis counter the ST
+    // wind-down arm and `resolveProgress` already read. That was the deciding
+    // argument for this fix over re-wiring recordUsage: those three signals must
+    // agree about how much budget is gone, and the surest way to guarantee that
+    // is for them to read one number. The Redis counter is genuinely written
+    // (flushTurnState -> :usage, incrUsageSt -> :usage:st), which is why the
+    // progress bar has been honest while this arm was dead.
+    //
+    // NOTE the durable per-session cost trail is still missing — `session_usage`
+    // stays empty, so analytics reading it read nothing. That is a real gap, but
+    // it is a metering concern, not a correctness one, and it is tracked
+    // separately rather than conflated with restoring the stop.
     if (!isPlayerless) {
       try {
-        const usage = await deps.repo.sessions.budgetSummary(sessionId)
-        const cumulativeTokens = usage === null ? 0 : usage.inputTokens + usage.outputTokens
+        const cumulativeTokens = await deps.sessionState.totalUsageTokens(campaignId)
         if (cumulativeTokens >= SESSION_TOKEN_BUDGET) {
           await deps.endSession({ campaignId, sessionId, worldId })
         }

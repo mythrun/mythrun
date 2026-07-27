@@ -261,13 +261,15 @@ describe('processTurnJob — scribe enqueue & budget auto-end', () => {
     const handle = fakeHandle({ extendReturns: true, release })
     const endSession = vi.fn((): Promise<void> => Promise.resolve())
 
+    // myth-05p52 — seed the REAL Redis counter the auto-end now reads.
+    // at-budget: cumulative usage exactly equals the budget.
+    await sessionState.incrUsageSt(CAMPAIGN, SESSION_TOKEN_BUDGET)
+
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
       // At-budget: input + output exactly equals SESSION_TOKEN_BUDGET.
-      repo: fakeRepo({
-        budgetSummary: { inputTokens: SESSION_TOKEN_BUDGET - 1_000, outputTokens: 1_000 },
-      }),
+      repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
@@ -303,13 +305,15 @@ describe('processTurnJob — scribe enqueue & budget auto-end', () => {
     const handle = fakeHandle({ extendReturns: true, release })
     const endSession = vi.fn((): Promise<void> => Promise.resolve())
 
+    // myth-05p52 — seed the REAL Redis counter the auto-end now reads.
+    // under budget: one token short of the threshold.
+    await sessionState.incrUsageSt(CAMPAIGN, SESSION_TOKEN_BUDGET - 1)
+
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
       // Under budget: one token short of the threshold.
-      repo: fakeRepo({
-        budgetSummary: { inputTokens: SESSION_TOKEN_BUDGET - 1, outputTokens: 0 },
-      }),
+      repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
@@ -342,12 +346,14 @@ describe('processTurnJob — scribe enqueue & budget auto-end', () => {
     const handle = fakeHandle({ extendReturns: true, release })
     const endSession = vi.fn((): Promise<void> => Promise.resolve())
 
+    // myth-05p52 — seed the REAL Redis counter the auto-end now reads.
+    // over budget, but the turn is player-less.
+    await sessionState.incrUsageSt(CAMPAIGN, SESSION_TOKEN_BUDGET + 5_000)
+
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
-      repo: fakeRepo({
-        budgetSummary: { inputTokens: SESSION_TOKEN_BUDGET, outputTokens: 5_000 },
-      }),
+      repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
@@ -383,12 +389,14 @@ describe('processTurnJob — scribe enqueue & budget auto-end', () => {
     const boom = new Error('reconcile queue unreachable')
     const endSession = vi.fn((): Promise<void> => Promise.reject(boom))
 
+    // myth-05p52 — seed the REAL Redis counter the auto-end now reads.
+    // at-budget, so the (throwing) auto-end is reached.
+    await sessionState.incrUsageSt(CAMPAIGN, SESSION_TOKEN_BUDGET)
+
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
-      repo: fakeRepo({
-        budgetSummary: { inputTokens: SESSION_TOKEN_BUDGET, outputTokens: 0 },
-      }),
+      repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
       dmTriggerQueue: inertDmTriggerQueue(),
