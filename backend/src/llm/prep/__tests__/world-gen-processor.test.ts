@@ -354,6 +354,38 @@ describe('world-gen-processor (MYT-51 T7)', () => {
   // ------------------------------------------------------------------
   // 1. Happy path — 3 stages succeed, 2 + 3 fail with stage_not_implemented
   // ------------------------------------------------------------------
+  it("threads acceptedTitle: an 'Untitled' world prompts concept_intake to name itself (myth walk 2026-07-29)", async () => {
+    // The processor derives acceptedTitle from the world row it already
+    // loads: 'Untitled' is the freeform placeholder — no accepted title, the
+    // model names the world.
+    const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
+    await pool.query(`UPDATE worlds SET name = 'Untitled' WHERE id = $1`, [worldId])
+    pushConceptIntakeResponses()
+    const deps = makeDeps(pool)
+    const proc = createWorldGenProcessor(deps)
+    await proc(makeJob(campaignId))
+    const firstPrompt = (vi.mocked(ai.generateText).mock.calls[0]?.[0] as { prompt: string })
+      .prompt
+    expect(firstPrompt).toContain('none — name the world yourself')
+  })
+
+  it('threads acceptedTitle: a named world (the accepted preview title) reaches the intake prompt', async () => {
+    // Anything but 'Untitled' is the title the player accepted at create
+    // time; the intake prompt must carry it as canonical.
+    const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
+    await pool.query(`UPDATE worlds SET name = 'The Delta of Three Turtles' WHERE id = $1`, [
+      worldId,
+    ])
+    pushConceptIntakeResponses()
+    const deps = makeDeps(pool)
+    const proc = createWorldGenProcessor(deps)
+    await proc(makeJob(campaignId))
+    const firstPrompt = (vi.mocked(ai.generateText).mock.calls[0]?.[0] as { prompt: string })
+      .prompt
+    expect(firstPrompt).toContain('The Delta of Three Turtles')
+    expect(firstPrompt).toContain('already accepted')
+  })
+
   it('runs implemented stages to completion, stops at stage_not_implemented', async () => {
     const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
     pushConceptIntakeResponses()
