@@ -2,7 +2,7 @@
 <!-- source: backend/src/routes/campaigns.ts -->
 <!-- source: backend/src/sse/derive-phase.ts -->
 <!-- source: frontend/contract/src/rest/campaigns.ts -->
-<!-- source-hash: sha256:c265882563758b7b33eaa88319d94fa397ab276da7306539e436f5303bde4353 -->
+<!-- source-hash: sha256:75bb7d62e4e5aa7d822b1b1a0651a37b56a6eb4a1669908f468da1198df2e0dd -->
 <!-- last-ticket: MYT-87 -->
 
 <h1>The campaign hub payload</h1>
@@ -24,6 +24,13 @@
   cartesian join. <code>listHubCardsForUser</code> in the repo does the gathering; the route's
   <code>toHubCardSummary</code> projects each row to the wire shape and derives the viewer-relative
   status. The repo stays pure data access; the per-viewer judgment lives at the route.
+</p>
+
+<p>
+  One naming nuance feeds the cards: a guided create carries the player-accepted preview title from
+  the moment the row is inserted, so a card for a still-generating world already shows its real name
+  rather than the <code>'Untitled'</code> placeholder — only freeform creates show the placeholder
+  until <code>concept_intake</code> names them.
 </p>
 
 <h3>Two batched queries, no fanout</h3>

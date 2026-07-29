@@ -255,6 +255,22 @@
 </p>
 
 <aside class="wiki-rationale">
+  <strong>The provider package must KNOW the pinned models</strong> — <code>@ai-sdk/anthropic</code>
+  carries a per-model capability table, and a model id it does not recognize silently falls back to
+  <code>maxOutputTokens: 4096</code> and <code>supportsStructuredOutput: false</code>. On the
+  Claude&nbsp;5 line, where thinking is on by default and shares the output ceiling, that fallback
+  is a time bomb: any uncapped structured call can spend the whole 4096 thinking and produce
+  <em>no tool-call output at all</em> (<code>AI_NoOutputGeneratedError</code>) — intermittently,
+  because it depends on how long the model thinks. This bit for real on 2026-07-29: provider 3.0.76
+  predated <code>claude-sonnet-5</code>/<code>claude-opus-5</code> and a live world build died in
+  <code>vocabulary_intake</code>; 3.0.103 knows both models (128K ceiling, native structured
+  output). A model-id bump in <code>models.ts</code> is therefore not complete until the provider
+  version demonstrably recognizes the new ids — check its <code>getModelCapabilities</code> before
+  trusting a green unit suite, because short-prompt smokes think briefly and slip under the fallback
+  ceiling.
+</aside>
+
+<aside class="wiki-rationale">
   <strong>Vercel SDK, not a hand-rolled adapter</strong> — the next two consumers in the queue are
   Fast Thinker (streaming) and Slow Thinker (tool use). Both are exactly what Vercel's SDK is built
   for. An own-adapter approach would push 2-3 days of streaming + tool-use plumbing into the Session

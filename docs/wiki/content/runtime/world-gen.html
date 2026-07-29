@@ -57,7 +57,7 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:25238c12ca96f1e3ee43631d9b0126d633f2e2fa340f4f552b001cc5ee8149ae -->
+<!-- source-hash: sha256:854d39eda8c4f0b25b1e0d9f4adef6c37312857cef07a60162a4f88c8ebc412c -->
 <!-- last-ticket: MYT-102 -->
 
 <h1>World gen</h1>
@@ -153,10 +153,24 @@
   <code>'freeform'</code> (a 20–4000-character free-text concept) or <code>'guided'</code> (exactly
   three <code>{ title, whyILikeIt }</code> picks the user assembled in a chooser UI). The
   synthesizer fires only in the guided arm; both arms then converge on the input gate. The body
-  carries no campaign name — <code>concept_intake</code> auto-names the world (and propagates that
-  name to the campaign), and the owner overrides later via
+  carries no campaign name in either arm — but the two arms now name differently. The guided arm
+  commits a server-parked preview whose
+  <em>title the player already accepted on the preview screen</em>; that title is inserted as both
+  the world's and the campaign's name at create time, and <code>concept_intake</code> keeps it (the
+  accepted title is prompted as canonical and applied deterministically — the model cannot rename an
+  accepted world). The freeform arm has no accepted title: rows are inserted
+  <code>'Untitled'</code> and <code>concept_intake</code> auto-names the world (and propagates that
+  name to the campaign). Either way the owner can rename later via
   <code>PATCH /api/campaigns/:campaignId/name</code>.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>Why the accepted title is load-bearing</strong> — before this, the preview headlined a
+  title, Begin was acceptance, and <code>concept_intake</code> renamed anyway: a player accepted
+  &ldquo;The Delta of Three Turtles&rdquo; and received a campaign called &ldquo;The Dreaming
+  Shell&rdquo; with no acknowledgment. The title travels from the parked preview (gated server
+  state), never from the client body, so the route's no-client-name contract holds.
+</aside>
 
 <h2>The seven routes</h2>
 

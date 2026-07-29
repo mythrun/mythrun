@@ -318,6 +318,19 @@
 </p>
 
 <aside class="wiki-rationale">
+  <strong><code>worlds.status</code> outranks stale stage telemetry</strong> — a worker killed in
+  the seam between finishing a stage's work and stamping its <code>pipeline_runs</code> row leaves
+  that row <code>'running'</code> forever (the job completes, so no resume revisits it). Phase
+  derivation used to trust any running world-stage row and report <code>world_gen</code> regardless,
+  wedging the player on &ldquo;the table is still being set&rdquo; with no recovery — observed live
+  with an orphaned <code>coherence_pass</code> row after a hard worker kill, and reproducible by any
+  mid-deploy task replacement. The worlds row is the <em>outcome</em>; <code>pipeline_runs</code> is
+  telemetry. When they disagree, both worldgen-derived branches (running &rarr;
+  <code>world_gen</code>, failed &rarr; <code>world_gen_failed</code>) now yield to
+  <code>worlds.status = 'complete'</code>.
+</aside>
+
+<aside class="wiki-rationale">
   <strong>Snapshot is the first SSE frame, not a separate fetch</strong> — a naive client that
   fetches <code>GET /status</code> and then opens <code>GET /status/stream</code> has a
   50–200&nbsp;ms window where worker events published between the two calls are lost. Sending the
