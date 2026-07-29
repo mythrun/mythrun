@@ -577,6 +577,10 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       //    caller cannot have altered.
       const source = body.world.source
       let concept: string
+      // Present only on the guided arm (a parked preview carries the title the
+      // player accepted); the freeform arm has no accepted title and stays
+      // 'Untitled' until concept_intake names it.
+      let acceptedTitle: string | null = null
       if (source.mode === 'freeform') {
         const gate = await runInputGate({ concept: source.concept, intentSummary: null })
         if (gate.verdict === 'reject') {
@@ -604,6 +608,13 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
           return reply.code(410).send({ code: 'preview_expired' })
         }
         concept = preview.concept
+        // myth walk 2026-07-29: the preview's title is what the player just
+        // ACCEPTED by pressing Begin — the preview screen headlines it. It is
+        // server-parked, gated state (never client body input), so threading
+        // it into the create keeps the "route accepts no name" contract while
+        // ending the rename break where a player accepted "The Delta of Three
+        // Turtles" and got a campaign called "The Dreaming Shell".
+        acceptedTitle = preview.title
       }
 
       // Step 5: locked transaction (debit + worlds + campaigns + member +
@@ -613,6 +624,7 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         txResult = await executeCreateTransaction(repo, {
           userId: dbUser.id,
           concept,
+          acceptedTitle,
           devBypassAccessFilter,
         })
         /* c8 ignore start — v8 branch-coverage quirk on the catch-arm
@@ -1194,7 +1206,17 @@ function sumQueueCounts(counts: Record<string, number>): number {
  */
 async function executeCreateTransaction(
   repo: Repo,
-  args: { userId: string; concept: string; devBypassAccessFilter: boolean },
+  args: {
+    userId: string
+    concept: string
+    /** The parked preview's title, when the player accepted one (guided arm).
+     *  Inserted as the name for BOTH rows so the accepted title is visible
+     *  from the first paint of the generating card; concept_intake then
+     *  respects it (worlds side) / no-ops (campaigns side, the binder's
+     *  WHERE name = 'Untitled' guard). */
+    acceptedTitle: string | null
+    devBypassAccessFilter: boolean
+  },
 ): Promise<{ campaignId: string; worldId: string }> {
   // ids generated up-front (uuidv7) so they can be threaded as FKs + returned.
   const worldId = uuidv7()
@@ -1216,9 +1238,15 @@ async function executeCreateTransaction(
         id: worldId,
         createdBy: args.userId,
         concept: args.concept,
+        ...(args.acceptedTitle !== null ? { name: args.acceptedTitle } : {}),
         devBypassAccessFilter: args.devBypassAccessFilter,
       })
-      await tx.campaigns.insertSetup({ id: campaignId, worldId, createdBy: args.userId })
+      await tx.campaigns.insertSetup({
+        id: campaignId,
+        worldId,
+        createdBy: args.userId,
+        ...(args.acceptedTitle !== null ? { name: args.acceptedTitle } : {}),
+      })
       await tx.campaigns.insertOwnerMember({ id: memberId, campaignId, userId: args.userId })
       await tx.credits.insertWorldGenDebit({ id: ledgerId, userId: args.userId, worldId })
       await tx.pipelineRuns.insertSeedRow({ id: runId, worldId })

@@ -18,6 +18,10 @@ You are a world-building assistant for a tabletop D&D 5e campaign. A human game 
 
 {{intent}}
 
+## Accepted Title
+
+{{title_directive}}
+
 ## Your Task
 
 Analyze the concept above. Extract what's explicit, infer what's implied, and identify what's missing but important. Produce a JSON object with these fields:

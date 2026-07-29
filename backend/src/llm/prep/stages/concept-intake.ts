@@ -40,6 +40,12 @@ export interface ConceptIntakeArgs {
   readonly worldId: string
   readonly conceptText: string
   readonly intentSummary: SynthesizerOutput['intentSummary'] | null
+  /** The title the player already accepted on the preview screen (guided arm),
+   *  or null (freeform arm — the model names the world). When present it is
+   *  BOTH prompted (so tone/themes prose aligns with the canonical title) and
+   *  deterministically applied (so a model that re-invents anyway cannot
+   *  rename an accepted world — pass-through of a human decision, ZFC-clean). */
+  readonly acceptedTitle: string | null
 }
 
 // Per-stage cost result shape — duplicated by each stage handler so a
@@ -63,10 +69,13 @@ export async function runConceptIntakeStage(
       : `aesthetics: ${args.intentSummary.aesthetics.join(', ')}\nthemes: ${args.intentSummary.themes.join(', ')}`
   // Function replacers: the concept is user input and the intent block is
   // derived from it, so a `$&`/`$'`-style sequence must splice in literally.
-  const prompt = PROMPT_TEMPLATE.replace('{{concept}}', () => args.conceptText).replace(
-    '{{intent}}',
-    () => intentBlock,
-  )
+  const titleDirective =
+    args.acceptedTitle === null
+      ? '(none — name the world yourself, per field 1 below)'
+      : `The player has already accepted the title "${args.acceptedTitle}" on the preview screen. It is canonical: echo it EXACTLY as \`name\`, and let the tone, themes, and summaries speak in its terms rather than inventing a different identity.`
+  const prompt = PROMPT_TEMPLATE.replace('{{concept}}', () => args.conceptText)
+    .replace('{{intent}}', () => intentBlock)
+    .replace('{{title_directive}}', () => titleDirective)
 
   const result = await validateAndGenerateConcept({
     basePrompt: prompt,
@@ -80,7 +89,9 @@ export async function runConceptIntakeStage(
   // to the prior inline statements — relocated into the repo binders.
   await repo.transaction(async (tx) => {
     await tx.worlds.applyConcept(args.worldId, {
-      name: result.draft.name,
+      // Deterministic guarantee: an accepted title survives whatever the
+      // model echoed. Freeform keeps the model's name.
+      name: args.acceptedTitle ?? result.draft.name,
       tone: result.draft.tone,
       themes: result.draft.themes,
       geographySummary: result.draft.geography_summary,
@@ -93,7 +104,7 @@ export async function runConceptIntakeStage(
     // that owns this world. The campaigns.name was inserted as 'Untitled'
     // at create-time; this is where it gets its real name. Users can
     // subsequently rename via PATCH /api/campaigns/:campaignId/name.
-    await tx.campaigns.setNameFromUntitled(args.worldId, result.draft.name)
+    await tx.campaigns.setNameFromUntitled(args.worldId, args.acceptedTitle ?? result.draft.name)
   })
 
   return {

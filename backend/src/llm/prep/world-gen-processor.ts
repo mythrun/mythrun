@@ -445,6 +445,10 @@ async function dispatchStage(
 ): Promise<StageDispatchResult> {
   if (stage === 'concept_intake') {
     const cost = await runConceptIntakeStage(repo, {
+      // A non-placeholder name at intake time is the accepted preview title
+      // the create inserted (guided arm); 'Untitled' means freeform — the
+      // stage names the world itself.
+      acceptedTitle: ctx.world.name === 'Untitled' ? null : ctx.world.name,
       worldId: ctx.world.id,
       conceptText: ctx.world.concept,
       intentSummary: null,

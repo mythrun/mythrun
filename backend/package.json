@@ -41,7 +41,7 @@
     "capture:ready-to-play": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/fixtures/capture.ts ready-to-play-campaign"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.76",
+    "@ai-sdk/anthropic": "^3.0.103",
     "@ai-sdk/provider": "^3.0.10",
     "@aws-sdk/client-cognito-identity-provider": "^3.1055.0",
     "@aws-sdk/client-secrets-manager": "^3.1055.0",

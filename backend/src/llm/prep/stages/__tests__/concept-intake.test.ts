@@ -59,6 +59,7 @@ describe('runConceptIntakeStage', () => {
       worldId: 'wld-1',
       conceptText: 'lighthouse-keepers tending storm spirits',
       intentSummary: null,
+      acceptedTitle: null,
     })
 
     // myth-4lhr: concept_intake now issues TWO writes inside one
@@ -97,6 +98,77 @@ describe('runConceptIntakeStage', () => {
     expect(result.outputTokens).toBe(700)
   })
 
+  it('keeps a human-ACCEPTED title: deterministic name override + prompt directive (myth walk 2026-07-29)', async () => {
+    // The guided flow shows the player a titled preview; Begin is acceptance.
+    // Renaming after acceptance is a continuity break (the player accepted
+    // "The Delta of Three Turtles" and got "The Dreaming Shell"). With an
+    // acceptedTitle the stage (a) tells the model the canonical title so tone/
+    // themes prose aligns with it, and (b) deterministically applies it as the
+    // name regardless of what the model echoes — pass-through of a human
+    // decision, not code judgment (ZFC-clean).
+    vi.mocked(ai.generateText).mockResolvedValueOnce({
+      output: DRAFT, // model still answers name 'Aelmoor' — it must NOT win
+      finishReason: 'stop',
+      usage: { inputTokens: 800, outputTokens: 600, totalTokens: 1400 },
+    } as never)
+    vi.mocked(ai.generateText).mockResolvedValueOnce({
+      output: { flagged: false, confidence: 0.95, mirroredWork: null, specificDriftAxes: [] },
+      finishReason: 'stop',
+      usage: { inputTokens: 200, outputTokens: 100, totalTokens: 300 },
+    } as never)
+
+    const repo = makeFakeRepo()
+    await runConceptIntakeStage(repo as unknown as Repo, {
+      worldId: 'wld-1',
+      conceptText: 'turtle city',
+      intentSummary: null,
+      acceptedTitle: 'The Delta of Three Turtles',
+    })
+
+    const genPrompt = (vi.mocked(ai.generateText).mock.calls[0]?.[0] as { prompt: string }).prompt
+    expect(genPrompt).toContain('The Delta of Three Turtles')
+    expect(genPrompt).toContain('already accepted')
+
+    expect(repo.worlds.applyConcept).toHaveBeenCalledWith(
+      'wld-1',
+      expect.objectContaining({ name: 'The Delta of Three Turtles' }),
+    )
+    // The campaign-name propagation still runs; its binder is a no-op when the
+    // campaign already carries the accepted title (WHERE name = 'Untitled').
+    expect(repo.campaigns.setNameFromUntitled).toHaveBeenCalledWith(
+      'wld-1',
+      'The Delta of Three Turtles',
+    )
+  })
+
+  it('with NO accepted title the model names the world (freeform arm unchanged)', async () => {
+    vi.mocked(ai.generateText).mockResolvedValueOnce({
+      output: DRAFT,
+      finishReason: 'stop',
+      usage: { inputTokens: 800, outputTokens: 600, totalTokens: 1400 },
+    } as never)
+    vi.mocked(ai.generateText).mockResolvedValueOnce({
+      output: { flagged: false, confidence: 0.95, mirroredWork: null, specificDriftAxes: [] },
+      finishReason: 'stop',
+      usage: { inputTokens: 200, outputTokens: 100, totalTokens: 300 },
+    } as never)
+
+    const repo = makeFakeRepo()
+    await runConceptIntakeStage(repo as unknown as Repo, {
+      worldId: 'wld-1',
+      conceptText: 'turtle city',
+      intentSummary: null,
+      acceptedTitle: null,
+    })
+
+    const genPrompt = (vi.mocked(ai.generateText).mock.calls[0]?.[0] as { prompt: string }).prompt
+    expect(genPrompt).toContain('none — name the world yourself')
+    expect(repo.worlds.applyConcept).toHaveBeenCalledWith(
+      'wld-1',
+      expect.objectContaining({ name: 'Aelmoor' }),
+    )
+  })
+
   it('synthesizes the concept on OPUS (the foundational-synthesis generator)', async () => {
     vi.mocked(ai.generateText).mockResolvedValueOnce({
       output: DRAFT,
@@ -114,6 +186,7 @@ describe('runConceptIntakeStage', () => {
       worldId: 'wld-3',
       conceptText: 'lighthouse-keepers tending storm spirits',
       intentSummary: null,
+      acceptedTitle: null,
     })
 
     const genCall = vi.mocked(ai.generateText).mock.calls.at(0)?.[0] as unknown as { model: unknown }
@@ -145,6 +218,7 @@ describe('runConceptIntakeStage', () => {
         themes: ['guardianship', 'inheritance'],
         sourcesInternal: ['private'],
       },
+      acceptedTitle: null,
     })
 
     const genCall = vi.mocked(ai.generateText).mock.calls.at(0)?.[0] as unknown as Record<

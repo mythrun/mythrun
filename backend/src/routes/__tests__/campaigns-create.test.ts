@@ -440,6 +440,73 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
       expect(queueSpy.add).toHaveBeenCalledTimes(1)
     })
 
+    it('201 guided: the ACCEPTED preview title becomes the world + campaign name at create (myth walk 2026-07-29)', async () => {
+      // The preview screen headlines the title and the player accepts it by
+      // pressing Begin. Before this fix the title died in the route: both rows
+      // were inserted 'Untitled' and concept_intake later invented a DIFFERENT
+      // name, so the player accepted "The Delta of Three Turtles" and got a
+      // campaign called "The Dreaming Shell". The accepted title is
+      // server-parked state (gated at synthesis), NOT client input — the route
+      // still accepts no name from the body.
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
+      const previewId = await putPreview(redis, REDIS_KEY_PREFIX, userId, {
+        title: 'The Delta of Three Turtles',
+        concept:
+          'A river delta city built on the backs of three colossal sleeping turtles, whose dreams leak into the minds of those who sleep near the waterline.',
+        intentSummary: STUB_INTENT,
+        reworkCount: 0,
+      })
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/campaigns',
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
+        payload: {
+          world: { kind: 'new', source: { mode: 'guided', previewId } },
+        },
+      })
+      expect(res.statusCode).toBe(201)
+      const body = res.json<{ campaignId: string }>()
+
+      const rows = await pool.query<{ world_name: string; campaign_name: string }>(
+        `SELECT w.name AS world_name, c.name AS campaign_name
+         FROM campaigns c JOIN worlds w ON w.id = c.world_id WHERE c.id = $1`,
+        [body.campaignId],
+      )
+      expect(rows.rows[0]?.world_name).toBe('The Delta of Three Turtles')
+      expect(rows.rows[0]?.campaign_name).toBe('The Delta of Three Turtles')
+    })
+
+    it('201 freeform: names stay Untitled at create (no accepted title exists yet)', async () => {
+      // The freeform arm has no preview and therefore no accepted title —
+      // concept_intake keeps naming that arm, so the placeholder must survive.
+      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/campaigns',
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': devSub },
+        payload: {
+          world: {
+            kind: 'new',
+            source: {
+              mode: 'freeform',
+              concept:
+                'A mountain pass where the snow remembers footprints for a hundred years and the border guards read them like archives.',
+            },
+          },
+        },
+      })
+      expect(res.statusCode).toBe(201)
+      const body = res.json<{ campaignId: string }>()
+      const rows = await pool.query<{ world_name: string; campaign_name: string }>(
+        `SELECT w.name AS world_name, c.name AS campaign_name
+         FROM campaigns c JOIN worlds w ON w.id = c.world_id WHERE c.id = $1`,
+        [body.campaignId],
+      )
+      expect(rows.rows[0]?.world_name).toBe('Untitled')
+      expect(rows.rows[0]?.campaign_name).toBe('Untitled')
+    })
+
     it('410 preview_expired when the guided previewId is absent/expired', async () => {
       const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
       // A well-formed but never-stored previewId → 410 (NOT 400 — the body is
