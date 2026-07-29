@@ -480,7 +480,7 @@ describe('POST /api/campaigns (MYT-51 T9)', () => {
     it('201 freeform: names stay Untitled at create (no accepted title exists yet)', async () => {
       // The freeform arm has no preview and therefore no accepted title —
       // concept_intake keeps naming that arm, so the placeholder must survive.
-      const { userId, devSub } = await seedUserWithCredits(pool, scope, 1)
+      const { devSub } = await seedUserWithCredits(pool, scope, 1)
       const res = await app.inject({
         method: 'POST',
         url: '/api/campaigns',
