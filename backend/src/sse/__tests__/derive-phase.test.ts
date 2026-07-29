@@ -114,6 +114,51 @@ describe('derivePhase', () => {
     expect(result.phase).toBe('world_ready')
   })
 
+  it('myth-0qw7k: worlds.status=complete OVERRIDES an orphaned running worldgen row', () => {
+    // Live wedge from the 2026-07-29 pre-playtest walk: a worker killed in the
+    // seam between finishing a stage's work and stamping its row leaves that
+    // row 'running' forever — the job completes, so no resume ever revisits
+    // it. The worlds row is the OUTCOME; pipeline_runs is telemetry. When they
+    // disagree, the outcome wins, otherwise the player is wedged on "the table
+    // is still being set" with no recovery. (coherence_pass was the observed
+    // orphan; any world stage can be.)
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: { ...baseWorld, status: 'complete' },
+      runs: [
+        run({ stage: 'concept_intake', status: 'completed' }),
+        run({ stage: 'coherence_pass', status: 'running', completed_at: null }),
+      ],
+    })
+    expect(result.phase).toBe('world_ready')
+  })
+
+  it('myth-0qw7k: with the world complete, an orphaned running worldgen row does not mask charcreation', () => {
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: { ...baseWorld, status: 'complete' },
+      runs: [
+        run({ stage: 'coherence_pass', status: 'running', completed_at: null }),
+        run({ stage: 'character_sheet', status: 'running', completed_at: null, user_id: 'u-1' }),
+      ],
+    })
+    expect(result.phase).toBe('character_creation')
+  })
+
+  it('myth-0qw7k: worlds.status=complete also outranks a leftover failed worldgen row', () => {
+    // Same principle in the failed direction: a failed attempt's leftover row
+    // must not report world_gen_failed for a world that demonstrably finished.
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: { ...baseWorld, status: 'complete' },
+      runs: [
+        run({ stage: 'vocabulary_intake', status: 'failed', completed_at: null }),
+        run({ stage: 'random_tables', status: 'completed' }),
+      ],
+    })
+    expect(result.phase).toBe('world_ready')
+  })
+
   it('returns world_ready when worlds.status=complete and no charcreation runs yet', () => {
     const result = derivePhase({
       campaign: baseCampaign,

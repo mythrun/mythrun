@@ -234,14 +234,26 @@ function computePhase(input: {
     return 'world_snapshot_ready'
   }
 
-  // Worldgen running.
-  if (worldgen.some((r) => r.status === 'running' || r.status === 'pending')) {
-    return 'world_gen'
-  }
+  // myth-0qw7k: BOTH worldgen-derived branches below are gated on the world
+  // not being complete. worlds.status is the OUTCOME; pipeline_runs rows are
+  // telemetry. A worker killed in the seam between finishing a stage's work
+  // and stamping its row leaves that row 'running' (or a retried attempt's
+  // leftover at 'failed') FOREVER — the job completes, so no resume ever
+  // revisits it — and before this guard a single orphaned row wedged the
+  // whole flow at "the table is still being set" with no player-visible
+  // recovery. Observed live (coherence_pass) on the 2026-07-29 walk; any
+  // hard worker death mid-deploy can reproduce it, so this is the safety
+  // net, not dev-only hygiene.
+  if (world.status !== 'complete') {
+    // Worldgen running.
+    if (worldgen.some((r) => r.status === 'running' || r.status === 'pending')) {
+      return 'world_gen'
+    }
 
-  // Worldgen failed but not world-status-failed: rare, treat as world_gen_failed.
-  if (worldgen.some((r) => r.status === 'failed')) {
-    return 'world_gen_failed'
+    // Worldgen failed but not world-status-failed: rare, treat as world_gen_failed.
+    if (worldgen.some((r) => r.status === 'failed')) {
+      return 'world_gen_failed'
+    }
   }
 
   // Post-creation running.
