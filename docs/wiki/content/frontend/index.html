@@ -6,6 +6,8 @@
 <!-- source: frontend/eslint-rules/no-ad-hoc-ui.js -->
 <!-- source: frontend/eslint-rules/no-untranslated-jsx-text.js -->
 <!-- source: frontend/vitest.config.ts -->
+<!-- source: frontend/test/setup.ts -->
+<!-- source: frontend/test/intersection-observer-stub.ts -->
 <!-- source: frontend/ui/src/components/Text/Text.tsx -->
 <!-- source: frontend/src/main.tsx -->
 <!-- source: frontend/src/index.css -->
@@ -20,7 +22,7 @@
 <!-- source: frontend/ui/src/styles/index.css -->
 <!-- source: pnpm-workspace.yaml -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:4c4fb2c37036407c02a02f0d099a51db1c984ee98a915f6ef33d1d38fce27e8e -->
+<!-- source-hash: sha256:3c3b9bd3b41223c09053140c895de56be4a77b45c9bf829592e23f12f80d19a4 -->
 <!-- last-ticket: MYT-100 -->
 
 <h1>Frontend</h1>
@@ -240,6 +242,17 @@
   with <code>src/lib/**</code>, <code>src/hooks/**</code>, and the future API/transport clients as
   they land. The convention that keeps this honest: logic lives in <code>.ts</code>, never
   <code>.tsx</code>, so the <code>.tsx</code> exclusion can't launder untested logic.
+</p>
+
+<p>
+  The web package's Vitest run also carries the workspace's one global
+  <strong>setup file</strong> (<code>frontend/test/setup.ts</code>), added with the navbar redesign:
+  jsdom has no <code>IntersectionObserver</code>, and the app frame mounts a scroll-elevation
+  observer on nearly every authed route, so any route test would crash without a stub. The stub
+  class lives in its own module so a test can import it and drive observer callbacks directly, and
+  it re-arms in a <code>beforeEach</code> rather than once at load — several suites call
+  <code>vi.unstubAllGlobals()</code> in their own <code>afterEach</code>, which would silently strip
+  a load-time stub for every test after the first in those files.
 </p>
 
 <p>

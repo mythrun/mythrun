@@ -29,10 +29,10 @@
 <h1>Billing &amp; credits</h1>
 
 <p class="lead">
-  The player's side of the money. A Sessions &amp; Billing settings screen shows both credit balances,
-  the subscription tiers, and a purchase ledger; the app header carries the live session-credit count
-  with a quiet quick-buy; a drained owner meets a purchase prompt at session start; and a checkout
-  return waits for the credit to land. It's a thin client over the shipped
+  The player's side of the money. The Sessions &amp; billing screen at <code>/billing</code> shows
+  both credit balances, the subscription tiers, and a purchase ledger; the app header carries the
+  live session-credit count with a quiet quick-buy; a drained owner meets a purchase prompt at
+  session start; and a checkout return waits for the credit to land. It's a thin client over the shipped
   <a href="../auth-billing/billing-routes.html">billing routes</a> — every purchase routes to a Stripe
   redirect that grants nothing synchronously, because the credit lands only through the
   <a href="../auth-billing/billing-webhook.html">webhook</a>.
@@ -40,15 +40,15 @@
 
 <figure class="wiki-diagram">
   
-<svg width="1383pt" height="509pt"
- viewBox="14.00 14.00 1368.00 494.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<svg width="1410pt" height="509pt"
+ viewBox="14.00 14.00 1395.00 494.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 490.12)">
 <title>billing_credits</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-475.72 1350,-475.72 1350,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-475.72 1377,-475.72 1377,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_settings</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="355,-385.64 355,-463.72 1338,-463.72 1338,-385.64 355,-385.64"/>
-<text xml:space="preserve" text-anchor="middle" x="846.5" y="-449.82" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Sessions &amp; Billing &#160;(settings)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="382,-385.64 382,-463.72 1365,-463.72 1365,-385.64 382,-385.64"/>
+<text xml:space="preserve" text-anchor="middle" x="873.5" y="-449.82" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Sessions &amp; billing &#160;(/billing · legacy /settings redirects)</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_actions</title>
@@ -58,17 +58,17 @@
 <!-- balance -->
 <g id="node1" class="node">
 <title>balance</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="984.36,-435.92 721.64,-435.92 721.64,-392.24 984.36,-392.24 984.36,-435.92"/>
-<text xml:space="preserve" text-anchor="middle" x="853" y="-417.38" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">CreditBalance</text>
-<text xml:space="preserve" text-anchor="middle" x="853" y="-404.18" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session · world_gen (never summed)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1011.36,-435.92 748.64,-435.92 748.64,-392.24 1011.36,-392.24 1011.36,-435.92"/>
+<text xml:space="preserve" text-anchor="middle" x="880" y="-417.38" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">CreditBalance</text>
+<text xml:space="preserve" text-anchor="middle" x="880" y="-404.18" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">session · world_gen (never summed)</text>
 </g>
 <!-- packs -->
 <g id="node2" class="node">
 <title>packs</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="703.27,-442.52 354.73,-442.52 354.73,-385.64 703.27,-385.64 703.27,-442.52"/>
-<text xml:space="preserve" text-anchor="middle" x="529" y="-423.98" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PackList</text>
-<text xml:space="preserve" text-anchor="middle" x="529" y="-410.78" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tiers (subscriptionCta gate) + à&#45;la&#45;carte packs</text>
-<text xml:space="preserve" text-anchor="middle" x="529" y="-397.58" font-family="Courier,monospace" font-size="11.00" fill="#231b12">quantity presets</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="730.27,-442.52 381.73,-442.52 381.73,-385.64 730.27,-385.64 730.27,-442.52"/>
+<text xml:space="preserve" text-anchor="middle" x="556" y="-423.98" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PackList</text>
+<text xml:space="preserve" text-anchor="middle" x="556" y="-410.78" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tiers (subscriptionCta gate) + à&#45;la&#45;carte packs</text>
+<text xml:space="preserve" text-anchor="middle" x="556" y="-397.58" font-family="Courier,monospace" font-size="11.00" fill="#231b12">quantity presets</text>
 </g>
 <!-- gate -->
 <g id="node4" class="node">
@@ -81,15 +81,15 @@
 <!-- packs&#45;&gt;gate -->
 <g id="edge1" class="edge">
 <title>packs&#45;&gt;gate</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M453.24,-385.01C425.25,-374.64 393.37,-362.83 364.71,-352.21"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="365.84,-350.02 358.42,-349.88 364.13,-354.61 365.84,-350.02"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M472,-385.01C440.69,-374.55 405,-362.63 373.01,-351.94"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="374.1,-349.72 366.69,-349.83 372.55,-354.37 374.1,-349.72"/>
 </g>
 <!-- history -->
 <g id="node3" class="node">
 <title>history</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1337.66,-435.92 1002.34,-435.92 1002.34,-392.24 1337.66,-392.24 1337.66,-435.92"/>
-<text xml:space="preserve" text-anchor="middle" x="1170" y="-417.38" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PurchaseHistory</text>
-<text xml:space="preserve" text-anchor="middle" x="1170" y="-404.18" font-family="Courier,monospace" font-size="11.00" fill="#231b12">terse mono ledger (packs name no credit count)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1364.66,-435.92 1029.34,-435.92 1029.34,-392.24 1364.66,-392.24 1364.66,-435.92"/>
+<text xml:space="preserve" text-anchor="middle" x="1197" y="-417.38" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PurchaseHistory</text>
+<text xml:space="preserve" text-anchor="middle" x="1197" y="-404.18" font-family="Courier,monospace" font-size="11.00" fill="#231b12">terse mono ledger (packs name no credit count)</text>
 </g>
 <!-- checkout -->
 <g id="node5" class="node">
@@ -133,17 +133,17 @@
 <!-- ret -->
 <g id="node10" class="node">
 <title>ret</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1030.66,-148.56 761.34,-148.56 761.34,-91.68 1030.66,-91.68 1030.66,-148.56"/>
-<text xml:space="preserve" text-anchor="middle" x="896" y="-130.02" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/billing/return · useCheckoutReturn</text>
-<text xml:space="preserve" text-anchor="middle" x="896" y="-116.82" font-family="Courier,monospace" font-size="11.00" fill="#231b12">poll balance: changed → settled</text>
-<text xml:space="preserve" text-anchor="middle" x="896" y="-103.62" font-family="Courier,monospace" font-size="11.00" fill="#231b12">budget spent → processing (calm)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1070.66,-148.56 801.34,-148.56 801.34,-91.68 1070.66,-91.68 1070.66,-148.56"/>
+<text xml:space="preserve" text-anchor="middle" x="936" y="-130.02" font-family="Courier,monospace" font-size="11.00" fill="#231b12">/billing/return · useCheckoutReturn</text>
+<text xml:space="preserve" text-anchor="middle" x="936" y="-116.82" font-family="Courier,monospace" font-size="11.00" fill="#231b12">poll balance: changed → settled</text>
+<text xml:space="preserve" text-anchor="middle" x="936" y="-103.62" font-family="Courier,monospace" font-size="11.00" fill="#231b12">budget spent → processing (calm)</text>
 </g>
 <!-- checkout&#45;&gt;ret -->
 <g id="edge7" class="edge">
 <title>checkout&#45;&gt;ret</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M794,-195.96C810.02,-184.2 831.6,-168.37 850.78,-154.3"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="852.06,-156.39 856.26,-150.28 849.17,-152.44 852.06,-156.39"/>
-<text xml:space="preserve" text-anchor="middle" x="872.01" y="-169.56" font-family="Courier,monospace" font-size="10.00">redirect back</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M801.61,-195.96C823.19,-183.94 852.4,-167.67 878.08,-153.37"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="879.06,-155.63 883.98,-150.09 876.68,-151.35 879.06,-155.63"/>
+<text xml:space="preserve" text-anchor="middle" x="892.01" y="-169.56" font-family="Courier,monospace" font-size="10.00">redirect back</text>
 </g>
 <!-- play402 -->
 <g id="node8" class="node">
@@ -162,36 +162,36 @@
 <!-- header -->
 <g id="node9" class="node">
 <title>header</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1073.26,-342.04 790.74,-342.04 790.74,-298.36 1073.26,-298.36 1073.26,-342.04"/>
-<text xml:space="preserve" text-anchor="middle" x="932" y="-323.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">AppFrame header</text>
-<text xml:space="preserve" text-anchor="middle" x="932" y="-310.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">session&#45;credit count + quiet quick&#45;buy</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1125.66,-342.04 790.34,-342.04 790.34,-298.36 1125.66,-298.36 1125.66,-342.04"/>
+<text xml:space="preserve" text-anchor="middle" x="958" y="-323.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">AppFrame bar</text>
+<text xml:space="preserve" text-anchor="middle" x="958" y="-310.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">credits readout + Add credits → /billing#buy</text>
 </g>
 <!-- header&#45;&gt;checkout -->
 <g id="edge6" class="edge">
 <title>header&#45;&gt;checkout</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M898.43,-297.73C871.04,-280.2 832.47,-255.52 804.76,-237.8"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="806.35,-235.91 799.13,-234.2 803.71,-240.03 806.35,-235.91"/>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M919.05,-297.73C886.99,-280.05 841.73,-255.1 809.52,-237.35"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="810.94,-235.33 803.63,-234.1 808.57,-239.62 810.94,-235.33"/>
 </g>
 <!-- webhook -->
 <g id="node11" class="node">
 <title>webhook</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1145.86,-43.68 850.14,-43.68 850.14,0 1145.86,0 1145.86,-43.68"/>
-<text xml:space="preserve" text-anchor="middle" x="998" y="-25.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">checkout.session.completed webhook</text>
-<text xml:space="preserve" text-anchor="middle" x="998" y="-11.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GRANTS the credit &#160;(the source of truth)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1192.86,-43.68 897.14,-43.68 897.14,0 1192.86,0 1192.86,-43.68"/>
+<text xml:space="preserve" text-anchor="middle" x="1045" y="-25.14" font-family="Courier,monospace" font-size="11.00" fill="#231b12">checkout.session.completed webhook</text>
+<text xml:space="preserve" text-anchor="middle" x="1045" y="-11.94" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GRANTS the credit &#160;(the source of truth)</text>
 </g>
 <!-- ret&#45;&gt;webhook -->
 <g id="edge9" class="edge">
 <title>ret&#45;&gt;webhook</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M925.78,-91.01C939.32,-78.23 955.29,-63.15 968.77,-50.43"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="970.43,-52.23 973.84,-45.64 967.07,-48.67 970.43,-52.23"/>
-<text xml:space="preserve" text-anchor="middle" x="980.14" y="-64.68" font-family="Courier,monospace" font-size="10.00">waits on</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M967.82,-91.01C982.42,-78.11 999.67,-62.88 1014.16,-50.09"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1015.61,-52.07 1019.23,-45.6 1012.37,-48.4 1015.61,-52.07"/>
+<text xml:space="preserve" text-anchor="middle" x="1024.27" y="-64.68" font-family="Courier,monospace" font-size="10.00">waits on</text>
 </g>
 <!-- webhook&#45;&gt;balance -->
 <g id="edge8" class="edge">
 <title>webhook&#45;&gt;balance</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1044.38,-44.35C1071.72,-60.55 1101,-85.71 1101,-119.12 1101,-321.2 1101,-321.2 1101,-321.2 1101,-350.75 1038.3,-373.81 975.95,-389.44"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="975.54,-387.02 969.33,-391.07 976.71,-391.78 975.54,-387.02"/>
-<text xml:space="preserve" text-anchor="middle" x="1134.01" y="-211.56" font-family="Courier,monospace" font-size="10.00">async grant</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1095.35,-44.37C1123.91,-60.31 1154,-85.16 1154,-119.12 1154,-321.2 1154,-321.2 1154,-321.2 1154,-336.03 1147.19,-340.19 1135,-348.64 1122.27,-357.47 1051.43,-375.03 987.63,-389.6"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="987.14,-387.2 980.86,-391.14 988.23,-391.98 987.14,-387.2"/>
+<text xml:space="preserve" text-anchor="middle" x="1187.01" y="-211.56" font-family="Courier,monospace" font-size="10.00">async grant</text>
 </g>
 </g>
 </svg>
@@ -223,9 +223,13 @@
   <code>CreditBalance</code> itemizes both, while the play-adjacent chrome — the header count and the
   <a href="./campaign-hub.html">campaign card</a>'s low-credit line — tracks <strong>session credits
   only</strong>. Starting a session spends a session credit; generating a world spends a world-gen
-  credit; the two are different currencies and the UI keeps them apart. The header says so out loud:
-  its readout is labelled "session credits", not "credits", because a bare number in the app's
-  most-seen chrome silently equalled one bucket and taught the wrong model.
+  credit; the two are different currencies and the UI keeps them apart. The header readout is where
+  that discipline is under the most pressure: a bare number in the app's most-seen chrome silently
+  equalled one bucket and taught the wrong model, so MYT-99 labelled it "session credits". The
+  navbar redesign then tersened the visible label to "Credits" as part of the bar's quieter chrome —
+  the readout still tracks the session bucket only, and the label's final wording is flagged for the
+  end-of-frontend copy pass; this itemized surface remains where the two currencies are actually
+  taught.
 </p>
 
 <p>
@@ -335,11 +339,18 @@
   webhook</a> page (filed as myth-e3ary).
 </aside>
 
-<h2 id="the-settings-surface-and-its-components">The settings surface and its components</h2>
+<h2 id="the-billing-surface-and-its-components">The billing surface and its components</h2>
 
 <p>
-  <code>/settings</code> is the Sessions &amp; Billing screen: <code>SessionsBilling</code> reads the
-  balance, skus, and history suspense queries and hands each to a component.
+  <code>/billing</code> is the Sessions &amp; billing screen: <code>SessionsBilling</code> reads the
+  balance, skus, and history suspense queries and hands each to a component. The screen originally
+  shipped at <code>/settings</code>; the navbar redesign renamed the route to what the surface
+  actually is (the app has no general settings — the page is entirely billing), keeping a legacy
+  redirect inside the auth gate that forwards <code>/settings</code> to <code>/billing</code> with
+  its search and hash intact, using replace semantics so the dead path never lands in history. The
+  header's Add-credits actions deep-link to <code>/billing#buy</code>: the screen scrolls its
+  purchase section into view from a ref once the suspense reads resolve, with a scroll margin that
+  clears the sticky bar.
 </p>
 
 <ul>
@@ -397,9 +408,10 @@
 <h3 id="header-chrome-and-the-low-credit-card-line">Header chrome and the low-credit card line</h3>
 
 <p>
-  The <a href="./app-shell.html">AppFrame</a> header carries the labelled live session-credit count
-  with a quiet quick-buy path to the purchase surface (the header edit is MYT-95's; the play route's
-  full-bleed variant is a declared shared edit on the same frame). The
+  The <a href="./app-shell.html">AppFrame</a> header carries the live session-credit count with a
+  quiet quick-buy path to the purchase surface: since the navbar redesign, a labelled "Add credits"
+  action beside the readout on desktop and an item of the header menu on phones, both deep-linking
+  to <code>/billing#buy</code> (and standing down to menu-only on the full-bleed play stage). The
   <a href="./campaign-hub.html">campaign card</a> shows an owner-only low-credit line, driven by
   <code>useLowSessionCredits</code>.
 </p>
@@ -456,7 +468,8 @@
     also carry the pinned API version, or the dispatcher records-and-acks them without granting.
   </li>
   <li>
-    Open <code>/settings</code>: both balance tiles render with their explainers, every tier and pack
+    Open <code>/billing</code> (the legacy <code>/settings</code> path redirects there): both
+    balance tiles render with their explainers, every tier and pack
     shows its grant ledger in the same row order, the tiers show their gated CTAs, and history lists
     real rows. As a new subscriber, the subscription CTA is <code>subscribe</code>; as an
     already-subscribed test user, the same tiles render <code>upgrade</code> / <code>manage</code> —
@@ -546,9 +559,9 @@
     <th>Role</th>
   </tr>
   <tr>
-    <td><code>routes/settings.tsx</code> · <code>routes/settings/sessions-billing.tsx</code></td>
+    <td><code>routes/billing.tsx</code> · <code>routes/billing/sessions-billing.tsx</code></td>
     <td>
-      The Sessions &amp; Billing surface (balance tiles + tiers + à-la-carte + history + portal); it
+      The Sessions &amp; billing surface (balance tiles + tiers + à-la-carte + history + portal); it
       also composes each card's grant ledger and formats every price and count, so the design system
       receives finished strings.
     </td>
@@ -572,9 +585,8 @@
 <p>
   <code>frontend/contract/src/rest/billing.ts</code>, <code>frontend/client-core/src/billing/</code>,
   <code>frontend/client-core/src/api/billing.ts</code>,
-  <code>frontend/client-core/src/contract/billing/</code>, <code>frontend/src/routes/settings.tsx</code>,
-  <code>frontend/src/routes/settings/sessions-billing.tsx</code>,
-  <code>frontend/src/routes/billing/</code> (checkout-return, checkout-cancelled),
+  <code>frontend/client-core/src/contract/billing/</code>, <code>frontend/src/routes/billing.tsx</code>,
+  <code>frontend/src/routes/billing/</code> (sessions-billing, checkout-return, checkout-cancelled),
   <code>frontend/src/routes/play/purchase-seam.tsx</code>, and the <code>CreditBalance</code> /
   <code>PackList</code> / <code>PurchaseHistory</code> / <code>PurchasePrompt</code> components under
   <code>frontend/ui/src/components/</code>. The backend drift-pin test lives at
@@ -585,7 +597,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#two-credit-buckets-never-one-number">Two credit buckets, never one number</a></li><li style="padding-left:0"><a href="#the-subscription-cta-gate-the-double-subscribe-guard">The subscription CTA gate — the double-subscribe guard</a></li><li style="padding-left:0"><a href="#the-purchase-moment-the-owner-pays">The purchase moment — the owner pays</a></li><li style="padding-left:0"><a href="#checkout-return-the-webhook-is-the-truth">Checkout return — the webhook is the truth</a></li><li style="padding-left:0"><a href="#the-settings-surface-and-its-components">The settings surface and its components</a></li><li style="padding-left:12px"><a href="#header-chrome-and-the-low-credit-card-line">Header chrome and the low-credit card line</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-billing-smoke-dev-stripe-test-mode">Run the billing smoke (dev, Stripe test mode)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-modules">Appendix: the modules</a></li><li style="padding-left:12px"><a href="#client-core-the-brain-client-core-billing-api-billing-ts">Client-core — the brain (client-core/billing + api/billing.ts)</a></li><li style="padding-left:12px"><a href="#web-the-screens">Web — the screens</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#two-credit-buckets-never-one-number">Two credit buckets, never one number</a></li><li style="padding-left:0"><a href="#the-subscription-cta-gate-the-double-subscribe-guard">The subscription CTA gate — the double-subscribe guard</a></li><li style="padding-left:0"><a href="#the-purchase-moment-the-owner-pays">The purchase moment — the owner pays</a></li><li style="padding-left:0"><a href="#checkout-return-the-webhook-is-the-truth">Checkout return — the webhook is the truth</a></li><li style="padding-left:0"><a href="#the-billing-surface-and-its-components">The billing surface and its components</a></li><li style="padding-left:12px"><a href="#header-chrome-and-the-low-credit-card-line">Header chrome and the low-credit card line</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-the-billing-smoke-dev-stripe-test-mode">Run the billing smoke (dev, Stripe test mode)</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-modules">Appendix: the modules</a></li><li style="padding-left:12px"><a href="#client-core-the-brain-client-core-billing-api-billing-ts">Client-core — the brain (client-core/billing + api/billing.ts)</a></li><li style="padding-left:12px"><a href="#web-the-screens">Web — the screens</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

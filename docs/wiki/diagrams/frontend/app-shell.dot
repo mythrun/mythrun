@@ -44,9 +44,9 @@ digraph frontend_app_shell {
     color="ember";
     fontcolor="ember";
 
-    shell [label="app shell\nrouter · RequireAuth (4-state → splash) ·\nquiet frame · dithered 404 ·\ntyped-error boundary"];
+    shell [label="app shell\nrouter · RequireAuth (4-state → splash) ·\nsticky quiet frame (StickyBar · header menu) ·\ndithered 404 · typed-error boundary"];
     home [label="routes/ — OAuth auth screens\n(signin · callback · onboard) ·\nthin stubs + the wired home hub"];
-    webimpl [label="platform/web\nSecureStorage → localStorage ·\nOAuthStateStore → sessionStorage · redirectTo"];
+    webimpl [label="platform/web\nSecureStorage → localStorage ·\nOAuthStateStore → sessionStorage · redirectTo ·\nuseScrollElevation → IntersectionObserver"];
   }
 
   rest -> backend [label="z.infer types (tsc)"];

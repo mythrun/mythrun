@@ -469,6 +469,17 @@
 </p>
 
 <p>
+  The web package's Vitest run also carries the workspace's one global
+  <strong>setup file</strong> (<code>frontend/test/setup.ts</code>), added with the navbar redesign:
+  jsdom has no <code>IntersectionObserver</code>, and the app frame mounts a scroll-elevation
+  observer on nearly every authed route, so any route test would crash without a stub. The stub
+  class lives in its own module so a test can import it and drive observer callbacks directly, and
+  it re-arms in a <code>beforeEach</code> rather than once at load — several suites call
+  <code>vi.unstubAllGlobals()</code> in their own <code>afterEach</code>, which would silently strip
+  a load-time stub for every test after the first in those files.
+</p>
+
+<p>
   The test files supply the acceptance evidence that the rails are real. A RuleTester suite drives
   each custom rule with inline code strings — invalid (<code>&lt;div&gt;</code>, bare child text,
   template-literal children) and valid (<code>&lt;Text/&gt;</code>, fragments,

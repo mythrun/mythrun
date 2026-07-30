@@ -2,8 +2,8 @@
 <!-- source: frontend/client-core/src/billing/ -->
 <!-- source: frontend/client-core/src/api/billing.ts -->
 <!-- source: frontend/client-core/src/contract/billing/ -->
-<!-- source: frontend/src/routes/settings.tsx -->
-<!-- source: frontend/src/routes/settings/sessions-billing.tsx -->
+<!-- source: frontend/src/routes/billing.tsx -->
+<!-- source: frontend/src/routes/billing/sessions-billing.tsx -->
 <!-- source: frontend/src/routes/billing/checkout-return.tsx -->
 <!-- source: frontend/src/routes/billing/checkout-cancelled.tsx -->
 <!-- source: frontend/src/routes/play/purchase-seam.tsx -->
@@ -11,16 +11,16 @@
 <!-- source: frontend/ui/src/components/PackList/ -->
 <!-- source: frontend/ui/src/components/PurchaseHistory/ -->
 <!-- source: frontend/ui/src/components/PurchasePrompt/ -->
-<!-- source-hash: sha256:a3d7c718fd7451745253ad2a8bfcc1d6848934cc0e8b42e970534878e853897a -->
+<!-- source-hash: sha256:b27ef9863bafdc8b68a048453456b9f28fd578e154f5d72b880be17286eccd1b -->
 <!-- last-ticket: MYT-95 -->
 
 <h1>Billing &amp; credits</h1>
 
 <p class="lead">
-  The player's side of the money. A Sessions &amp; Billing settings screen shows both credit balances,
-  the subscription tiers, and a purchase ledger; the app header carries the live session-credit count
-  with a quiet quick-buy; a drained owner meets a purchase prompt at session start; and a checkout
-  return waits for the credit to land. It's a thin client over the shipped
+  The player's side of the money. The Sessions &amp; billing screen at <code>/billing</code> shows
+  both credit balances, the subscription tiers, and a purchase ledger; the app header carries the
+  live session-credit count with a quiet quick-buy; a drained owner meets a purchase prompt at
+  session start; and a checkout return waits for the credit to land. It's a thin client over the shipped
   <a href="../auth-billing/billing-routes.html">billing routes</a> — every purchase routes to a Stripe
   redirect that grants nothing synchronously, because the credit lands only through the
   <a href="../auth-billing/billing-webhook.html">webhook</a>.
@@ -50,9 +50,13 @@
   <code>CreditBalance</code> itemizes both, while the play-adjacent chrome — the header count and the
   <a href="./campaign-hub.html">campaign card</a>'s low-credit line — tracks <strong>session credits
   only</strong>. Starting a session spends a session credit; generating a world spends a world-gen
-  credit; the two are different currencies and the UI keeps them apart. The header says so out loud:
-  its readout is labelled "session credits", not "credits", because a bare number in the app's
-  most-seen chrome silently equalled one bucket and taught the wrong model.
+  credit; the two are different currencies and the UI keeps them apart. The header readout is where
+  that discipline is under the most pressure: a bare number in the app's most-seen chrome silently
+  equalled one bucket and taught the wrong model, so MYT-99 labelled it "session credits". The
+  navbar redesign then tersened the visible label to "Credits" as part of the bar's quieter chrome —
+  the readout still tracks the session bucket only, and the label's final wording is flagged for the
+  end-of-frontend copy pass; this itemized surface remains where the two currencies are actually
+  taught.
 </p>
 
 <p>
@@ -162,11 +166,18 @@
   webhook</a> page (filed as myth-e3ary).
 </aside>
 
-<h2>The settings surface and its components</h2>
+<h2>The billing surface and its components</h2>
 
 <p>
-  <code>/settings</code> is the Sessions &amp; Billing screen: <code>SessionsBilling</code> reads the
-  balance, skus, and history suspense queries and hands each to a component.
+  <code>/billing</code> is the Sessions &amp; billing screen: <code>SessionsBilling</code> reads the
+  balance, skus, and history suspense queries and hands each to a component. The screen originally
+  shipped at <code>/settings</code>; the navbar redesign renamed the route to what the surface
+  actually is (the app has no general settings — the page is entirely billing), keeping a legacy
+  redirect inside the auth gate that forwards <code>/settings</code> to <code>/billing</code> with
+  its search and hash intact, using replace semantics so the dead path never lands in history. The
+  header's Add-credits actions deep-link to <code>/billing#buy</code>: the screen scrolls its
+  purchase section into view from a ref once the suspense reads resolve, with a scroll margin that
+  clears the sticky bar.
 </p>
 
 <ul>
@@ -224,9 +235,10 @@
 <h3>Header chrome and the low-credit card line</h3>
 
 <p>
-  The <a href="./app-shell.html">AppFrame</a> header carries the labelled live session-credit count
-  with a quiet quick-buy path to the purchase surface (the header edit is MYT-95's; the play route's
-  full-bleed variant is a declared shared edit on the same frame). The
+  The <a href="./app-shell.html">AppFrame</a> header carries the live session-credit count with a
+  quiet quick-buy path to the purchase surface: since the navbar redesign, a labelled "Add credits"
+  action beside the readout on desktop and an item of the header menu on phones, both deep-linking
+  to <code>/billing#buy</code> (and standing down to menu-only on the full-bleed play stage). The
   <a href="./campaign-hub.html">campaign card</a> shows an owner-only low-credit line, driven by
   <code>useLowSessionCredits</code>.
 </p>
@@ -283,7 +295,8 @@
     also carry the pinned API version, or the dispatcher records-and-acks them without granting.
   </li>
   <li>
-    Open <code>/settings</code>: both balance tiles render with their explainers, every tier and pack
+    Open <code>/billing</code> (the legacy <code>/settings</code> path redirects there): both
+    balance tiles render with their explainers, every tier and pack
     shows its grant ledger in the same row order, the tiers show their gated CTAs, and history lists
     real rows. As a new subscriber, the subscription CTA is <code>subscribe</code>; as an
     already-subscribed test user, the same tiles render <code>upgrade</code> / <code>manage</code> —
@@ -373,9 +386,9 @@
     <th>Role</th>
   </tr>
   <tr>
-    <td><code>routes/settings.tsx</code> · <code>routes/settings/sessions-billing.tsx</code></td>
+    <td><code>routes/billing.tsx</code> · <code>routes/billing/sessions-billing.tsx</code></td>
     <td>
-      The Sessions &amp; Billing surface (balance tiles + tiers + à-la-carte + history + portal); it
+      The Sessions &amp; billing surface (balance tiles + tiers + à-la-carte + history + portal); it
       also composes each card's grant ledger and formats every price and count, so the design system
       receives finished strings.
     </td>
@@ -399,9 +412,8 @@
 <p>
   <code>frontend/contract/src/rest/billing.ts</code>, <code>frontend/client-core/src/billing/</code>,
   <code>frontend/client-core/src/api/billing.ts</code>,
-  <code>frontend/client-core/src/contract/billing/</code>, <code>frontend/src/routes/settings.tsx</code>,
-  <code>frontend/src/routes/settings/sessions-billing.tsx</code>,
-  <code>frontend/src/routes/billing/</code> (checkout-return, checkout-cancelled),
+  <code>frontend/client-core/src/contract/billing/</code>, <code>frontend/src/routes/billing.tsx</code>,
+  <code>frontend/src/routes/billing/</code> (sessions-billing, checkout-return, checkout-cancelled),
   <code>frontend/src/routes/play/purchase-seam.tsx</code>, and the <code>CreditBalance</code> /
   <code>PackList</code> / <code>PurchaseHistory</code> / <code>PurchasePrompt</code> components under
   <code>frontend/ui/src/components/</code>. The backend drift-pin test lives at

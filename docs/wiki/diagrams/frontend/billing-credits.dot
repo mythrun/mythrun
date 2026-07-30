@@ -1,5 +1,5 @@
 digraph billing_credits {
-  // The money surfaces. The Sessions & Billing settings screen reads balance /
+  // The money surfaces. The Sessions & billing screen (/billing) reads balance /
   // skus / history and renders two independent credit buckets, the price-ordered
   // tiers (each with a GATED CTA), and the ledger. Every purchase CTA routes to a
   // Stripe redirect that grants NOTHING synchronously — the credit lands only via
@@ -8,7 +8,7 @@ digraph billing_credits {
   compound=true;
 
   subgraph cluster_settings {
-    label="Sessions & Billing  (settings)";
+    label="Sessions & billing  (/billing · legacy /settings redirects)";
     style="dashed";
     color="ember";
     fontcolor="ember";
@@ -32,7 +32,7 @@ digraph billing_credits {
   }
 
   play402 [label="play 402 (owner shortfall)\n→ PurchaseSeam · owner buy / member hold"];
-  header [label="AppFrame header\nsession-credit count + quiet quick-buy"];
+  header [label="AppFrame bar\ncredits readout + Add credits → /billing#buy"];
   ret [label="/billing/return · useCheckoutReturn\npoll balance: changed → settled\nbudget spent → processing (calm)"];
   webhook [label="checkout.session.completed webhook\nGRANTS the credit  (the source of truth)"];
 

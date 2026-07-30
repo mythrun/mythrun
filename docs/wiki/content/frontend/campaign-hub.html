@@ -1,7 +1,7 @@
 <!-- source: frontend/src/routes/home.tsx -->
 <!-- source: frontend/src/routes/home/ -->
 <!-- source: frontend/src/app/header-credits.tsx -->
-<!-- source-hash: sha256:6c5d51d5f5b9f55c1afcf425bbc8ec17057cdeefd95c674ff14f7402e5fc6b8c -->
+<!-- source-hash: sha256:c9b5c459d1f9f32760a6143a6c5e5e1c36649cc388065ee40d2af5482091c7db -->
 <!-- last-ticket: MYT-89 -->
 
 <h1>Campaign hub</h1>
@@ -181,29 +181,34 @@
 
 <p>
   The always-present app frame carries the live session-credit balance.
-  <code>HeaderCredits</code> reads it through the <code>useBalance</code> suspense hook and renders it
-  as a <strong>labelled</strong> mono readout — the words "session credits" leading the number — inside
-  the shared <code>HeaderSlot</code>, which gives every suspense-reading header slot its own
+  <code>HeaderCredits</code> reads it through the <code>useBalance</code> suspense hook and renders
+  it as a labelled mono readout — the label in the frame's quiet <code>chrome</code> type role, the
+  number in <code>chrome-strong</code>, the bar's only accent — inside the shared
+  <code>HeaderSlot</code>, which gives a suspense-reading header slot its own
   <code>&lt;Suspense&gt;</code> and its own error boundary. The <a href="./app-shell.html">app
-  shell</a> owns the frame's composition; this is the slot the hub's balance lives in.
+  shell</a> owns the frame's composition; this is the slot the hub's balance lives in. One instance
+  mounts per frame arrangement (desktop and mobile clusters), each with its own testid.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>The label is "session credits", not "credits"</strong> — the product has two currencies, and
-  a bare number in the highest-traffic chrome on the site silently equalled the session bucket and
-  taught every player the wrong model. Naming the bucket costs two words and removes the ambiguity;
-  it also doubles as the readout's accessible name, so the visually-hidden label the bare number
-  needed is gone. The <a href="./billing-credits.html">billing surface</a> is where both buckets are
-  itemized.
+  <strong>The label names the readout — and its wording has moved once</strong> — the product has
+  two currencies, and a bare number in the highest-traffic chrome on the site silently equalled the
+  session bucket and taught every player the wrong model, so MYT-99 labelled the readout "session
+  credits". The navbar redesign tersened the visible label to "Credits" as part of the bar's quieter
+  chrome (final wording is flagged for the end-of-frontend copy pass); the readout still tracks the
+  session bucket only, the label still leads the number and doubles as the readout's accessible
+  name, and the <a href="./billing-credits.html">billing surface</a> is where both buckets are
+  itemized and explained.
 </aside>
 
 <aside class="wiki-rationale">
   <strong>The credits slot degrades alone</strong> — a slow or failed balance fetch must never tear
   down the whole authed shell through the router error boundary. So the slot loads behind a small
-  spinner and renders nothing on failure; the buy affordance beside it sits <em>outside</em> that
-  boundary, so a player can still act even if the number didn't load. Both it and the settings gear
-  route to the real <a href="./billing-credits.html">Sessions &amp; Billing</a> surface at
-  <code>/settings</code>. The card's click target is <code>/campaigns/:id</code> — the phase-aware
+  spinner and renders nothing on failure; the "Add credits" action beside it (an item of the header
+  menu on phones) sits <em>outside</em> that boundary, so a player can still act even if the number
+  didn't load. Both it and the header menu's Sessions &amp; billing entry route to the real
+  <a href="./billing-credits.html">billing surface</a> at <code>/billing</code>. The card's click
+  target is <code>/campaigns/:id</code> — the phase-aware
   <a href="./world-gen-experience.html">world-generation experience</a>, which shows the live
   generation graph while a world is still building and the settled reveal once it's done.
 </aside>

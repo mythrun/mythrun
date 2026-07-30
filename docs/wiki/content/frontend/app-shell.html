@@ -18,7 +18,8 @@
 <!-- source: frontend/src/routes/landing.tsx -->
 <!-- source: frontend/src/platform/web/oauth-state-store.ts -->
 <!-- source: frontend/src/platform/web/navigation.ts -->
-<!-- source-hash: sha256:47dfccbf6927104bb64ee19f18238f61dea693ce392f6e5b253f1fe69ce31b02 -->
+<!-- source: frontend/src/platform/web/use-scroll-elevation.ts -->
+<!-- source-hash: sha256:046cbf8f980ed115a3b3e555e3c7e4a012f0d4226b79a2dd0c373bab9e72ad45 -->
 <!-- last-ticket: MYT-102 -->
 
 <h1>App shell &amp; data layer</h1>
@@ -451,8 +452,8 @@
   memory router) with two branches under one error boundary. The <strong>public</strong> branch
   resolves pre-auth — landing, the auth screens, the invite-join link. The
   <strong>authed</strong> branch sits behind <code>&lt;RequireAuth&gt;</code> and renders inside the
-  <strong>quiet brand frame</strong>: a minimal Parchment-&amp;-Ink header (wordmark · display name
-  · credit balance · a buy action · a gear settings affordance) over the content
+  <strong>quiet brand frame</strong>: a sticky Parchment-&amp;-Ink bar (the brand lockup · the
+  credit readout · a labelled buy action · one header menu) over the content
   <code>&lt;Outlet/&gt;</code>, composed from <a href="./design-system.html">mythrunUI</a> only. The
   frame recedes so the narrative/combat content is the focus. The public auth screens — sign-in, callback, onboard — are
   now wired end-to-end (the <a href="#oauth-flow">OAuth flow</a> above); the remaining player-facing
@@ -464,7 +465,8 @@
   (MYT-86), the first public-branch screen built out from a stub. The play/invite/billing wave then
   filled most of the rest: the <a href="./live-play.html">live play</a> screen and its full-bleed
   variant of the frame, the public <a href="./invites-party.html">join</a> route on the public branch,
-  and the <a href="./billing-credits.html">Sessions &amp; Billing</a> settings screen and
+  and the <a href="./billing-credits.html">Sessions &amp; billing</a> surface (now at
+  <code>/billing</code>; the original <code>/settings</code> path survives as a redirect) and
   checkout-return routes — and it made the header's credit balance a real quick-buy into that billing
   surface rather than an interim stub. The <a href="./live-play.html">session recap</a> then moved
   from the public branch into the authed one: the read it renders is membership-gated, so it belongs
@@ -472,65 +474,97 @@
   read.
 </p>
 
-<h3>The header, and what each slot owes</h3>
+<h3>The header — a sticky fluid bar with one menu</h3>
 
 <p>
-  The header carries five things and each earns its place. The <strong>wordmark</strong> is the brand
-  anchor at roughly half the bar's height — and it is the home link on every surface, the universal
-  "click the logo to get home" affordance the play screen was a dead end without. It is an
-  <code>unstyled</code> Link so the lockup stays in ink rather than taking the link accent, and a
-  plain navigation with no confirm, because leaving mid-session destroys nothing (sessions persist
-  server-side). The <strong>display name</strong> is the player's real name read from
-  <code>/me</code>, not a copy key. The <strong>credit readout</strong> is labelled (see
-  <a href="./billing-credits.html">billing</a>). The <strong>buy</strong> action carries a word rather
-  than a glyph. The <strong>settings</strong> gear is icon-only. The bar's bottom edge is a single
-  quiet <code>Divider</code> hairline rather than a four-sided border box — that box read as a stark
-  white line against the dark page.
+  The bar is built on the design system's <a href="./design-system.html">StickyBar</a> primitive,
+  which owns every scroll-visual mechanic — sticky positioning, the fluid clamp-sized bar metrics,
+  the elevation hairline, the brand compaction — so <code>AppFrame</code> itself is pure
+  composition. The <strong>brand slot</strong> carries the <code>HorizontalLockup</code> in its
+  fluid mode, filling the bar's clamp-sized height, wrapped in the universal home link (the play
+  screen was a nav dead end without one). It is an <code>unstyled</code> Link so the lockup stays in
+  ink, and a plain navigation with no confirm, because leaving mid-session destroys nothing
+  (sessions persist server-side). Beside it sit two arrangements of the same content, CSS-switched
+  by <code>Show</code> at the <code>sm</code> step: the <strong>desktop cluster</strong> — the
+  credit readout, a labelled <strong>Add credits</strong> action, and the player's display name as
+  the trigger of the header menu — and the <strong>mobile cluster</strong> — the credit readout and
+  a labelled hamburger trigger for the same menu. The settings gear is gone: Sessions &amp; billing
+  lives inside the menu, behind the name.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>The name is data, so it comes from the API — the key was printing itself</strong> — the
-  display name had been an i18n key holding an interpolation token, rendered with no values supplied,
-  so the header printed the literal token in caps to every signed-in player. A name is not copy; it is
-  a read. The slot now calls <code>useMe()</code> directly — which means it must not be able to take
-  the frame down with it.
+  <strong>The elevation sentinel sits at the <em>top</em> of the document, not under the
+  bar</strong> — the bar starts flush with the page (border transparent) and gains its hairline only
+  once content actually scrolls beneath it. The signal is a 1px absolutely-positioned sentinel at
+  the top of the document watched by <code>useScrollElevation</code> (an
+  <code>IntersectionObserver</code> hook under <code>platform/web</code> — a web API, so it stays
+  out of the DOM-free brain). A sentinel placed <em>below</em> a sticky bar slides underneath it as
+  you scroll, and IntersectionObserver does not model occlusion — it would fire a full bar-height
+  late. Top-of-document placement fires within a pixel of the first scroll and is decoupled from the
+  fluid bar height. The swap is <strong>paint-only</strong>: the border is always mounted
+  (transparent at rest), so the hairline's arrival shifts no layout, and the brand slot compacts by
+  a transform (scale 0.82 from <code>sm</code> up) rather than a reflow — zero cumulative layout
+  shift mid-scroll, transitions dropped under <code>prefers-reduced-motion</code>. On the full-bleed
+  <a href="./live-play.html">play</a> stage the bar never elevates at all: the stage below owns
+  exactly one viewport, so nothing ever scrolls beneath the bar.
+</aside>
+
+<p>
+  The menu is <strong>one parameterized component</strong>, <code>HeaderMenu</code>, rendered once
+  per arrangement so the two can never drift. On desktop the trigger is the display name itself — a
+  ghost Button with a trailing chevron, whose visible text <em>is</em> its accessible name (no
+  <code>aria-label</code> override, so voice-control users say what they see) — opening a short
+  list: Sessions &amp; billing, Log out. On mobile the trigger is a labelled hamburger and the list
+  is the full set: the player's identity as a <em>header row</em>, then Campaigns, Add credits,
+  Sessions &amp; billing, Log out. The identity row rides the design system's Menu header-row entry
+  (a Radix label — visible text that is never a menuitem), not a disabled item, which a screen
+  reader would announce as dimmed and unavailable. Both clusters are mounted simultaneously and
+  CSS-switched, so each menu instance closes itself when the viewport crosses the breakpoint —
+  <code>Show</code> hides with <code>display:none</code>, which does nothing to a portal, and an
+  open menu would otherwise strand floating over the other arrangement.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Identity became a value, not a slot</strong> — the old display-name slot rendered a row
+  inside a shared <code>HeaderSlot</code> (Suspense + local error boundary). With the name now
+  living <em>on</em> the menu trigger, the frame needs a string, not a rendered row, so
+  <code>useHeaderDisplayName</code> reads the same <code>['me']</code> cache through a
+  <strong>non-suspense</strong> query and restates the boundary semantics as a value:
+  <code>null</code> while the fetch is in flight <em>and</em> after a failure. <code>HeaderMenu</code>
+  maps <code>null</code> to the labelled icon trigger on both arrangements — so the menu, and with
+  it <strong>Log out</strong>, stays reachable during every cold <code>/me</code> fetch and when
+  <code>/me</code> breaks, instead of a broken identity read throwing into the route error boundary.
+  The credit readout still rides <code>HeaderSlot</code>: the frame itself never suspends, and a
+  failed balance fetch degrades only that slot.
 </aside>
 
 <aside class="wiki-rationale">
-  <strong>One <code>HeaderSlot</code> for both suspense-reading slots</strong> — the frame is always
-  present and now reads two suspense queries inside it, so each sits in a shared slot owning a
-  <code>&lt;Suspense&gt;</code> and a local error boundary: the frame itself never suspends, and a
-  failed fetch drops that one slot to nothing instead of throwing up to the router boundary and
-  tearing down the route. The wrapper renders no DOM element of its own, so a slot stays a direct flex
-  child of the header row and keeps its shrink and truncation behaviour. It was extracted from the
-  original credits boundary rather than duplicated — and it doubles as what keeps the frame renderable
-  in harnesses that omit the API provider.
+  <strong>Logout hard-navigates on success and stays put on failure</strong> — a successful logout
+  leaves by full page navigation to the landing page, not a router transition: the access token is a
+  module-scoped variable and the React-Query cache holds authed reads, and both must die with the
+  document. A <em>failed</em> logout does the opposite — it toasts and stays exactly where it is,
+  because navigating with a live refresh cookie would resurrect the session through the landing
+  page's on-load refresh probe. That toast is also why <code>ToastProvider</code> now mounts in the
+  provider stack: the imperative <code>toast()</code> API is a silent no-op with no provider
+  mounted, which is precisely the wrong failure mode for the one message that says "you are still
+  signed in."
 </aside>
 
 <aside class="wiki-rationale">
   <strong>The buy action is a labelled word, and it stands down twice</strong> — a lone "+" reads as
-  "new" and collided with create-a-campaign, so the top-up control carries its label and no leading
-  glyph: topping up is not creating an object, and the plus is reserved for campaign creation. It
-  hides below the <code>sm</code> step, where the labelled balance and the gear already fill the row
-  and the gear <em>is</em> the billing entry — the considered arrangement, not a squeeze, and with the
-  button gone there is no header "+" on phones at all. It also stands down entirely on the full-bleed
-  <a href="./live-play.html">play</a> stage: the balance readout stays, but the purchase action
-  retreats behind the gear rather than hawking concessions during the overture. The display name
-  likewise collapses below <code>sm</code>, giving the wordmark, balance, and actions room instead of
-  squeezing a name down to a two-letter stub.
-</aside>
-
-<aside class="wiki-rationale">
-  <strong>The header stays one quiet row at phone width</strong> — MYT-83's mobile audit deferred a
-  real bug: at 375px the header overflowed sideways and shoved the settings affordance off-screen,
-  because the layout had no shrink/wrap/truncate to fall back on. MYT-97 fixed it without breaking
-  the brand's single-row frame. The display name is the only flexible item — it
-  <code>truncate</code>s and absorbs the row's shrink; the wordmark and credit balance are
-  <code>noShrink</code> so they hold their width instead of squeezing into a spill; and the settings
-  affordance became an icon-only gear <code>IconButton</code> (<code>shrink-0</code>) so a long
-  display name can never push a text label past the edge. Every piece is a
-  <a href="./design-system.html#responsive-by-construction">responsive mythrunUI primitive</a>, so
-  the fix lives in the design system, not in raw CSS on the frame.
+  "new" and collided with create-a-campaign, so the top-up control carries its label ("Add
+  credits") and no leading glyph: the plus stays reserved for campaign creation. Below
+  <code>sm</code> the button folds into the menu as an item, so the bar stays a two-item row at
+  375px instead of overflowing — the class of bug the original frame shipped with (MYT-83) and
+  MYT-97 first fixed. And on the full-bleed <a href="./live-play.html">play</a> stage the button
+  stands down entirely — the balance readout stays, but the purchase action retreats into the menu
+  rather than hawking concessions during the overture. Wherever it lives, it deep-links to the
+  <a href="./billing-credits.html">billing surface</a>'s buy section (<code>/billing#buy</code>).
+  The row's phone-width discipline carries over from MYT-97 in new clothes: the display name is
+  still the only flexible item — the menu-trigger Button <code>truncate</code>s it — while the
+  lockup and the credit readout hold their width, and its typography is the design system's new
+  <code>chrome</code>/<code>chrome-strong</code> roles, the credit number being the bar's only
+  accent.
 </aside>
 
 <aside class="wiki-rationale">
@@ -606,7 +640,9 @@
   The <strong>provider stack</strong> is the web shell's one composition root: the
   <code>ThemeProvider</code>, a single <code>QueryClient</code>, the resolved
   <code>ApiContext</code> (base URL + the injected <code>getAuthHeaders</code>), and the i18n
-  runtime, in that nesting order. An effect inside it re-binds the token manager's refresh transport
+  runtime, in that nesting order — plus the app-global <code>ToastProvider</code> leaf beside the
+  children (mounted once at the root per the Toast contract; the header menu's logout-failure toast
+  was a silent no-op before it existed). An effect inside it re-binds the token manager's refresh transport
   to the resolved <code>ApiContext</code> whenever that context changes — the steady-state 401-retry
   path reaches <code>configureTokenRefresh</code> through here.
 </p>
@@ -712,6 +748,20 @@
   too-long name through the same seam, reproducing the original overflow and proving the gate would
   have caught it.
 </aside>
+
+<p>
+  The navbar redesign grew the frame its own <strong>story matrix</strong> on the same harness: the
+  bar at rest and elevated, the menus open in both themes (the dark arms are what exercise the
+  raised-tier keyboard highlight), the mobile arrangement, the full-bleed stand-down, and the
+  adversarial pair — a 70-character display name and a five-digit balance at 375px. Two seams make
+  the matrix drivable under CI. The harness accepts a <code>routesOverride</code>, so a story can
+  mount a story-configured layout element the real tree never renders —
+  <code>&lt;AppFrame forceElevated&gt;</code>, the stories/tests-only elevation pin, because a
+  Storybook story cannot scroll deterministically under the gate's double-resize sweep. And the
+  frame stories dropped the screen-story a11y exemption: the assembled bar now runs the axe pass,
+  its open-menu specimens carrying only the documented <code>aria-hidden-focus</code> carve-out
+  behind the fail-loud <code>openSelector</code> gate.
+</p>
 
 <h2 id="talking-to-the-api">Talking to the API</h2>
 
@@ -961,5 +1011,6 @@
   <code>frontend/src/routes/signin.tsx</code>, <code>frontend/src/routes/callback.tsx</code>,
   <code>frontend/src/routes/onboard.tsx</code>, <code>frontend/src/routes/landing.tsx</code>,
   <code>frontend/src/platform/web/oauth-state-store.ts</code>,
-  <code>frontend/src/platform/web/navigation.ts</code>.
+  <code>frontend/src/platform/web/navigation.ts</code>,
+  <code>frontend/src/platform/web/use-scroll-elevation.ts</code>.
 </p>

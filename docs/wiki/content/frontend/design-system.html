@@ -21,7 +21,7 @@
 <!-- source: frontend/.storybook/test-runner.ts -->
 <!-- source: frontend/eslint.config.js -->
 <!-- source: .github/workflows/frontend-check.yml -->
-<!-- source-hash: sha256:718ba0f82bb39c300de2f175e760d38fa9413da3e0c6057d2cd8dab2f8deac2b -->
+<!-- source-hash: sha256:12d2a3d74a1692d7e0e95fbe9bceb6e9b2a703f42898e4669e29018ab9065944 -->
 <!-- last-ticket: MYT-100 -->
 
 <h1>Design system</h1>
@@ -305,10 +305,11 @@
 
 <aside class="wiki-rationale">
   <strong>"Copied verbatim from the set" has to be true, not claimed</strong> — the app-frame's
-  settings gear carried a comment naming its provenance in the icon set while its actual path data had
-  been hand-rolled: a four-path shape that matched nothing in the set and read as scattered teeth at
-  header sizes. It is now the authentic glyph, copied from the licensed Pixelarticons Pro set (a
-  superset of the MIT base on the same 24-unit grid), with the source file named. The rule the set
+  settings gear (since retired outright: the navbar redesign's header menu replaced the gear) carried
+  a comment naming its provenance in the icon set while its actual path data had been hand-rolled: a
+  four-path shape that matched nothing in the set and read as scattered teeth at header sizes. It was
+  replaced with the authentic glyph, copied from the licensed Pixelarticons Pro set (a superset of
+  the MIT base on the same 24-unit grid), with the source file named. The rule the set
   exists to enforce is that a glyph is <em>taken</em>, never drawn by hand — a claim in a comment is
   not the enforcement, and the one place the codebase has a genuinely hand-authored mark
   (<a href="./live-play.html">DieSpin</a>) says so explicitly and says why.
@@ -429,8 +430,12 @@
   </li>
   <li>
     <strong>Typography</strong> — <code>Text</code> (roles now include <code>subtitle</code>, the
-    italic muted narrative sub-line, and <code>meta</code>, the mono ledger line the hub reads a
-    campaign's state into), <code>Heading</code>, <code>Link</code> (router-aware, i18n, plus an
+    italic muted narrative sub-line; <code>meta</code>, the mono ledger line the hub reads a
+    campaign's state into; and the navbar redesign's <code>chrome</code> /
+    <code>chrome-strong</code> pair — the frame bar's one utility size, 14px mono with a hairline
+    tracking: <code>chrome</code> stays weight- and colour-ambient, <code>chrome-strong</code> is
+    the credit number — semibold, tabular numerals, accent tone, the bar's only accent, so "accent"
+    keeps meaning the number that is yours), <code>Heading</code>, <code>Link</code> (router-aware, i18n, plus an
     <code>unstyled</code> variant that drops the accent tint from its subtree while keeping the
     focus ring — a whole-card or whole-row link that shouldn't paint its contents link-accent),
     <code>VisuallyHidden</code>, and <code>HatchLine</code> — a flow's escape-hatch line: a quiet mono
@@ -460,7 +465,10 @@
     carries <code>busy</code> (with an optional label swap, so a working control never goes
     label-less and its width holds) and <code>flush="start"</code>, a negative inline-start margin
     exactly equal to the size's padding so a ghost control's visible edge seats on the content grid
-    while its hit area keeps its full padding.
+    while its hit area keeps its full padding. The navbar redesign added the mirror of the leading
+    icon slot — <code>iconTrailing</code>, after the label at the same gap, aria-hidden (the frame
+    menu trigger's chevron) — and a <code>truncate</code> flag that caps an unbounded-data label (a
+    display name) at a single ellipsized line, so data on a button can never stretch the bar.
   </li>
   <li>
     <strong>Forms</strong> — <code>FormField</code> (label + helper + error + required/invalid) and
@@ -478,7 +486,17 @@
     tile sharing that footprint so it sits as a peer cell in a grid of covers, presentational like
     <code>CoverCard</code> so the consumer wraps it in the sanctioned navigable Link),
     <code>Modal</code>, <code>Popover</code>,
-    <code>Tooltip</code>, <code>Tabs</code>, <code>Menu</code>.
+    <code>Tooltip</code>, <code>Tabs</code>, <code>Menu</code> — whose rows, since the navbar
+    redesign, are a union of actionable items and non-interactive <em>header rows</em> (a Radix
+    label: visible text that is never a menuitem and never announced disabled — the frame menu's
+    identity line), its content capped at a 20rem-or-available width with span-wrapped truncating
+    labels (a flex container never ellipsizes itself) and a 44px item floor on coarse pointers —
+    and <code>StickyBar</code>, the frame's scroll-visual bar primitive: sticky under the overlay
+    layers, fluid clamp-sized metrics (a 30–56px brand slot, breathing padding), and a
+    <strong>zero-CLS elevation</strong> contract — <code>elevated</code> changes paint only, an
+    always-mounted border swapping transparent → <code>--border</code> and the brand slot
+    transform-scaling down, never the layout box, with transitions dropped under
+    <code>prefers-reduced-motion</code>; a class-set-difference test pins the paint-only invariant.
   </li>
   <li>
     <strong>Feedback</strong> — <code>Banner</code> (inline, persistent),
@@ -499,7 +517,11 @@
     <code>ink</code>/<code>ember</code> tone), <code>Wordmark</code> (the Tyma Garamont logotype),
     <code>Lockup</code> (primary / stacked) and <code>HorizontalLockup</code> (secondary). Each
     takes a neutral <code>size</code> + a required <code>aria-label</code> and paints in monochrome
-    <code>currentColor</code>, so it flips ink↔cream with the theme. The provider marks
+    <code>currentColor</code>, so it flips ink↔cream with the theme.
+    <code>HorizontalLockup</code>'s size also accepts <code>'fluid'</code> (navbar redesign): it
+    renders no fixed dimensions — full-height, auto width, the viewBox preserving the locked
+    lockup aspect — so a bar whose height is a CSS <code>clamp()</code> can govern the mark instead
+    of the mark dictating a step. The provider marks
     <code>GoogleMark</code> + <code>DiscordMark</code> are kept apart in
     <code>src/brand-marks/</code> (not <code>src/components/</code>) and ride the
     <code>Button</code> icon slot on the
@@ -526,6 +548,16 @@
   respects <code>prefers-reduced-motion</code>, and an imperative <code>toast()</code> API callable
   from anywhere. <code>toast()</code> is the one runtime value the library exports that isn't a
   component — it ships from <code>@mythrun/ui</code>, not the type-only contract barrel.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>The raised tier needed its own hover token</strong> — in the dark theme
+  <code>--surface-hover</code> and <code>--surface-raised</code> resolve to the same paper step, so
+  a keyboard-highlighted item inside a raised popover (a menu, a select) was invisible: the
+  highlight matched the panel. The navbar redesign's menu work added
+  <code>--surface-raised-hover</code> — light parchment keeps the ordinary hover step, dark diverges
+  one step lighter — so item highlight on the raised tier always reads. It exists as a separate
+  token precisely because the two themes must disagree.
 </aside>
 
 <p>
@@ -855,10 +887,11 @@
   and an accessible name. MYT-97 added a second surface: standing up the Storybook test-runner
   activated the <code>@storybook/addon-a11y</code> axe pass as <code>error</code> on every component
   story, so an accessibility violation in a real-Chromium render now fails CI too (the addon stopped
-  being merely a dev-time aid). The app-shell screen stories set a11y to <code>off</code> — their
-  accessibility belongs to the flow tickets that build them — and the few Radix overlay specimens
-  carry a documented per-story carve-out for one known <code>aria-hidden-focus</code>
-  false-positive.
+  being merely a dev-time aid). Most app-shell screen stories set a11y to <code>off</code> — their
+  accessibility belongs to the flow tickets that build them — though the frame's own story matrix
+  dropped that exemption with the navbar redesign and runs the axe pass on the assembled bar. The
+  few Radix overlay specimens (the frame's open-menu stories among them) carry a documented
+  per-story carve-out for one known <code>aria-hidden-focus</code> false-positive.
 </p>
 
 <h3 id="no-hardcoded-copy-the-text-rail">No hardcoded copy — the text rail</h3>
