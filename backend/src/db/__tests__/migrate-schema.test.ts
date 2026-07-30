@@ -44,6 +44,7 @@ const EXPECTED_TABLES = [
   'entity_hierarchy',
   'facts',
   'ledger_events',
+  'llm_resume_stamps',
   'moderation_flags',
   'pipeline_runs',
   'prose_kernels',
@@ -297,6 +298,16 @@ const EXPECTED_CHECK_CONSTRAINTS: readonly {
   {
     table_name: 'facts',
     check_clause: `CHECK ((narrative_status = ANY (ARRAY['undelivered'::text, 'delivered'::text, 'developed'::text, 'resolved'::text])))`,
+  },
+  {
+    // Migration 038: parked-run resume stamps (llm-outage-resilience §3.1).
+    // conname order: …_last_error_class_check < …_pipeline_check.
+    table_name: 'llm_resume_stamps',
+    check_clause: `CHECK ((last_error_class = ANY (ARRAY['connectivity'::text, 'rate-limit'::text])))`,
+  },
+  {
+    table_name: 'llm_resume_stamps',
+    check_clause: `CHECK ((pipeline = ANY (ARRAY['world_gen'::text, 'session_prep'::text, 'character_creation'::text])))`,
   },
   {
     table_name: 'moderation_flags',
@@ -869,6 +880,7 @@ describe('schema-parity (integration)', () => {
       '035_session_opening_trigger_kind.sql',
       '036_campaign_invite_primary.sql',
       '037_tripwire_verdicts.sql',
+      '038_llm_resume_stamps.sql',
     ])
 
     const tables = await pool.query<{ table_name: string }>(

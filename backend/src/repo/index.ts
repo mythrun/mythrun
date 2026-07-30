@@ -25,6 +25,7 @@ import { userSubscriptionsNs } from './user-subscriptions.js'
 import { stripeEventsNs } from './stripe-events.js'
 import { billingHistoryNs } from './billing-history.js'
 import { pipelineRunsNs } from './pipeline-runs.js'
+import { resumeStampsNs } from './resume-stamps.js'
 import { randomTablesNs } from './random-tables.js'
 import { srdNs } from './srd.js'
 import { settingsNs } from './settings.js'
@@ -87,6 +88,10 @@ function bindTx(c: ClientLike) {
     stripeEvents: stripeEventsNs(c),
     billingHistory: billingHistoryNs(c),
     pipelineRuns: pipelineRunsNs(c),
+    // llm-outage-resilience §3.1: parked-run resume stamps (ladder + budget
+    // accounting). Single-statement methods; processors bind pool-side so park
+    // bookkeeping survives a stage-tx rollback (same rationale as claimStage).
+    resumeStamps: resumeStampsNs(c),
     randomTables: randomTablesNs(c),
     // myth-5nb: SRD reference data (srd_monsters / srd_spells / srd_conditions).
     // READS ONLY — the write primitive is deferred to the SRD content loader,
