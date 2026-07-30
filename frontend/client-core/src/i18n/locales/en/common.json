@@ -534,8 +534,13 @@
   },
   "frame": {
     "buyCredits": "Add credits",
-    "credits": "Session credits",
+    "campaigns": "Campaigns",
+    "credits": "Credits",
     "creditsLoading": "Loading balance",
+    "logout": "Log out",
+    "logoutFailed": "Couldn't log out. Try again.",
+    "menu": "Menu",
+    "sessionsBilling": "Sessions & billing",
     "settings": "Settings",
     "wordmark": "Mythrun"
   },

@@ -11,9 +11,14 @@
 // same key set — every key documented, no orphans.
 export const descriptions: Record<string, string> = {
   back: 'Back-navigation affordance label. A real shipped string (generic chrome), not a placeholder.',
-  'frame.credits': 'Visible label leading the live SESSION-credit number in the header (reads "Session credits 1,250"). Specific ("Session credits", not a bare "Credits") because the product has two currencies — a lone "Credits N" taught the wrong model. Sentence case, ~2 words.',
+  'frame.credits': 'Visible label leading the live SESSION-credit number in the header (reads "Credits 1,250"). The navbar redesign shortens it to a bare "Credits" — the number now carries the emphasis via the chrome-strong type role, and the two-currency disambiguation lives on the billing surface (billing.sessionLabel "Session credits"). Sentence case, ~1 word.',
   'frame.creditsLoading': 'Accessible label on the small Spinner shown in the header credits slot while the balance loads. Short (~1-2 words).',
-  'frame.buyCredits': 'Label for the buy-credits action beside the header balance — VISIBLE text on the "+ Add credits" button (from sm up) and the accessible name of the same action. A short verb phrase, e.g. "Add credits".',
+  'frame.buyCredits': 'Label for the buy-credits action beside the header balance — VISIBLE text on the "+ Add credits" button (from sm up) and the accessible name of the same action. Also the "Add credits" item in the mobile frame menu (routes to /billing#buy). A short verb phrase, e.g. "Add credits".',
+  'frame.campaigns': 'Menu item in the mobile frame menu navigating to the campaign hub (/home). Visible item text, ~1 word, e.g. "Campaigns".',
+  'frame.logout': 'The log-out item in the frame menu (both arrangements — the last item). Visible item text, a short verb phrase, e.g. "Log out".',
+  'frame.logoutFailed': 'Danger-toast title when the logout call fails; the player stays put (no navigation — a live refresh cookie would resurrect the session). ~1 short sentence + a retry nudge.',
+  'frame.menu': 'Accessible name (aria-label) of the frame-menu icon trigger: the mobile hamburger, and the desktop fallback while the display name is loading or failed. ~1 word, e.g. "Menu".',
+  'frame.sessionsBilling': 'Menu item in the frame menu (both arrangements) navigating to the Sessions & billing surface (/billing). Matches that page\'s billing.sectionTitle register. ~2-3 words.',
   'frame.settings': 'Accessible name for the gear settings IconButton in the header (aria-label, not visible text). A short verb/noun, e.g. "Settings".',
   'frame.wordmark': 'Accessible name for the brand mark (HorizontalLockup) in the persistent app-frame header (aria-label, not visible text) — the frame twin of landing.wordmark/signin.wordmark. The brand identity, ~1 word.',
   'splash.loading': 'Accessible loading label on the boot splash shown while the on-load session refresh settles. Short (~2-4 words).',
