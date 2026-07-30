@@ -19,6 +19,23 @@ export interface MenuItem {
 }
 
 /**
+ * A non-interactive header row (e.g. the identity line atop the mobile frame
+ * menu). Rendered as a Radix `DropdownMenu.Label`: visible text, NOT a
+ * menuitem — never keyboard-highlighted, never announced as disabled (a
+ * `disabled` MenuItem is the WRONG tool for a header: screen readers announce
+ * it as dimmed/unavailable).
+ */
+export interface MenuHeaderRow {
+  /** Discriminant. */
+  header: true
+  /** Row display text — an i18n key the consumer resolves. */
+  label: string
+}
+
+/** One row of a menu: an actionable item or a non-interactive header. */
+export type MenuEntry = MenuItem | MenuHeaderRow
+
+/**
  * Dropdown menu. The web impl wraps the unstyled Radix `DropdownMenu` primitive
  * (open on Enter/Space/ArrowDown, roving ArrowKey navigation across items, Enter to
  * select, `Esc`-to-close with focus-RETURN to the trigger, a portalled content
@@ -37,8 +54,11 @@ export interface MenuProps extends BaseProps {
    * Rendered through Radix `DropdownMenu.Trigger`; focus returns here on close. REQUIRED.
    */
   trigger: ReactNode
-  /** The menu items. Each `label` is an i18n key; `value` is the stable action id. */
-  items: readonly MenuItem[]
+  /**
+   * The menu rows: actionable items (each `label` an i18n key; `value` the
+   * stable action id) and/or non-interactive {@link MenuHeaderRow header rows}.
+   */
+  items: readonly MenuEntry[]
   /** Neutral selection callback — receives the chosen item's `value`, not a DOM event (§9). */
   onSelect?: (value: string) => void
   /** Controlled open state. When supplied the menu open-state is controlled (pair with `onOpenChange`). */

@@ -110,6 +110,64 @@ describe('Menu', () => {
     expect(panel.className).toContain('z-[var(--z-dropdown)]')
   })
 
+  it('renders a header row as a non-interactive label, not a menuitem (spec: identity header)', async () => {
+    const user = userEvent.setup()
+    render(
+      <Menu
+        trigger={<button>open</button>}
+        items={[
+          { header: true, label: 'Idrisa the Bold' },
+          { value: 'logout', label: 'Log out' },
+        ]}
+        data-testid="menu-content"
+      />,
+    )
+    await user.click(screen.getByText('open'))
+    // The header is visible text but NOT a menuitem…
+    expect(screen.getByText('Idrisa the Bold')).toBeInTheDocument()
+    expect(screen.getAllByRole('menuitem')).toHaveLength(1)
+    // …and is not keyboard-highlightable: ArrowDown from open lands on Log out.
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getByRole('menuitem', { name: 'Log out' })).toHaveAttribute('data-highlighted')
+  })
+
+  it('caps content width and truncates long labels (spec: portal overflow is gate-invisible)', async () => {
+    const user = userEvent.setup()
+    const longHeader = 'H'.repeat(120)
+    const longItem = 'I'.repeat(120)
+    render(
+      <Menu
+        trigger={<button>open</button>}
+        items={[
+          { header: true, label: longHeader },
+          { value: 'a', label: longItem },
+        ]}
+        data-testid="menu-content"
+      />,
+    )
+    await user.click(screen.getByText('open'))
+    expect(screen.getByTestId('menu-content').className).toContain('max-w-')
+    // The ellipsis must live on a block-level label SPAN, not the flex row:
+    // text-overflow only applies to block containers, so `truncate` on the flex
+    // row hard-clips mid-glyph with no '…'. Pin both row types: the label span
+    // carries truncate + min-w-0, the row container carries no truncate.
+    for (const long of [longHeader, longItem]) {
+      const label = screen.getByText(long)
+      expect(label.className).toContain('truncate')
+      expect(label.className).toContain('min-w-0')
+      expect(label.parentElement).not.toBeNull()
+      expect(label.parentElement?.className).not.toContain('truncate')
+    }
+  })
+
+  it('highlights items with the raised-tier hover token (dark-theme visibility fix)', async () => {
+    const user = userEvent.setup()
+    render(<Menu trigger={<button>open</button>} items={[{ value: 'a', label: 'A' }]} />)
+    await user.click(screen.getByText('open'))
+    expect(screen.getByRole('menuitem').className).toContain('bg-surface-raised-hover')
+    expect(screen.getByRole('menuitem').className).not.toContain('data-[highlighted]:bg-surface-hover')
+  })
+
   it('has no axe violations when open', async () => {
     const user = userEvent.setup()
     render(<Menu trigger={trigger} items={ITEMS} />)

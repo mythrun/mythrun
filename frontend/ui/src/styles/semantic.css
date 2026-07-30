@@ -51,6 +51,12 @@
   --surface-hover: var(--color-paper-200);
   --surface-active: var(--color-paper-300);   /* token-swap pressed (one step past hover) */
 
+  /* Item highlight on the RAISED tier (menu/select popovers). Light parchment
+     keeps the same step as --surface-hover (paper-200 is visible against the
+     raised paper-50 panel); it exists as a separate token because dark mode
+     must diverge (see .dark). */
+  --surface-raised-hover: var(--color-paper-200);
+
   /* Elevation tiers. Light parchment has no step lighter than paper-50, so the
      raised/overlay tiers sit at paper-50 and elevation is carried by
      --border-strong + the modal scrim (flat-1-bit: depth via borders, not
@@ -140,6 +146,11 @@
   --surface-hover: var(--color-paper-700);
   --surface-active: var(--color-paper-600);   /* token-swap pressed (one step past hover) */
 
+  /* Raised-tier item highlight: dark --surface-hover (paper-700) COLLIDES with
+     --surface-raised (also paper-700), making menu/select item highlights
+     invisible inside a raised popover. One step lighter keeps a visible step. */
+  --surface-raised-hover: var(--color-paper-600);
+
   /* World-gen terrain quads (myth-y7yki): paper-400 (the reference fog hue) at
      TERRAIN_ALPHA over bg(paper-900) blends to ~4.6:1 — see the light block. */
   --worldgen-terrain: var(--color-paper-400);
@@ -196,6 +207,7 @@
   --color-surface-hover: var(--surface-hover);
   --color-surface-active: var(--surface-active);
   --color-surface-raised: var(--surface-raised);
+  --color-surface-raised-hover: var(--surface-raised-hover);
   --color-surface-overlay: var(--surface-overlay);
   --color-scrim: var(--scrim);
   --color-success: var(--success);

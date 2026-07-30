@@ -75,3 +75,42 @@ export const Open: Story = {
     await userEvent.click(within(canvasElement).getByRole('button'))
   },
 }
+
+// With a header row — a non-interactive identity line atop the item list (the
+// mobile frame menu's "signed in as" row). Rendered as a Radix Label: visible
+// text, not a menuitem, never keyboard-highlighted. Same open-specimen
+// parameters as `Open` (overflow gate on the portal; the documented
+// `aria-hidden-focus` carve-out).
+export const WithHeaderRow: Story = {
+  args: {
+    items: [
+      { header: true, label: 'menu.identity' },
+      { value: 'settings', label: 'menu.settings' },
+      { value: 'logout', label: 'menu.logout' },
+    ],
+  },
+  parameters: {
+    overflowGate: { openSelector: '[role="menu"]' },
+    a11y: { config: { rules: [{ id: 'aria-hidden-focus', enabled: false }] } },
+  },
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByRole('button'))
+  },
+}
+
+// Dark theme, open, with the first item keyboard-highlighted — the specimen for
+// the raised-tier highlight token: dark `--surface-hover` (paper-700) equals the
+// raised popover surface, so items highlight via `--surface-raised-hover`
+// (paper-600) to stay visible. Story-level `globals` locks the theme toolbar to
+// dark (the preview decorator reads `globals.theme`).
+export const DarkOpenHighlight: Story = {
+  globals: { theme: 'dark' },
+  parameters: {
+    overflowGate: { openSelector: '[role="menu"]' },
+    a11y: { config: { rules: [{ id: 'aria-hidden-focus', enabled: false }] } },
+  },
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByRole('button'))
+    await userEvent.keyboard('{ArrowDown}')
+  },
+}
