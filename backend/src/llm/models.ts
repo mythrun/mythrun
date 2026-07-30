@@ -1,7 +1,18 @@
 import { wrapLanguageModel } from 'ai'
-import { anthropic } from '@ai-sdk/anthropic'
+import { createAnthropic } from '@ai-sdk/anthropic'
 import { logAndNormalizeMiddleware } from './middleware.js'
 import { costAccountingMiddleware } from './cost-middleware.js'
+import { providerFetch } from './llm-fetch.js'
+
+// Outage-resilience transport (design §1.1): every Anthropic request goes
+// through providerFetch, which routes to per-mode undici dispatchers
+// (streaming: 10s connect / 60s headers / 120s body; non-streaming: 300s
+// backstop) so a hung connection fails with a classifiable UND_ERR_* code
+// instead of hanging indefinitely. providerFetch already presents the SDK's
+// FetchFunction shape (`typeof globalThis.fetch`) — the pre-authorized
+// undici→global-fetch type assertion lives at the undici boundary inside
+// llm-fetch.ts, so this call site is cast-free.
+const anthropicProvider = createAnthropic({ fetch: providerFetch() })
 
 // THIS FILE IS THE PIN. CLAUDE.md names tiers (Sonnet for the FT, Opus for the
 // ST, Haiku for routing) but deliberately not versions, so these three
@@ -75,16 +86,16 @@ export const OPUS_MAX_OUTPUT_TOKENS = 128_000
  * error/logging boundary.
  */
 export const HAIKU = wrapLanguageModel({
-  model: anthropic(HAIKU_ID),
+  model: anthropicProvider(HAIKU_ID),
   middleware: [logAndNormalizeMiddleware(HAIKU_ID), costAccountingMiddleware(HAIKU_ID)],
 })
 
 export const SONNET = wrapLanguageModel({
-  model: anthropic(SONNET_ID),
+  model: anthropicProvider(SONNET_ID),
   middleware: [logAndNormalizeMiddleware(SONNET_ID), costAccountingMiddleware(SONNET_ID)],
 })
 
 export const OPUS = wrapLanguageModel({
-  model: anthropic(OPUS_ID),
+  model: anthropicProvider(OPUS_ID),
   middleware: [logAndNormalizeMiddleware(OPUS_ID), costAccountingMiddleware(OPUS_ID)],
 })
