@@ -44,6 +44,18 @@ export interface ButtonProps extends BaseProps {
    */
   icon?: ReactNode
   /**
+   * Trailing-icon slot — the mirror of `icon`, rendered AFTER the label with
+   * the same gap. For triggers whose affordance follows the label (the header
+   * menu's chevron). Decorative; the label carries the meaning.
+   */
+  iconTrailing?: ReactNode
+  /**
+   * Single-line label: no wrap, ellipsis, capped at 16rem. For labels made of
+   * unbounded user data (the header menu trigger is the display name — the
+   * default grow-taller wrapping would fold the bar). Off by default.
+   */
+  truncate?: boolean
+  /**
    * Bleed the control's own start padding (negative inline-start margin equal
    * to the size's horizontal padding) so its VISIBLE left edge — the glyph or
    * label — sits flush on the content grid. For ghost controls seated on a text

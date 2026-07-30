@@ -8,9 +8,10 @@ import { Spinner } from '../Spinner/Spinner.tsx'
 // Material): a ~18-20px icon sits before the label with an 8px gap. The size-tuned
 // `gap` in SIZE_CLASS below is calibrated for the loading SPINNER (a tighter 6px on
 // sm/md so the small spinner reads as one unit with the label); a leading ICON is
-// larger and wants the canonical 8px, so when an `icon` is present we override the
-// gap to `--space-2` (tailwind-merge lets the later class win). The whole icon+label
-// group is centered by `justify-center`, which optically centers the label.
+// larger and wants the canonical 8px, so when an `icon` (or its trailing mirror,
+// `iconTrailing`) is present we override the gap to `--space-2` (tailwind-merge lets
+// the later class win). The whole icon+label group is centered by `justify-center`,
+// which optically centers the label.
 const ICON_GAP = 'gap-[var(--space-2)]'
 
 // Text/label action button — a REAL <button> (native keyboard activation +
@@ -158,6 +159,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     onPress,
     type = 'button',
     icon,
+    iconTrailing,
+    truncate = false,
     flush,
     children,
     ...rest
@@ -180,7 +183,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       aria-busy={isBusy || undefined}
       className={cn(
         button({ variant, size }),
-        icon !== undefined && ICON_GAP,
+        (icon !== undefined || iconTrailing != null) && ICON_GAP,
         flush === 'start' && FLUSH_START_CLASS[size],
       )}
       {...rest}
@@ -198,8 +201,21 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
           ground — so it reads against the fill, never a frozen brand color. */}
       {isBusy && <Spinner size={SPINNER_SIZE[size]} tone="inherit" />}
       {/* While busy the label swaps to `busyLabel` when given ("Save" → "Saving");
-          the control never goes label-less, so its width holds. */}
-      {isBusy && busyLabel !== undefined ? busyLabel : children}
+          the control never goes label-less, so its width holds. The span exists so
+          `truncate` can cap the label to a single ellipsized line (16rem — the
+          menu-trigger cap for unbounded display names); off, it leaves the default
+          grow-taller wrapping untouched. */}
+      <span className={cn(truncate && 'truncate max-w-[16rem] whitespace-nowrap')}>
+        {isBusy && busyLabel !== undefined ? busyLabel : children}
+      </span>
+      {/* Trailing-icon slot — the mirror of the leading slot, rendered AFTER the
+          label (the header menu's chevron). Decorative; the label carries the
+          accessible name. */}
+      {iconTrailing != null && (
+        <span aria-hidden="true" className="inline-flex shrink-0 items-center">
+          {iconTrailing}
+        </span>
+      )}
     </button>
   )
 })

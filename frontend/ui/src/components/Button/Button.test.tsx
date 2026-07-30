@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createRef } from 'react'
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { axe } from 'jest-axe'
 import { Button } from './Button.tsx'
@@ -378,6 +378,29 @@ describe('Button', () => {
   it('omits the icon slot entirely when no icon is given', () => {
     const { getByRole } = render(<Button>Plain</Button>)
     expect(getByRole('button').querySelector('[aria-hidden="true"]')).toBeNull()
+  })
+
+  it('renders a trailing icon after the label', () => {
+    render(<Button iconTrailing={<span data-testid="chev" />}>Name</Button>)
+    const button = screen.getByRole('button')
+    const chev = screen.getByTestId('chev')
+    // Trailing: the icon is the LAST element child.
+    expect(button.lastElementChild).toContainElement(chev)
+  })
+
+  it('applies the canonical 8px icon gap for a trailing-only icon (mirror of the leading slot)', () => {
+    const cls = render(<Button iconTrailing={<svg />}>Go</Button>)
+      .getByRole('button')
+      .getAttribute('class') ?? ''
+    expect(cls).toContain('gap-[var(--space-2)]')
+    expect(cls).not.toContain('gap-[6px]')
+  })
+
+  it('truncate renders a single-line capped label', () => {
+    render(<Button truncate>{'A'.repeat(120)}</Button>)
+    const label = screen.getByText('A'.repeat(120))
+    expect(label.className).toContain('truncate')
+    expect(label.className).toContain('max-w-[16rem]')
   })
 
   it('has no axe violations with a leading icon', async () => {
