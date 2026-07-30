@@ -308,7 +308,8 @@ describe('home hub (wired)', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('campaign-card-c-1')).toBeDefined()
-      expect(screen.queryByTestId('frame-credits-loading')).toBeNull()
+      expect(screen.queryByTestId('frame-credits-desktop-loading')).toBeNull()
+      expect(screen.queryByTestId('frame-credits-mobile-loading')).toBeNull()
     })
     expect(screen.getByTestId('app-frame')).toBeDefined()
     // The credits degraded to empty in BOTH arrangement slots; the route error

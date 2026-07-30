@@ -38,10 +38,12 @@ export type TypeRole =
   | 'chrome'
   | 'chrome-strong'
 
-// `subtitle` and `meta` add a COLOUR facet the other roles leave to the ambient
-// ink: both carry `text-ink-secondary` (the muted TEXT token — a utility, so it
-// flips correctly under `.dark`, unlike a frozen `var(--color-*)`). `subtitle` is
-// the italic serif narrative sub-line; `meta` is the quiet mono record line.
+// `subtitle`, `meta`, and `chrome-strong` add a COLOUR facet the other roles
+// leave to the ambient ink: `subtitle` (the italic serif narrative sub-line) and
+// `meta` (the quiet mono record line) carry `text-ink-secondary`, and
+// `chrome-strong` carries `text-accent-fg` (see its entry below) — all token
+// UTILITIES, so they flip correctly under `.dark`, unlike a frozen
+// `var(--color-*)`.
 /** Type role → its complete static token class string. */
 export const TYPE_ROLE_CLASS: Record<TypeRole, string> = {
   display: 'font-body text-3xl font-semibold leading-[1.2]',

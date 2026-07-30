@@ -104,7 +104,9 @@ const button = cva(
     // TALLER via min-h (SIZE_CLASS) rather than spilling wide — `max-w-full` caps it
     // at the container so a long label never overflows the viewport (responsive by
     // default). shrink-0 (§4): the action affordance still opts OUT of the blanket
-    // Stack min-w-0 default so it doesn't squish beside shrinking text in a row.
+    // Stack min-w-0 default so it doesn't squish beside shrinking text in a row —
+    // EXCEPT under `truncate`, which opts back in (see the className cn below):
+    // a truncating label is the row's designated shrinker.
     'inline-flex items-center justify-center text-center max-w-full shrink-0',
     'font-ui font-medium select-none cursor-pointer',
     // Flat 1-bit corners.
@@ -184,6 +186,12 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       className={cn(
         button({ variant, size }),
         (icon !== undefined || iconTrailing != null) && ICON_GAP,
+        // A truncating label opts the control back IN to flex shrink (twMerge
+        // resolves the base `shrink-0` in this later class's favour): without
+        // it the button can never give up width below the label's 16rem cap,
+        // so a tight flex row overflows the viewport instead of ellipsizing
+        // (the 640-768px header band with an unbounded display name).
+        truncate && 'shrink min-w-0',
         flush === 'start' && FLUSH_START_CLASS[size],
       )}
       {...rest}
@@ -205,7 +213,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
           `truncate` can cap the label to a single ellipsized line (16rem — the
           menu-trigger cap for unbounded display names); off, it leaves the default
           grow-taller wrapping untouched. */}
-      <span className={cn(truncate && 'truncate max-w-[16rem] whitespace-nowrap')}>
+      <span className={cn(truncate && 'truncate max-w-[16rem] whitespace-nowrap min-w-0')}>
         {isBusy && busyLabel !== undefined ? busyLabel : children}
       </span>
       {/* Trailing-icon slot — the mirror of the leading slot, rendered AFTER the

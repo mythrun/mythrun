@@ -21,7 +21,13 @@ export const StickyBar = forwardRef<HTMLElement, StickyBarProps>(function Sticky
         // z-[100]: no --z-sticky token exists; one layer above content (--z-base 0
         // / --z-nav 10), below the Menu portal's --z-dropdown (1000).
         'sticky top-0 z-[100] bg-bg',
-        'flex items-center justify-between gap-[var(--space-4)]',
+        // [&>*]:min-w-0 — Stack's canonical flex-shrink unblocker, applied to the
+        // header's own children (the Show arrangement wrappers): a truncate
+        // Button's nowrap label otherwise propagates its min-content (the 16rem
+        // label cap) into each wrapper's automatic minimum, and the row overflows
+        // the viewport instead of ellipsizing. Static — identical in both
+        // elevation states (zero-CLS); the brand slot's own shrink-0 exempts it.
+        'flex items-center justify-between gap-[var(--space-4)] [&>*]:min-w-0',
         'px-[var(--space-6)] py-[clamp(10px,8px+0.5vw,16px)]',
         'border-b transition-colors motion-reduce:transition-none',
         elevated ? 'border-border' : 'border-transparent',

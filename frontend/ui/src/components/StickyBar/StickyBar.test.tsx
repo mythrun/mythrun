@@ -29,6 +29,16 @@ describe('StickyBar', () => {
     expect(el.className).toContain('px-[var(--space-6)]')
   })
 
+  it('blankets its children with min-w-0 (the Stack rule) so a truncating child can shrink', () => {
+    const el = bar(false)
+    // The Show arrangement wrappers are the header's flex children; without the
+    // blanket, a truncate Button's nowrap label floors them at min-width:auto
+    // and the row overflows the viewport instead of ellipsizing (660px band).
+    expect(el.className).toContain('[&>*]:min-w-0')
+    // The brand slot stays exempt from shrinking via its own shrink-0.
+    expect(el.querySelector('[data-brand-slot]')?.className).toContain('shrink-0')
+  })
+
   it('at rest: transparent border present (zero-CLS reservation), no compaction', () => {
     const el = bar(false)
     expect(el.className).toContain('border-b')

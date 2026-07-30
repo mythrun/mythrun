@@ -396,11 +396,15 @@ describe('Button', () => {
     expect(cls).not.toContain('gap-[6px]')
   })
 
-  it('truncate renders a single-line capped label', () => {
-    render(<Button truncate>{'A'.repeat(120)}</Button>)
-    const label = screen.getByText('A'.repeat(120))
-    expect(label.className).toContain('truncate')
-    expect(label.className).toContain('max-w-[16rem]')
+  it('truncate renders a single-line capped label and opts the control back in to flex shrink', () => {
+    const { getByRole } = render(<Button truncate>{'A'.repeat(120)}</Button>)
+    expect(screen.getByText('A'.repeat(120))).toHaveClass('truncate', 'max-w-[16rem]', 'min-w-0')
+    // The RENDERED (post-twMerge) root classes: the base `shrink-0` must be
+    // collapsed in favour of `shrink min-w-0` — the truncating label is the
+    // row's designated shrinker, so a tight flex row (the 640-768px header
+    // band) ellipsizes the label instead of overflowing the viewport.
+    expect(getByRole('button')).toHaveClass('shrink', 'min-w-0')
+    expect(getByRole('button')).not.toHaveClass('shrink-0')
   })
 
   it('has no axe violations with a leading icon', async () => {

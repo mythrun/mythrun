@@ -52,7 +52,11 @@ export interface ButtonProps extends BaseProps {
   /**
    * Single-line label: no wrap, ellipsis, capped at 16rem. For labels made of
    * unbounded user data (the header menu trigger is the display name — the
-   * default grow-taller wrapping would fold the bar). Off by default.
+   * default grow-taller wrapping would fold the bar). Also opts the control
+   * back IN to flex shrink (the base is `shrink-0`; truncate swaps it for
+   * `shrink min-w-0`): a truncating label is explicitly the row's designated
+   * shrinker, so a too-narrow row ellipsizes the label instead of overflowing.
+   * Off by default.
    */
   truncate?: boolean
   /**
