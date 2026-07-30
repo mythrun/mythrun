@@ -13,6 +13,10 @@ export { Show } from './components/Show/Show.tsx'
 // header, so a pannable surface (the world-gen graph) owns the phone screen.
 // Wide viewports render a plain block (desktop unchanged).
 export { FullBleedStage } from './components/FullBleedStage/FullBleedStage.tsx'
+// StickyBar (navbar redesign 2026-07-30) — the app frame's sticky top bar; owns
+// every scroll-visual mechanic (zero-CLS elevation, fluid brand metrics) so app
+// code never needs a className.
+export { StickyBar } from './components/StickyBar/StickyBar.tsx'
 
 // Typography primitives (MYT-82 Wave 1b).
 export { Text } from './components/Text/Text.tsx'
@@ -271,6 +275,7 @@ export type {
   ShowProps,
   Breakpoint,
   FullBleedStageProps,
+  StickyBarProps,
   SpaceToken,
   TextProps,
   TextRole,

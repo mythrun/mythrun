@@ -22,6 +22,10 @@ export type { ShowProps, Breakpoint } from './show.ts'
 // Narrow-viewport full-screen stage (MYT-89 audit v2) — cancels the host frame's
 // content inset and fills the viewport below the header on phone-class viewports.
 export type { FullBleedStageProps } from './full-bleed-stage.ts'
+// StickyBar (navbar redesign 2026-07-30) — the app frame's sticky top bar; owns
+// every scroll-visual mechanic (zero-CLS elevation, fluid brand metrics) so app
+// code never needs a className.
+export type { StickyBarProps } from './sticky-bar.ts'
 
 // Typography-primitive contracts (MYT-82 Wave 1b).
 export type { TextProps, TextRole } from './text.ts'
@@ -178,7 +182,7 @@ export type { DrawerProps } from './drawer.ts'
 export type { PopoverProps, PopoverSide } from './popover.ts'
 export type { TooltipProps, TooltipProviderProps, TooltipSide } from './tooltip.ts'
 export type { TabsProps, TabItem } from './tabs.ts'
-export type { MenuProps, MenuItem, MenuSide } from './menu.ts'
+export type { MenuProps, MenuItem, MenuEntry, MenuHeaderRow, MenuSide } from './menu.ts'
 
 // Status-intent feedback contracts (MYT-82 Wave 3c) — Banner (inline, persistent)
 // + Toast (transient, app-global). Both share the `Severity` intent union. The
