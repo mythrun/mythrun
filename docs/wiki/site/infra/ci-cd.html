@@ -808,8 +808,10 @@
   then runs a seven-stage gate that mirrors what CI is going to re-assert on the push it just
   accepted. The hook runs in cheapest-first order — a one-second grep, a ~3 s typecheck, a ~10 s
   lint, the ~3 min coverage suite, the ~12 s wiki gate, (when the diff touches the dev-tool surface)
-  a ~30 s JSDOM verifier run, and (when the diff touches the frontend) the frontend typecheck + lint
-  + coverage chain. Any non-zero step refuses the push and prints the diagnostic the operator needs.
+  a ~30 s JSDOM verifier run, and (when the diff touches the frontend — or
+  <code>pnpm-lock.yaml</code>, since dependency resolution is a frontend input even when no frontend
+  file changes) the frontend typecheck + lint + coverage chain. Any non-zero step refuses the push
+  and prints the diagnostic the operator needs.
 </p>
 
 <aside class="wiki-rationale">

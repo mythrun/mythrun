@@ -118,7 +118,16 @@ echo "→ pre-push gate (frontend): lint rails + tests + coverage (diff-scoped)"
 # Playwright overflow sweep stays CI-only. When any gate fails here, fix the
 # underlying issue — do NOT bypass with `git push --no-verify`.
 fe_files=$(git diff --name-only origin/main...HEAD 2>/dev/null || true)
-if echo "$fe_files" | grep -qE '^(frontend/|\.github/workflows/frontend-check\.yml)'; then
+# pnpm-lock.yaml is in this trigger because a lockfile-only diff can break the
+# frontend on FRESH installs while every warm local store stays green: on
+# 2026-07-29 a filtered `pnpm update` rewrote the @mythrun/* workspace links
+# into `file:` store COPIES — snapshotted at install time, before
+# @mythrun/contract's gitignored dist/ is built, so the copies could never
+# resolve `@mythrun/contract/*` — and the diff contained no frontend/ path, so
+# this chain never ran locally and the breakage surfaced as a red Frontend
+# check on origin. Dependency resolution is a frontend input even when no
+# frontend file changes.
+if echo "$fe_files" | grep -qE '^(frontend/|pnpm-lock\.yaml$|\.github/workflows/frontend-check\.yml)'; then
   pnpm --filter @mythrun/client-core typecheck
   pnpm --filter @mythrun/client-core lint
   pnpm --filter @mythrun/client-core test
