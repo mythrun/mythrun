@@ -1,7 +1,8 @@
-import { render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { HttpError, useApiContext, type SecureStorage } from '@mythrun/client-core'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { toast } from '@mythrun/ui'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { AppProviders } from './providers.tsx'
 
 // ENVIRONMENT shim (Node 25 vs jsdom), not production code. AppProviders now
@@ -95,6 +96,8 @@ function Probe(): React.JSX.Element {
   )
 }
 
+afterEach(cleanup)
+
 describe('AppProviders', () => {
   it('wires the QueryClient (retry skips 4xx, else one retry) + the ApiContext', () => {
     render(
@@ -106,5 +109,21 @@ describe('AppProviders', () => {
     expect(screen.getByTestId('retry-ok-true')).toBeDefined()
     // The ApiContext carries the configured baseUrl (proves client-core wired).
     expect(screen.getByTestId('base-url-http://api.test')).toBeDefined()
+  })
+
+  it('mounts the app-global toast surface — imperative toast() renders, never a silent no-op', () => {
+    render(
+      <AppProviders config={testConfig}>
+        <Probe />
+      </AppProviders>,
+    )
+    // The viewport live region exists BEFORE any toast (the ui package's own
+    // a11y pin) — the provider is mounted at the root, so HeaderMenu's
+    // logout-failure toast() always has a surface to land on.
+    expect(document.querySelectorAll('[aria-live]').length).toBeGreaterThan(0)
+    act(() => {
+      toast({ title: 'probe.toastTitle' })
+    })
+    expect(screen.getByText('probe.toastTitle')).toBeDefined()
   })
 })

@@ -19,7 +19,6 @@ export const descriptions: Record<string, string> = {
   'frame.logoutFailed': 'Danger-toast title when the logout call fails; the player stays put (no navigation — a live refresh cookie would resurrect the session). ~1 short sentence + a retry nudge.',
   'frame.menu': 'Accessible name (aria-label) of the frame-menu icon trigger: the mobile hamburger, and the desktop fallback while the display name is loading or failed. ~1 word, e.g. "Menu".',
   'frame.sessionsBilling': 'Menu item in the frame menu (both arrangements) navigating to the Sessions & billing surface (/billing). Matches that page\'s billing.sectionTitle register. ~2-3 words.',
-  'frame.settings': 'Accessible name for the gear settings IconButton in the header (aria-label, not visible text). A short verb/noun, e.g. "Settings".',
   'frame.wordmark': 'Accessible name for the brand mark (HorizontalLockup) in the persistent app-frame header (aria-label, not visible text) — the frame twin of landing.wordmark/signin.wordmark. The brand identity, ~1 word.',
   'splash.loading': 'Accessible loading label on the boot splash shown while the on-load session refresh settles. Short (~2-4 words).',
   'callback.loading': 'Loading label on the OAuth callback screen while the code is exchanged. Short.',

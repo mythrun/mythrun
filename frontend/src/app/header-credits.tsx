@@ -22,20 +22,22 @@ import { HeaderSlot } from './header-slot.tsx'
 // the player act even if the balance fetch fails.
 
 /** The resolved balance number + its unit. Only rendered once `useBalance` has data
- *  (HeaderSlot's Suspense owns the loading state, its error boundary the failure). */
-function HeaderCreditsValue(): React.JSX.Element {
+ *  (HeaderSlot's Suspense owns the loading state, its error boundary the failure).
+ *  The bar's typography (navbar redesign): the label is quiet `chrome`, the number
+ *  `chrome-strong` — semibold tabular accent, the bar's ONLY accent. */
+function HeaderCreditsValue({ testId }: { readonly testId: string }): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const { data } = useBalance()
   // Locale-aware grouping — mechanical formatting (ZFC-exempt), like the hub's
   // relative-time formatter. Both the number and its unit hold their width
-  // (`noShrink`) so the display-name sibling absorbs the row's shrink, not this.
+  // (`noShrink`) so flexible siblings absorb the row's shrink, not this.
   const balance = new Intl.NumberFormat(i18n.language).format(data.session)
   return (
-    <Stack direction="row" align="center" gap={2} noShrink data-testid="frame-credits">
-      <Text role="meta" noShrink>
+    <Stack direction="row" align="center" gap={2} noShrink data-testid={testId}>
+      <Text role="chrome" noShrink>
         {t('frame.credits')}
       </Text>
-      <Text role="data" noShrink>
+      <Text role="chrome-strong" noShrink>
         {balance}
       </Text>
     </Stack>
@@ -43,8 +45,14 @@ function HeaderCreditsValue(): React.JSX.Element {
 }
 
 /** The header credits slot: the live session balance, resilient to a slow or
- *  failed balance fetch (loads behind a small spinner, degrades to empty on error). */
-export function HeaderCredits(): React.JSX.Element {
+ *  failed balance fetch (loads behind a small spinner, degrades to empty on error).
+ *  `data-testid` distinguishes the frame's two mounted instances (one per
+ *  arrangement cluster: frame-credits-desktop / frame-credits-mobile). */
+export function HeaderCredits({
+  'data-testid': dataTestId = 'frame-credits',
+}: {
+  readonly 'data-testid'?: string
+} = {}): React.JSX.Element {
   const { t } = useTranslation()
   const { pathname } = useLocation()
   const invalidateBalance = useInvalidateBalance()
@@ -68,7 +76,7 @@ export function HeaderCredits(): React.JSX.Element {
     <HeaderSlot
       pending={<Spinner size="xs" label={t('frame.creditsLoading')} data-testid="frame-credits-loading" />}
     >
-      <HeaderCreditsValue />
+      <HeaderCreditsValue testId={dataTestId} />
     </HeaderSlot>
   )
 }

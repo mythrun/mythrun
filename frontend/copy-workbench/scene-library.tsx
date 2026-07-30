@@ -118,10 +118,18 @@ const frameScenes: Scene[] = [
     {
       id: 'frame-header',
       title: 'App frame header (chrome & brand)',
-      note: 'The persistent top bar. frame.wordmark is an aria-label on the WORDMARK, not visible text. The display name is DATA (rendered from /me, MYT-99), not copy, so it is not authored here. Composed from real DS pieces.',
+      note: 'The persistent sticky bar (navbar redesign). frame.wordmark is an aria-label on the WORDMARK, not visible text; frame.menu is the aria-label of the hamburger trigger (mobile, and desktop while the name loads). The display name is DATA (rendered from /me, MYT-99), not copy — on desktop it IS the menu trigger. No gear: Sessions & billing + Log out live in the menu. Composed from real DS pieces.',
       kind: 'composed',
-      keys: ['frame.wordmark', 'frame.credits', 'frame.creditsLoading', 'frame.buyCredits', 'frame.settings'],
-      minHeight: 120,
+      keys: [
+        'frame.wordmark',
+        'frame.credits',
+        'frame.creditsLoading',
+        'frame.buyCredits',
+        'frame.menu',
+        'frame.sessionsBilling',
+        'frame.logout',
+      ],
+      minHeight: 160,
     },
     () => {
       const tk = useCopy()
@@ -141,17 +149,40 @@ const frameScenes: Scene[] = [
               (aria-label)
             </span>
             <div style={{ flex: 1 }} />
-            <Text role="data">
-              <T k="frame.credits" /> 1,250
+            <Text role="chrome">
+              <T k="frame.credits" />
             </Text>
-            <Button variant="secondary" onPress={() => undefined}>
+            <Text role="chrome-strong">1,250</Text>
+            <Button variant="ghost" onPress={() => undefined}>
               <T k="frame.buyCredits" />
             </Button>
+            <Button variant="ghost" onPress={() => undefined}>
+              Idrisa the Bold ▾
+            </Button>
+          </div>
+          <div
+            style={{
+              marginTop: 8,
+              width: 220,
+              marginLeft: 'auto',
+              border: '1px solid var(--border-strong)',
+              padding: '6px 10px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}
+          >
             <Text role="ui-caption">
-              <T k="frame.settings" />
+              <T k="frame.sessionsBilling" />
+            </Text>
+            <Text role="ui-caption">
+              <T k="frame.logout" />
             </Text>
           </div>
           <div style={{ marginTop: 8 }}>
+            <Text role="meta">
+              hamburger trigger aria-label: <T k="frame.menu" />
+            </Text>
             <Text role="meta">
               loading state: <T k="frame.creditsLoading" />
             </Text>
