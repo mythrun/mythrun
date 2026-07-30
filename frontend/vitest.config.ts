@@ -20,6 +20,10 @@ export default defineConfig({
     // re-applies natives), safe for the whole suite. See the env module's
     // header + vitest-dev/vitest#8374 (fixed upstream in vitest 4 / PR #8390).
     environment: './test/jsdom-native-fetch.ts',
+    // Global stubs for web APIs jsdom lacks (IntersectionObserver). Loaded for
+    // every suite: AppFrame mounts the scroll-elevation observer on nearly
+    // every route, so any route test would crash without it.
+    setupFiles: ['./test/setup.ts'],
     // @mythrun/web is the root frontend package; `client-core/`, `ui/`, and
     // `contract/` are NESTED workspace packages that each own their own vitest
     // config + run. Without these excludes, web's default `frontend/**` discovery
