@@ -237,11 +237,13 @@ describe('home hub (wired)', () => {
     renderHome()
 
     // The header credit slot resolves the live balance and renders the
-    // locale-formatted session number.
+    // locale-formatted session number. The frame mounts BOTH arrangement
+    // clusters (desktop + mobile, one CSS-hidden by Show); the desktop slot is
+    // the canonical query target.
     await waitFor(() => {
-      expect(screen.getByTestId('frame-credits')).toBeDefined()
+      expect(screen.getByTestId('frame-credits-desktop')).toBeDefined()
     })
-    expect(screen.getByTestId('frame-credits').textContent).toContain('1,250')
+    expect(screen.getByTestId('frame-credits-desktop').textContent).toContain('1,250')
   })
 
   it('the New Campaign CTA navigates to the creation route', async () => {
@@ -309,8 +311,10 @@ describe('home hub (wired)', () => {
       expect(screen.queryByTestId('frame-credits-loading')).toBeNull()
     })
     expect(screen.getByTestId('app-frame')).toBeDefined()
-    // The credits degraded to empty; the route error boundary did NOT fire.
-    expect(screen.queryByTestId('frame-credits')).toBeNull()
+    // The credits degraded to empty in BOTH arrangement slots; the route error
+    // boundary did NOT fire.
+    expect(screen.queryByTestId('frame-credits-desktop')).toBeNull()
+    expect(screen.queryByTestId('frame-credits-mobile')).toBeNull()
     expect(screen.queryByTestId('error-retryable')).toBeNull()
   })
 

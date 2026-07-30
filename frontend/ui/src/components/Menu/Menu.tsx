@@ -56,7 +56,7 @@ export function Menu({
           {items.map((entry, index) =>
             'header' in entry ? (
               <RadixMenu.Label
-                key={`header-${index}`}
+                key={`header-${String(index)}`}
                 className={cn(
                   'flex select-none items-center',
                   'px-[var(--space-3)] py-[var(--space-2)] text-sm font-medium',

@@ -156,8 +156,12 @@ describe('HeaderMenu', () => {
     renderHeaderMenu({ arrangement: 'desktop', displayName: 'X' })
     openMenu(screen.getByRole('button', { name: 'X' }))
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Log out' }))
-    await waitFor(() => expect(logoutMock).toHaveBeenCalled())
-    await waitFor(() => expect(hardNavigateMock).toHaveBeenCalledWith('/'))
+    await waitFor(() => {
+      expect(logoutMock).toHaveBeenCalled()
+    })
+    await waitFor(() => {
+      expect(hardNavigateMock).toHaveBeenCalledWith('/')
+    })
   })
 
   it('logout FAILURE: toast, NO navigation (a live refresh cookie + navigate would resurrect the session)', async () => {
@@ -165,7 +169,9 @@ describe('HeaderMenu', () => {
     renderHeaderMenu({ arrangement: 'desktop', displayName: 'X' })
     openMenu(screen.getByRole('button', { name: 'X' }))
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Log out' }))
-    await waitFor(() => expect(toastSpy).toHaveBeenCalled())
+    await waitFor(() => {
+      expect(toastSpy).toHaveBeenCalled()
+    })
     expect(hardNavigateMock).not.toHaveBeenCalled()
   })
 

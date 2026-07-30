@@ -241,6 +241,7 @@ export function SessionsBilling(): React.JSX.Element {
       <CreditSection view={view} t={t} />
       {/* A plain structural wrapper (not a DS piece) so the #buy deep-link has a
           scroll target around the whole purchase block. */}
+      {/* eslint-disable-next-line mythrun-ui/no-ad-hoc-ui -- deep-link scroll-target wrapper (ref + scroll-margin under the sticky bar); not expressible via @mythrun/ui Stack/Box props (BaseProps bans className) */}
       <section ref={buySectionRef} data-testid="billing-buy-section" className="scroll-mt-24">
         <PackList
           tiers={tiers}
