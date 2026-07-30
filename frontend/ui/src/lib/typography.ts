@@ -23,7 +23,7 @@
 //               --weight-*), plus `uppercase` + `tracking-wide` (--tracking-wide
 //               = 0.5px) for `ui-label`.
 
-/** Every typographic role across {@link Text} (prose/subtitle/ui/data/meta) and Heading (display/heading/title). */
+/** Every typographic role across {@link Text} (prose/subtitle/ui/data/meta/chrome) and Heading (display/heading/title). */
 export type TypeRole =
   | 'display'
   | 'headline'
@@ -35,6 +35,8 @@ export type TypeRole =
   | 'ui-caption'
   | 'data'
   | 'meta'
+  | 'chrome'
+  | 'chrome-strong'
 
 // `subtitle` and `meta` add a COLOUR facet the other roles leave to the ambient
 // ink: both carry `text-ink-secondary` (the muted TEXT token — a utility, so it
@@ -52,4 +54,10 @@ export const TYPE_ROLE_CLASS: Record<TypeRole, string> = {
   'ui-caption': 'font-ui text-xs font-medium',
   data: 'font-ui text-sm font-normal',
   meta: 'font-ui text-xs font-normal text-ink-secondary',
+  // chrome / chrome-strong — the frame's one utility size (spec 2026-07-30):
+  // 14px mono, 0.01em tracking. `chrome` stays weight/color-ambient;
+  // `chrome-strong` is the credit NUMBER — semibold + tabular-nums + accent-fg,
+  // the bar's ONLY accent, so 'accent' keeps meaning 'the number that is yours'
+  chrome: 'font-ui text-sm font-normal tracking-[0.01em]',
+  'chrome-strong': 'font-ui text-sm font-semibold tracking-[0.01em] tabular-nums text-accent-fg',
 }

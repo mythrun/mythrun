@@ -90,6 +90,13 @@ export const TYPE_ROLES = {
   // Quiet mono meta — a muted record/status line, smaller than `data` (the ink
   // ledger value). The card's foot record line, a timestamp, a count caption.
   meta: { font: 'mono', size: '0.75rem', weight: 400, tone: 'secondary' },
+  // chrome / chrome-strong — the frame's one utility size (spec 2026-07-30):
+  // 14px mono with a 0.01em hairline tracking. `chrome` stays weight/color-
+  // ambient; `chrome-strong` is the credit NUMBER — semibold + tabular numerals
+  // + accent tone, the bar's ONLY accent, so 'accent' keeps meaning "the number
+  // that is yours".
+  chrome: { font: 'mono', size: '0.875rem', weight: 400, tracking: '0.01em' },
+  'chrome-strong': { font: 'mono', size: '0.875rem', weight: 600, tracking: '0.01em', numeric: 'tabular', tone: 'accent' },
 } as const
 
 /** Font weights. `--weight-normal/medium/semibold`. */

@@ -30,7 +30,7 @@ describe('Text', () => {
     expect(getByTestId('t')).toHaveClass(...TYPE_ROLE_CLASS['prose-body'].split(' '))
   })
 
-  it.each(['subtitle', 'ui-label', 'ui-caption', 'data', 'meta'] as const)(
+  it.each(['subtitle', 'ui-label', 'ui-caption', 'data', 'meta', 'chrome', 'chrome-strong'] as const)(
     'applies the %s role classes',
     (role) => {
       const { getByTestId } = render(
@@ -41,6 +41,16 @@ describe('Text', () => {
       expect(getByTestId('t')).toHaveClass(...TYPE_ROLE_CLASS[role].split(' '))
     },
   )
+
+  it('chrome: 14px mono, hairline tracking, no color facet (bar chrome)', () => {
+    expect(TYPE_ROLE_CLASS.chrome).toBe('font-ui text-sm font-normal tracking-[0.01em]')
+  })
+
+  it("chrome-strong: the credit number — semibold, tabular, the bar's ONE accent", () => {
+    expect(TYPE_ROLE_CLASS['chrome-strong']).toBe(
+      'font-ui text-sm font-semibold tracking-[0.01em] tabular-nums text-accent-fg',
+    )
+  })
 
   it('truncates to a single line with an ellipsis when truncate is set', () => {
     const { getByTestId } = render(

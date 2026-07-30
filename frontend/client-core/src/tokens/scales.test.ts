@@ -29,11 +29,20 @@ describe('token scale data (single source for web @theme + future native)', () =
     expect(MOTION.easing.out).toBe('cubic-bezier(0.2, 0, 0, 1)')
     expect(MOTION.easing.linear).toBe('linear')
   })
-  it('exposes the ten typography roles', () => {
+  it('exposes the twelve typography roles', () => {
     expect(Object.keys(TYPE_ROLES)).toEqual([
       'display', 'headline', 'heading', 'title', 'prose-body', 'subtitle',
-      'ui-label', 'ui-caption', 'data', 'meta',
+      'ui-label', 'ui-caption', 'data', 'meta', 'chrome', 'chrome-strong',
     ])
+  })
+  it('chrome / chrome-strong are the frame utility roles (14px mono, 0.01em tracking)', () => {
+    expect(TYPE_ROLES.chrome).toEqual({
+      font: 'mono', size: '0.875rem', weight: 400, tracking: '0.01em',
+    })
+    expect(TYPE_ROLES['chrome-strong']).toEqual({
+      font: 'mono', size: '0.875rem', weight: 600, tracking: '0.01em',
+      numeric: 'tabular', tone: 'accent',
+    })
   })
   it('weights / tracking / measure / breakpoints are present', () => {
     expect(WEIGHTS).toEqual({ normal: 400, medium: 500, semibold: 600 })

@@ -5,10 +5,20 @@ import type { BaseProps } from './index.ts'
  * the body altitude. `prose-body` is narrative serif and `subtitle` its italic,
  * muted sub-line (a title's "world · creator"); the `ui-*`, `data`, and `meta`
  * roles are the monospace UI register, with `meta` the quiet muted record line
- * (smaller than `data`, the ink ledger value). Headings live in {@link Heading}.
+ * (smaller than `data`, the ink ledger value). `chrome` / `chrome-strong` are
+ * the frame's one utility size (bar chrome; `chrome-strong` is the credit
+ * number, the bar's only accent). Headings live in {@link Heading}.
  * Each role maps to a full static token class string in the web impl.
  */
-export type TextRole = 'prose-body' | 'subtitle' | 'ui-label' | 'ui-caption' | 'data' | 'meta'
+export type TextRole =
+  | 'prose-body'
+  | 'subtitle'
+  | 'ui-label'
+  | 'ui-caption'
+  | 'data'
+  | 'meta'
+  | 'chrome'
+  | 'chrome-strong'
 
 /**
  * Inline/block text primitive. Applies a typographic ROLE (family + size +
