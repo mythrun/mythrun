@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { I18nextProvider } from 'react-i18next'
-import { createMemoryRouter, RouterProvider } from 'react-router-dom'
+import { createMemoryRouter, RouterProvider, type RouteObject } from 'react-router-dom'
 import { within, expect } from 'storybook/test'
 import {
   ApiClientProvider,
@@ -81,6 +81,11 @@ export interface ScreenHarnessProps {
   readonly seedMe?: MeResponse
   /** Override i18n keys (e.g. adversarial-length catalog copy). */
   readonly i18nOverrides?: Readonly<Record<string, string>>
+  /** Override the mounted route tree (default: the real app `routes`). For
+   *  stories that must mount a story-configured layout element the real tree
+   *  never renders — e.g. `<AppFrame forceElevated>` (the stories/tests-only
+   *  elevation pin) — while keeping the harness's providers + cache seeding. */
+  readonly routesOverride?: RouteObject[]
 }
 
 function seedSession(session: Session): void {
@@ -97,6 +102,7 @@ export function ScreenHarness({
   seedBalance,
   seedMe,
   i18nOverrides,
+  routesOverride,
 }: ScreenHarnessProps): React.JSX.Element {
   // Lazy init: one-time per story mount, before children render, so the auth
   // gate + suspense query read the seeded state on the first paint.
@@ -119,7 +125,10 @@ export function ScreenHarness({
     // the props override the defaults for a story that asserts a specific value.
     queryClient.setQueryData(['billing', 'balance'], seedBalance ?? DEFAULT_BALANCE)
     queryClient.setQueryData(['me'], seedMe ?? DEFAULT_ME)
-    return { client: queryClient, router: createMemoryRouter(routes, { initialEntries: [entry] }) }
+    return {
+      client: queryClient,
+      router: createMemoryRouter(routesOverride ?? routes, { initialEntries: [entry] }),
+    }
   })
 
   // ThemeProvider mirrors the real app shell (AppProviders) so theme-aware screens —
