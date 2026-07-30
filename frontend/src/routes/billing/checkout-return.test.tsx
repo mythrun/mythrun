@@ -11,7 +11,7 @@ import { CheckoutReturnRoute } from './checkout-return.tsx'
 // exhaustively covered by its own client-core test, so here we mock its return
 // off the barrel and assert each beat in isolation — the route's job is a
 // status→beat mapping, with `processing` a NON-error state that offers a quiet
-// path to the settings purchase history.
+// path to the `/billing` purchase history.
 vi.mock('@mythrun/client-core', async (importActual) => {
   const actual = await importActual<typeof import('@mythrun/client-core')>()
   return { ...actual, useCheckoutReturn: vi.fn() }
@@ -19,14 +19,14 @@ vi.mock('@mythrun/client-core', async (importActual) => {
 
 const mockUseCheckoutReturn = vi.mocked(useCheckoutReturn)
 
-// A prod-shaped mount: the route inside a data router with a `/settings` stub so
+// A prod-shaped mount: the route inside a data router with a `/billing` stub so
 // the history affordance's real navigation can be observed.
 function renderReturn(status: CheckoutReturnStatus): void {
   mockUseCheckoutReturn.mockReturnValue({ status })
   const router = createMemoryRouter(
     [
       { path: '/billing/return', element: <CheckoutReturnRoute /> },
-      { path: '/settings', element: <div data-testid="settings-stub" /> },
+      { path: '/billing', element: <div data-testid="billing-stub" /> },
     ],
     { initialEntries: ['/billing/return'] },
   )
@@ -63,15 +63,15 @@ describe('CheckoutReturnRoute — pinned terminal states', () => {
     renderReturn('processing')
     expect(screen.getByTestId('checkout-return-processing')).toBeDefined()
     expect(screen.getByText(i18n.t('billing.return.processing'))).toBeDefined()
-    // The calm settings-history path (a completed payment awaiting its webhook).
+    // The calm billing-history path (a completed payment awaiting its webhook).
     expect(screen.getByText(i18n.t('billing.return.viewHistory'))).toBeDefined()
     // A NON-error surface: nothing is announced as an alert.
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  it('navigates to the settings history from the processing beat', async () => {
+  it('navigates to the billing history from the processing beat', async () => {
     renderReturn('processing')
     fireEvent.click(screen.getByTestId('checkout-return-history'))
-    expect(await screen.findByTestId('settings-stub')).toBeDefined()
+    expect(await screen.findByTestId('billing-stub')).toBeDefined()
   })
 })

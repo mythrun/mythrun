@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { I18nextProvider } from 'react-i18next'
 import {
@@ -38,7 +39,7 @@ vi.mock('../../platform/web/navigation.ts', () => ({
     redirectTo(url)
   },
   currentOrigin: () => 'http://test.local',
-  currentHref: () => 'http://test.local/settings',
+  currentHref: () => 'http://test.local/billing',
 }))
 
 const testCtx: ApiContext = {
@@ -143,18 +144,28 @@ function upgradeConflict() {
   )
 }
 
-function renderSurface(): void {
+// The surface now reads `useLocation` (the `#buy` deep-link scroll), so every
+// mount needs a router context. A MemoryRouter over the given initial entry
+// stands in for the app's data router — the path (and its hash) is the only
+// routing input the surface consumes.
+function renderBillingAt(initialPath: string): void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const wrapper = ({ children }: { children: ReactNode }): React.JSX.Element => (
-    <QueryClientProvider client={client}>
-      <ApiClientProvider value={testCtx}>
-        <I18nextProvider i18n={i18n}>
-          <Suspense fallback={<div data-testid="loading" />}>{children}</Suspense>
-        </I18nextProvider>
-      </ApiClientProvider>
-    </QueryClientProvider>
+    <MemoryRouter initialEntries={[initialPath]}>
+      <QueryClientProvider client={client}>
+        <ApiClientProvider value={testCtx}>
+          <I18nextProvider i18n={i18n}>
+            <Suspense fallback={<div data-testid="loading" />}>{children}</Suspense>
+          </I18nextProvider>
+        </ApiClientProvider>
+      </QueryClientProvider>
+    </MemoryRouter>
   )
   render(wrapper({ children: <SessionsBilling /> }))
+}
+
+function renderSurface(): void {
+  renderBillingAt('/billing')
 }
 
 beforeAll(() => {
@@ -330,7 +341,7 @@ describe('Sessions & Billing surface (wired)', () => {
     await waitFor(() => {
       expect(redirectTo).toHaveBeenCalledWith('https://stripe.test/portal/bps_1')
     })
-    expect(lastPortal).toEqual({ return_url: 'http://test.local/settings' })
+    expect(lastPortal).toEqual({ return_url: 'http://test.local/billing' })
   })
 
   it('the à-la-carte buy opens Checkout for the pack at the chosen quantity', async () => {
@@ -379,5 +390,20 @@ describe('Sessions & Billing surface (wired)', () => {
     await screen.findByTestId('sessions-billing')
 
     expect(screen.getByTestId('purchase-history-empty').textContent).toBe(i18n.t('billing.history.empty'))
+  })
+
+  // The NavBar's "Add credits" deep-link: /billing#buy must land the reader ON the
+  // purchase section, not the top of the screen. jsdom implements no scrolling, so
+  // the spy on the prototype IS the observable — the section mounts below the
+  // Suspense boundary, meaning the scroll can only fire after the data resolved.
+  it('arriving with #buy scrolls the purchase section into view after data resolves', async () => {
+    server.use(balanceOk(NO_SUB), skusOk(), historyOk())
+    const scrollSpy = vi.fn()
+    window.HTMLElement.prototype.scrollIntoView = scrollSpy
+    renderBillingAt('/billing#buy')
+    await screen.findByTestId('billing-buy-section')
+    await waitFor(() => {
+      expect(scrollSpy).toHaveBeenCalled()
+    })
   })
 })

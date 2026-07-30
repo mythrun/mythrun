@@ -7,12 +7,12 @@ import { CheckoutCancelledRoute } from './checkout-cancelled.tsx'
 
 // The checkout-cancelled screen is the Stripe "abandoned Checkout" landing. It is
 // deliberately NOT an error surface (no charge was made): a calm notice + a quiet
-// path back to the billing settings.
+// path back to the `/billing` screen.
 function renderCancelled(): void {
   const router = createMemoryRouter(
     [
       { path: '/billing/cancelled', element: <CheckoutCancelledRoute /> },
-      { path: '/settings', element: <div data-testid="settings-stub" /> },
+      { path: '/billing', element: <div data-testid="billing-stub" /> },
     ],
     { initialEntries: ['/billing/cancelled'] },
   )
@@ -38,11 +38,11 @@ describe('CheckoutCancelledRoute — calm, non-error notice', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  it('offers a back-to-billing affordance that navigates to the settings surface', async () => {
+  it('offers a back-to-billing affordance that navigates to the billing surface', async () => {
     renderCancelled()
     const back = screen.getByTestId('checkout-cancelled-back')
     expect(back.textContent).toContain(i18n.t('billing.cancelled.back'))
     fireEvent.click(back)
-    expect(await screen.findByTestId('settings-stub')).toBeDefined()
+    expect(await screen.findByTestId('billing-stub')).toBeDefined()
   })
 })

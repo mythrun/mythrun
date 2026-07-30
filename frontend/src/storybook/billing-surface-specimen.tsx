@@ -1,4 +1,5 @@
 import { Suspense, useState } from 'react'
+import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { I18nextProvider } from 'react-i18next'
 import { Spinner } from '@mythrun/ui'
@@ -10,9 +11,10 @@ import {
   type BillingHistoryEvent,
 } from '@mythrun/client-core'
 import { i18n } from '../i18n/config.ts'
-import { SessionsBilling } from '../routes/settings/sessions-billing.tsx'
+import { SessionsBilling } from '../routes/billing/sessions-billing.tsx'
+import { BILLING_PATH } from '../app/paths.ts'
 
-// A seeded specimen of the Sessions & Billing surface (MYT-95) for the settings
+// A seeded specimen of the Sessions & Billing surface (MYT-95) for the billing
 // screen stories. The surface reads THREE billing suspense queries (balance / skus
 // / history); the dead-API route tree can never reach the settled state (they'd
 // suspend forever), so — like Screens/CampaignPage — we render the surface DIRECTLY
@@ -75,15 +77,20 @@ export function BillingSurfaceSpecimen({ balance }: { readonly balance: BalanceR
     c.setQueryData(['billing', 'history'], { events: HISTORY_EVENTS, nextCursor: null })
     return c
   })
+  // SessionsBilling reads location.hash (the #buy deep-link scroll), so the
+  // specimen owns the MemoryRouter (the Screens/CampaignPage precedent) — every
+  // consumer gets a router for free, at the plain path so the scroll stays inert.
   return (
-    <QueryClientProvider client={client}>
-      <ApiClientProvider value={STORYBOOK_CTX}>
-        <I18nextProvider i18n={i18n}>
-          <Suspense fallback={<Spinner />}>
-            <SessionsBilling />
-          </Suspense>
-        </I18nextProvider>
-      </ApiClientProvider>
-    </QueryClientProvider>
+    <MemoryRouter initialEntries={[BILLING_PATH]}>
+      <QueryClientProvider client={client}>
+        <ApiClientProvider value={STORYBOOK_CTX}>
+          <I18nextProvider i18n={i18n}>
+            <Suspense fallback={<Spinner />}>
+              <SessionsBilling />
+            </Suspense>
+          </I18nextProvider>
+        </ApiClientProvider>
+      </QueryClientProvider>
+    </MemoryRouter>
   )
 }

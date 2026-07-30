@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { Stack, Heading, Text, Button, CreditBalance, PackList, PurchaseHistory } from '@mythrun/ui'
@@ -28,9 +29,10 @@ import type {
   PurchaseHistoryRow,
 } from '@mythrun/client-core/contract'
 import { redirectTo, currentOrigin, currentHref } from '../../platform/web/navigation.ts'
+import { BUY_ANCHOR } from '../../app/paths.ts'
 
 // The wired Sessions & Billing surface (MYT-95 Task 11) — the composition shell the
-// `/settings` route mounts under Suspense. It reads the three billing suspense
+// `/billing` route mounts under Suspense. It reads the three billing suspense
 // queries and hands each derived view to a DS component:
 //   • CreditBalance   — both credit buckets, itemised, NEVER summed (spec §4), each
 //     in its own explained tile (MYT-9jrh9).
@@ -169,6 +171,16 @@ export function SessionsBilling(): React.JSX.Element {
   const { data: skus } = useSkus()
   const { data: history } = useHistory()
   const [pendingUpgrade, setPendingUpgrade] = useState(false)
+  const buySectionRef = useRef<HTMLElement | null>(null)
+
+  const { hash } = useLocation()
+  // #buy deep-link (spec §Scroll mechanics): React Router doesn't fragment-
+  // scroll, and this section mounts inside a Suspense boundary, so a DOM id
+  // anchor works in NO navigation mode. Scroll once the data-resolved section
+  // exists; scroll-mt clears the sticky bar (96px ≥ the 88px max bar height).
+  useEffect(() => {
+    if (hash === BUY_ANCHOR) buySectionRef.current?.scrollIntoView()
+  }, [hash])
 
   const balance = balanceQuery.data
   const view = balanceView(balance, skus)
@@ -227,24 +239,28 @@ export function SessionsBilling(): React.JSX.Element {
   return (
     <Stack gap={6} data-testid="sessions-billing">
       <CreditSection view={view} t={t} />
-      <PackList
-        tiers={tiers}
-        alaCarte={packs}
-        quantityPresets={QUANTITY_PRESETS}
-        onTierCta={onTierCta}
-        onBuyAlaCarte={onBuyAlaCarte}
-        labels={{
-          plansTitle: t('billing.plansTitle'),
-          plansHelp: t('billing.plansHelp'),
-          alaCarteTitle: t('billing.alaCarteTitle'),
-          alaCarteHelp: t('billing.alaCarteHelp'),
-          subscribe: t('billing.subscribe'),
-          upgrade: t('billing.upgrade'),
-          manage: t('billing.manage'),
-          current: t('billing.current'),
-          buy: t('billing.buy'),
-        }}
-      />
+      {/* A plain structural wrapper (not a DS piece) so the #buy deep-link has a
+          scroll target around the whole purchase block. */}
+      <section ref={buySectionRef} data-testid="billing-buy-section" className="scroll-mt-24">
+        <PackList
+          tiers={tiers}
+          alaCarte={packs}
+          quantityPresets={QUANTITY_PRESETS}
+          onTierCta={onTierCta}
+          onBuyAlaCarte={onBuyAlaCarte}
+          labels={{
+            plansTitle: t('billing.plansTitle'),
+            plansHelp: t('billing.plansHelp'),
+            alaCarteTitle: t('billing.alaCarteTitle'),
+            alaCarteHelp: t('billing.alaCarteHelp'),
+            subscribe: t('billing.subscribe'),
+            upgrade: t('billing.upgrade'),
+            manage: t('billing.manage'),
+            current: t('billing.current'),
+            buy: t('billing.buy'),
+          }}
+        />
+      </section>
       {pendingUpgrade ? (
         <Text as="p" data-testid="billing-pending-upgrade">
           {t('billing.pendingUpgrade')}

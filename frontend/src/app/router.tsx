@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react'
-import { createBrowserRouter, RouterProvider } from 'react-router-dom'
+import { createBrowserRouter, Navigate, RouterProvider, useLocation } from 'react-router-dom'
 import type { RouteObject } from 'react-router-dom'
 import { Spinner } from '@mythrun/ui'
 import { RequireAuth } from './require-auth.tsx'
@@ -20,9 +20,19 @@ import { SituationPickRoute } from '../routes/worldgen/situation-pick.tsx'
 import { LevelPickRoute } from '../routes/character-new/level-pick.tsx'
 import { JoinSummaryRoute } from '../routes/character-new/join-summary.tsx'
 import { PlayRoute } from '../routes/play.tsx'
-import { SettingsRoute } from '../routes/settings.tsx'
+import { BillingRoute } from '../routes/billing.tsx'
 import { CheckoutReturnRoute } from '../routes/billing/checkout-return.tsx'
 import { CheckoutCancelledRoute } from '../routes/billing/checkout-cancelled.tsx'
+import { BILLING_PATH } from './paths.ts'
+
+// Legacy path: /settings was the billing page's original home (MYT-99 interim).
+// Client-side 301: replace semantics (Back must not bounce), search + hash
+// preserved. Lives inside the authed AppFrame branch: an anon deep link hits
+// the auth gate FIRST, then redirects.
+function LegacySettingsRedirect(): React.JSX.Element {
+  const { search, hash } = useLocation()
+  return <Navigate to={`${BILLING_PATH}${search}${hash}`} replace />
+}
 
 // DEV-only realtime-transport harness (MYT-85 T9). React.lazy over a
 // DEV-STATIC dynamic import: in a prod build `import.meta.env.DEV` is a
@@ -46,7 +56,7 @@ const DevTransportRoute = import.meta.env.DEV
 //            OAuth callback, onboarding), the invite-join link.
 //   AUTHED   gated by <RequireAuth> (the three-state session check) → rendered
 //            inside <AppFrame> (the quiet brand frame, an <Outlet/> layout
-//            route): the home hub + the campaign/character/play/settings flows.
+//            route): the home hub + the campaign/character/play/billing flows.
 //
 //   *        any unmatched path → the dithered 404.
 //
@@ -122,7 +132,8 @@ export function buildRoutes(dev: boolean): RouteObject[] {
                 // from the play surface's session_end. A future public share link is
                 // a separate tokenized surface, not this campaign-id read.
                 { path: 'campaigns/:id/recap', element: <RecapRoute /> },
-                { path: 'settings', element: <SettingsRoute /> },
+                { path: 'billing', element: <BillingRoute /> },
+                { path: 'settings', element: <LegacySettingsRedirect /> },
                 // Stripe checkout-return landings (MYT-95). A completed or
                 // abandoned Checkout Session redirects the signed-in player back
                 // here; both sit in the authed, framed branch.

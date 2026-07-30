@@ -1,4 +1,4 @@
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, waitFor } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider, type RouteObject } from 'react-router-dom'
 import { I18nextProvider } from 'react-i18next'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -120,6 +120,10 @@ beforeAll(() => {
     configurable: true,
     writable: true,
   })
+  // jsdom implements no scrolling: without this stub the billing screen's #buy
+  // deep-link effect (`scrollIntoView`, always present in a real browser) throws
+  // on mount and the route error boundary swallows the screen under test.
+  window.HTMLElement.prototype.scrollIntoView = vi.fn()
 })
 
 const TEST_CTX: ApiContext = { baseUrl: 'http://api.test', getAuthHeaders: () => Promise.resolve({}) }
@@ -128,15 +132,20 @@ const TEST_CTX: ApiContext = { baseUrl: 'http://api.test', getAuthHeaders: () =>
 // QueryClient → ApiContext → i18n → the router). The QueryClient + ApiContext are
 // now load-bearing for the authed frame: <AppFrame> reads the live balance
 // (`useBalance`, MYT-87) in its header, so the frame needs the data stack even for
-// a data-free authed STUB. We PRE-SEED the balance cache (staleTime:Infinity → no
-// fetch fires) so the routing check stays hermetic — no MSW, no network — while the
-// header credits resolve from cache. (The loading→data→error paths are exercised in
-// `routes/home.test.tsx` with the full stack + MSW.)
-function renderAt(initialPath: string): void {
+// a data-free authed STUB. We PRE-SEED all three billing caches (staleTime:
+// Infinity → no fetch fires) so the routing check stays hermetic — no MSW, no
+// network — while the header credits AND the billing screen (the legacy-redirect
+// target, which mounts the skus/history suspense reads too) resolve from cache.
+// (The loading→data→error paths are exercised in `routes/home.test.tsx` with the
+// full stack + MSW.) Returns the router so redirect cases can assert the landed
+// location — a MEMORY router never writes `window.location`.
+function renderAt(initialPath: string): ReturnType<typeof createMemoryRouter> {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   })
   client.setQueryData(['billing', 'balance'], { session: 120, world_gen: 0, active_subscription: null })
+  client.setQueryData(['billing', 'skus'], [])
+  client.setQueryData(['billing', 'history'], { events: [], nextCursor: null })
   const router = createMemoryRouter(routes, { initialEntries: [initialPath] })
   render(
     <ThemeProvider>
@@ -149,6 +158,7 @@ function renderAt(initialPath: string): void {
       </QueryClientProvider>
     </ThemeProvider>,
   )
+  return router
 }
 
 describe('app router', () => {
@@ -169,16 +179,31 @@ describe('app router', () => {
     act(() => {
       useSessionStore.getState().setReady('dev-user-1')
     })
-    // Use a DATA-FREE authed stub (`/settings`) here: this test proves only the
-    // routing contract — <RequireAuth> (ready) → <AppFrame> → the matched authed
-    // screen — under the bare I18nextProvider. The home hub (W3e) is now wired to
-    // `useMyCampaigns` and needs the QueryClient + ApiContext stack, so its
-    // loading → data path is exercised in `routes/home.test.tsx` (full stack +
-    // MSW) instead, keeping this assertion a pure routing check.
-    renderAt('/settings')
-    // The quiet brand frame's header is present, wrapping the settings stub.
+    // Use a DATA-FREE authed stub (`/billing/cancelled`) here: this test proves
+    // only the routing contract — <RequireAuth> (ready) → <AppFrame> → the matched
+    // authed screen — under the bare I18nextProvider. The checkout-cancelled
+    // screen mounts no queries (it was chosen for exactly that property; the
+    // billing screen itself now suspends on three reads), keeping this assertion
+    // a pure routing check.
+    renderAt('/billing/cancelled')
+    // The quiet brand frame's header is present, wrapping the cancelled screen.
     expect(screen.getByTestId('app-frame')).toBeDefined()
-    expect(screen.getByTestId('route-settings')).toBeDefined()
+    expect(screen.getByTestId('route-checkout-cancelled')).toBeDefined()
+  })
+
+  it('legacy /settings redirects to /billing preserving search and hash (replace)', async () => {
+    act(() => {
+      useSessionStore.getState().setReady('dev-user-1')
+    })
+    const router = renderAt('/settings?tab=history#buy')
+    await waitFor(() => {
+      expect(screen.getByTestId('route-billing')).toBeDefined()
+    })
+    expect(router.state.location.pathname).toBe('/billing')
+    expect(router.state.location.search).toBe('?tab=history')
+    expect(router.state.location.hash).toBe('#buy')
+    // Replace semantics: Back from /billing must not bounce through /settings.
+    expect(router.state.historyAction).toBe('REPLACE')
   })
 
   it('resolves the home-hub card target /campaigns/:id to the detail stub, NOT the 404', () => {
