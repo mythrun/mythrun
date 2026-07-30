@@ -29,6 +29,16 @@ describe('StickyBar', () => {
     expect(el.className).toContain('px-[var(--space-6)]')
   })
 
+  it('paints the frame content ground (bg-surface), never the body bg', () => {
+    // The bar must be opaque (content slides beneath it) but INVISIBLE at rest:
+    // it paints the same --surface the frame's content Box paints, so only the
+    // elevated hairline ever marks it. bg-bg (the body ground, one paper step
+    // darker) rendered the bar as a permanent tonal band.
+    const el = bar(false)
+    expect(el.className).toContain('bg-surface')
+    expect(classSet(el).has('bg-bg')).toBe(false)
+  })
+
   it('blankets its children with min-w-0 (the Stack rule) so a truncating child can shrink', () => {
     const el = bar(false)
     // The Show arrangement wrappers are the header's flex children; without the

@@ -20,7 +20,11 @@ export const StickyBar = forwardRef<HTMLElement, StickyBarProps>(function Sticky
       className={cn(
         // z-[100]: no --z-sticky token exists; one layer above content (--z-base 0
         // / --z-nav 10), below the Menu portal's --z-dropdown (1000).
-        'sticky top-0 z-[100] bg-bg',
+        // bg-surface, not bg-bg: the bar must be opaque (content slides beneath
+        // it) but indistinguishable from the frame's content ground at rest —
+        // only the elevated hairline marks it. bg-bg is one paper step darker
+        // and rendered the bar as a permanent tonal band over the surface field.
+        'sticky top-0 z-[100] bg-surface',
         // [&>*]:min-w-0 — Stack's canonical flex-shrink unblocker, applied to the
         // header's own children (the Show arrangement wrappers): a truncate
         // Button's nowrap label otherwise propagates its min-content (the 16rem

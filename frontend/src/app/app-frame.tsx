@@ -65,11 +65,17 @@ export function AppFrame({ forceElevated }: { forceElevated?: boolean } = {}): R
     void navigate(`${BILLING_PATH}${BUY_ANCHOR}`)
   }
   return (
-    // The viewport floor is UNCONDITIONAL: short content (act-one worldgen, calm
-    // holds) must never expose the page background beneath the app's own (the
-    // 626px-tall-app seam found in the MYT-102 audit). fullBleed still governs
-    // only the content-region layout below.
-    <Stack minHeight="screen" data-testid="app-frame">
+    // The frame paints ONE ground for everything inside it: Box surface="base"
+    // (--surface) — the same paper the padded content Box paints — so the bar,
+    // the padded routes, AND fullBleed routes (whose stage paints nothing and
+    // would otherwise show the darker body --bg through) all sit on a single
+    // field. Without this, the bar read as a permanent tonal band.
+    <Box surface="base">
+      {/* The viewport floor is UNCONDITIONAL: short content (act-one worldgen, calm
+          holds) must never expose the page background beneath the app's own (the
+          626px-tall-app seam found in the MYT-102 audit). fullBleed still governs
+          only the content-region layout below. */}
+      <Stack minHeight="screen" data-testid="app-frame">
       {/* The 1px elevation sentinel — TOP of the document, absolutely positioned
           so it occupies no flow space (spec: a sentinel BELOW a sticky bar slides
           under it and fires a bar-height late). A measurement probe, not UI —
@@ -137,6 +143,7 @@ export function AppFrame({ forceElevated }: { forceElevated?: boolean } = {}): R
           <Outlet />
         </Box>
       )}
-    </Stack>
+      </Stack>
+    </Box>
   )
 }
