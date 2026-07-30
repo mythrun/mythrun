@@ -182,7 +182,15 @@ export type { DrawerProps } from './drawer.ts'
 export type { PopoverProps, PopoverSide } from './popover.ts'
 export type { TooltipProps, TooltipProviderProps, TooltipSide } from './tooltip.ts'
 export type { TabsProps, TabItem } from './tabs.ts'
-export type { MenuProps, MenuItem, MenuEntry, MenuHeaderRow, MenuSide } from './menu.ts'
+export type {
+  MenuProps,
+  MenuItem,
+  MenuEntry,
+  MenuHeaderRow,
+  MenuSeparatorRow,
+  MenuPlacement,
+  MenuSide,
+} from './menu.ts'
 
 // Status-intent feedback contracts (MYT-82 Wave 3c) — Banner (inline, persistent)
 // + Toast (transient, app-global). Both share the `Severity` intent union. The

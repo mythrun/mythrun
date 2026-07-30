@@ -97,11 +97,11 @@ const TEST_CTX: ApiContext = {
 
 // Prod-shaped mount (mirrors app-frame.test.tsx's router+query wrapper), plus
 // the ApiClientProvider the logout call reads its ctx from.
-function renderHeaderMenu(props: HeaderMenuProps): void {
+function renderHeaderMenu(props: HeaderMenuProps): ReturnType<typeof render> {
   const router = createMemoryRouter([{ path: '*', element: <HeaderMenu {...props} /> }], {
     initialEntries: ['/home'],
   })
-  render(
+  return render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <ApiClientProvider value={TEST_CTX}>
@@ -149,6 +149,34 @@ describe('HeaderMenu', () => {
       'Sessions & billing',
       'Log out',
     ])
+  })
+
+  it('menu structure: separators fence the identity header and the exit action (both arrangements)', async () => {
+    // Desktop: [billing │ logout] — one fence before Log out.
+    const desktop = renderHeaderMenu({ arrangement: 'desktop', displayName: 'Idrisa the Bold' })
+    openMenu(screen.getByRole('button', { name: 'Idrisa the Bold' }))
+    await screen.findAllByRole('menuitem')
+    expect(screen.getAllByRole('separator')).toHaveLength(1)
+    desktop.unmount()
+    // Mobile with identity: [header │ nav ×3 │ logout] — two fences.
+    renderHeaderMenu({ arrangement: 'mobile', displayName: 'Idrisa the Bold' })
+    openMenu(screen.getByRole('button', { name: 'Menu' }))
+    await screen.findAllByRole('menuitem')
+    expect(screen.getAllByRole('separator')).toHaveLength(2)
+  })
+
+  it('mobile with NULL identity: no header row, no leading fence — one separator before Log out', async () => {
+    renderHeaderMenu({ arrangement: 'mobile', displayName: null })
+    openMenu(screen.getByRole('button', { name: 'Menu' }))
+    await screen.findAllByRole('menuitem')
+    expect(screen.getAllByRole('separator')).toHaveLength(1)
+  })
+
+  it('uses the bar-end placement rule-set (end-aligned to the gutter line, not centered)', async () => {
+    renderHeaderMenu({ arrangement: 'desktop', displayName: 'Idrisa the Bold' })
+    openMenu(screen.getByRole('button', { name: 'Idrisa the Bold' }))
+    const panel = await screen.findByTestId('frame-menu')
+    expect(panel.getAttribute('data-align')).toBe('end')
   })
 
   it('logout success: calls the endpoint then hard-navigates to /', async () => {

@@ -168,6 +168,57 @@ describe('Menu', () => {
     expect(screen.getByRole('menuitem').className).not.toContain('data-[highlighted]:bg-surface-hover')
   })
 
+  it('renders a separator row as a separator, not a menuitem; keyboard skips it', async () => {
+    const user = userEvent.setup()
+    render(
+      <Menu
+        trigger={<button>open</button>}
+        items={[
+          { value: 'billing', label: 'Sessions & billing' },
+          { separator: true },
+          { value: 'logout', label: 'Log out' },
+        ]}
+        data-testid="menu-content"
+      />,
+    )
+    await user.click(screen.getByText('open'))
+    expect(screen.getAllByRole('separator')).toHaveLength(1)
+    expect(screen.getAllByRole('menuitem')).toHaveLength(2)
+    // ArrowDown from the first item lands on Log out — the separator is not a stop.
+    await user.keyboard('{ArrowDown}{ArrowDown}')
+    expect(screen.getByRole('menuitem', { name: 'Log out' })).toHaveAttribute('data-highlighted')
+  })
+
+  it("placement='bar-end': end-aligned, trigger-width floor, collision-padded (the app-bar dropdown rule-set)", async () => {
+    const user = userEvent.setup()
+    render(
+      <Menu
+        trigger={<button>open</button>}
+        items={[{ value: 'a', label: 'A' }]}
+        placement="bar-end"
+        data-testid="menu-content"
+      />,
+    )
+    await user.click(screen.getByText('open'))
+    const panel = screen.getByTestId('menu-content')
+    // End-aligned: the menu's trailing edge shares the trigger's trailing edge
+    // (the bar's content gutter line) instead of Radix's centered default, which
+    // collision-shifts into the viewport edge from right-side chrome.
+    expect(panel).toHaveAttribute('data-align', 'end')
+    // Anchored width: at least the trigger, never less than 12rem.
+    expect(panel.className).toContain('min-w-[max(12rem,var(--radix-dropdown-menu-trigger-width))]')
+    expect(panel.className).not.toContain('min-w-[10rem]')
+  })
+
+  it('default placement keeps the inline-menu geometry (centered, 10rem floor)', async () => {
+    const user = userEvent.setup()
+    render(<Menu trigger={<button>open</button>} items={[{ value: 'a', label: 'A' }]} data-testid="menu-content" />)
+    await user.click(screen.getByText('open'))
+    const panel = screen.getByTestId('menu-content')
+    expect(panel).toHaveAttribute('data-align', 'center')
+    expect(panel.className).toContain('min-w-[10rem]')
+  })
+
   it('has no axe violations when open', async () => {
     const user = userEvent.setup()
     render(<Menu trigger={trigger} items={ITEMS} />)

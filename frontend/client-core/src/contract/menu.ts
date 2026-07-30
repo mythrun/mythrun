@@ -32,8 +32,34 @@ export interface MenuHeaderRow {
   label: string
 }
 
-/** One row of a menu: an actionable item or a non-interactive header. */
-export type MenuEntry = MenuItem | MenuHeaderRow
+/**
+ * A structural divider between item groups (rendered as a Radix Separator:
+ * `role="separator"`, never a keyboard stop). Menus that mix navigation with an
+ * exit action separate the two — Log out never sits flush under a nav item.
+ */
+export interface MenuSeparatorRow {
+  /** Discriminant. */
+  separator: true
+}
+
+/** One row of a menu: an actionable item, a non-interactive header, or a separator. */
+export type MenuEntry = MenuItem | MenuHeaderRow | MenuSeparatorRow
+
+/**
+ * Placement rule-set for the dropdown, chosen by WHERE the trigger lives —
+ * geometry is encoded here once, never hand-tuned per call site.
+ *
+ * - `'trigger'` (default) — an inline menu (card actions, list rows): centered
+ *   under its trigger, 4px offset, 10rem width floor.
+ * - `'bar-end'` — the app-bar rule-set, for menus hanging from right-side
+ *   chrome: END-aligned so the menu's trailing edge shares the trigger's
+ *   trailing edge (the bar's content gutter line; Radix's centered default
+ *   collision-shifts into the raw viewport edge from there), an 8px drop,
+ *   16px collision padding so the panel never touches the viewport, and a
+ *   width floor of max(12rem, trigger width) so the panel reads anchored to
+ *   the control that opened it.
+ */
+export type MenuPlacement = 'trigger' | 'bar-end'
 
 /**
  * Dropdown menu. The web impl wraps the unstyled Radix `DropdownMenu` primitive
@@ -67,4 +93,6 @@ export interface MenuProps extends BaseProps {
   onOpenChange?: (open: boolean) => void
   /** Preferred side to open toward. Default `bottom`. Radix flips it if there's no room. */
   side?: MenuSide
+  /** Geometry rule-set (see {@link MenuPlacement}). Default `'trigger'`. */
+  placement?: MenuPlacement
 }

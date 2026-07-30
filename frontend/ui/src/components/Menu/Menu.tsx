@@ -13,8 +13,18 @@ import { cn } from '../../lib/cn.ts'
 // `--surface-raised` tier with a 1px `--border-strong` edge, 0px radius, NO shadow.
 // Each item highlights via the `--surface-raised-hover` token-swap on
 // `data-highlighted` (Radix's keyboard/pointer focus marker); disabled items read
-// muted. Header rows render as non-interactive `DropdownMenu.Label`s. Layered at
-// `--z-dropdown` (1000).
+// muted. Header rows render as non-interactive `DropdownMenu.Label`s; separator
+// rows as `DropdownMenu.Separator`s (role="separator", never a keyboard stop).
+// Layered at `--z-dropdown` (1000).
+//
+// GEOMETRY lives in the placement rule-sets (contract `MenuPlacement`), never in
+// per-call-site numbers:
+//   'trigger'  — inline menus: Radix's centered default, 4px offset, 10rem floor.
+//   'bar-end'  — app-bar chrome: END-aligned (the centered default would hang
+//                past the viewport from right-side chrome and collision-shift to
+//                the raw screen edge, off the bar's gutter grid), 8px drop, 16px
+//                collision padding, width floor max(12rem, trigger width) via
+//                Radix's own trigger-width var so the panel reads anchored.
 export function Menu({
   trigger,
   items,
@@ -22,8 +32,10 @@ export function Menu({
   open,
   onOpenChange,
   side = 'bottom',
+  placement = 'trigger',
   'data-testid': dataTestId,
 }: MenuProps) {
+  const barEnd = placement === 'bar-end'
   // Radix's props are non-undefined under `exactOptionalPropertyTypes`, so we
   // conditionally spread the optional controlled-open props.
   return (
@@ -36,9 +48,14 @@ export function Menu({
         <RadixMenu.Content
           {...(dataTestId !== undefined ? { 'data-testid': dataTestId } : {})}
           side={side}
-          sideOffset={4}
+          align={barEnd ? 'end' : 'center'}
+          sideOffset={barEnd ? 8 : 4}
+          collisionPadding={barEnd ? 16 : 0}
           className={cn(
-            'z-[var(--z-dropdown)] min-w-[10rem] overflow-hidden p-[var(--space-1)]',
+            'z-[var(--z-dropdown)] overflow-hidden p-[var(--space-1)]',
+            barEnd
+              ? 'min-w-[max(12rem,var(--radix-dropdown-menu-trigger-width))]'
+              : 'min-w-[10rem]',
             // Width cap (mirrors Popover): a long label must truncate inside the
             // portal, not widen it past the viewport — portalled fixed-position
             // content never shows up in body.scrollWidth, so the CI overflow gate
@@ -54,7 +71,14 @@ export function Menu({
               below its content size; the row keeps flex/items-center for the 44px
               coarse-pointer centering. */}
           {items.map((entry, index) =>
-            'header' in entry ? (
+            'separator' in entry ? (
+              <RadixMenu.Separator
+                key={`separator-${String(index)}`}
+                // Full-bleed across the panel's p-1 inset — a partial-width rule
+                // reads as a broken border in the 1-bit register.
+                className="-mx-[var(--space-1)] my-[var(--space-1)] h-px bg-border"
+              />
+            ) : 'header' in entry ? (
               <RadixMenu.Label
                 key={`header-${String(index)}`}
                 className={cn(

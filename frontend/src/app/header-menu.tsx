@@ -53,17 +53,24 @@ export function HeaderMenu({ arrangement, displayName }: HeaderMenuProps): React
     setOpen(false)
   }, [narrow])
 
+  // Menu structure rule: navigation groups together; the exit action is fenced
+  // off by a separator (Log out never sits flush under a nav item); an identity
+  // header is fenced from everything below it. Same grammar both arrangements.
   const items: readonly MenuEntry[] =
     arrangement === 'mobile'
       ? [
-          ...(displayName !== null ? [{ header: true as const, label: displayName }] : []),
+          ...(displayName !== null
+            ? [{ header: true as const, label: displayName }, { separator: true as const }]
+            : []),
           { value: CAMPAIGNS_VALUE, label: t('frame.campaigns') },
           { value: BUY_VALUE, label: t('frame.buyCredits') },
           { value: BILLING_VALUE, label: t('frame.sessionsBilling') },
+          { separator: true as const },
           { value: LOGOUT_VALUE, label: t('frame.logout'), disabled: busy },
         ]
       : [
           { value: BILLING_VALUE, label: t('frame.sessionsBilling') },
+          { separator: true as const },
           { value: LOGOUT_VALUE, label: t('frame.logout'), disabled: busy },
         ]
 
@@ -117,6 +124,9 @@ export function HeaderMenu({ arrangement, displayName }: HeaderMenuProps): React
       onSelect={onSelect}
       open={open}
       onOpenChange={setOpen}
+      // The app-bar geometry rule-set: end-aligned to the trigger (the bar's
+      // gutter line), clear drop, collision-padded, trigger-width floor.
+      placement="bar-end"
       data-testid="frame-menu"
     />
   )

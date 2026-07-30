@@ -85,7 +85,9 @@ export const WithHeaderRow: Story = {
   args: {
     items: [
       { header: true, label: 'menu.identity' },
+      { separator: true },
       { value: 'settings', label: 'menu.settings' },
+      { separator: true },
       { value: 'logout', label: 'menu.logout' },
     ],
   },
