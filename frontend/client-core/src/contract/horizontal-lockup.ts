@@ -17,6 +17,12 @@ export interface HorizontalLockupProps extends Omit<BaseProps, 'children'> {
    * the lockup is a meaningful image.
    */
   'aria-label': string
-  /** Rendered height in CSS pixels; width tracks the locked aspect. Default `56`. */
-  size?: number
+  /**
+   * Rendered height. A number is CSS pixels with width derived from the locked
+   * aspect. `'fluid'` renders no fixed dimensions — the lockup fills its
+   * parent's HEIGHT (`h-full w-auto`; the SVG viewBox preserves aspect), for
+   * bars whose height is a CSS `clamp()` the number form cannot express.
+   * Default `56`.
+   */
+  size?: number | 'fluid'
 }

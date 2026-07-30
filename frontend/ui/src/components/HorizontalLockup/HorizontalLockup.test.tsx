@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createRef } from 'react'
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { axe } from 'jest-axe'
 import { HorizontalLockup } from './HorizontalLockup.tsx'
 
@@ -36,6 +36,22 @@ describe('HorizontalLockup', () => {
   it('defaults to a 56px height', () => {
     const { getByRole } = render(<HorizontalLockup aria-label="Mythrun" />)
     expect(getByRole('img', { name: 'Mythrun' }).getAttribute('height')).toBe('56')
+  })
+
+  it("size='fluid' renders no fixed dimensions and fills the parent's height", () => {
+    render(<HorizontalLockup aria-label="Mythrun" size="fluid" data-testid="lockup" />)
+    const svg = screen.getByTestId('lockup')
+    expect(svg).not.toHaveAttribute('width')
+    expect(svg).not.toHaveAttribute('height')
+    expect(svg.getAttribute('class')).toContain('h-full')
+    expect(svg.getAttribute('class')).toContain('w-auto')
+  })
+
+  it('numeric size keeps the locked aspect (regression)', () => {
+    render(<HorizontalLockup aria-label="Mythrun" size={56} data-testid="lockup-n" />)
+    const svg = screen.getByTestId('lockup-n')
+    expect(svg).toHaveAttribute('height', '56')
+    expect(Number(svg.getAttribute('width'))).toBeCloseTo((56 * 1284) / 548, 0)
   })
 
   it('passes through data-testid and forwards its ref', () => {

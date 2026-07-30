@@ -26,17 +26,18 @@ export const HorizontalLockup = forwardRef<SVGSVGElement, HorizontalLockupProps>
   ref,
 ) {
   // Derive the width from the locked aspect so the composition never distorts.
-  const width = (size * ASPECT_W) / ASPECT_H
+  // The `fluid` check comes before the arithmetic so TS narrows `size` to number.
+  const fluid = size === 'fluid'
+  const width = fluid ? undefined : (size * ASPECT_W) / ASPECT_H
   return (
     <svg
       ref={ref}
       viewBox={`0 0 ${String(ASPECT_W)} ${String(ASPECT_H)}`}
-      width={width}
-      height={size}
+      {...(fluid ? {} : { width, height: size })}
       fill="currentColor"
       role="img"
       aria-label={ariaLabel}
-      className={cn('shrink-0 text-ink')}
+      className={cn('shrink-0 text-ink', fluid && 'h-full w-auto')}
       {...(dataTestId !== undefined ? { 'data-testid': dataTestId } : {})}
     >
       {HORIZONTAL_LOCKUP_PATHS.map((d) => (

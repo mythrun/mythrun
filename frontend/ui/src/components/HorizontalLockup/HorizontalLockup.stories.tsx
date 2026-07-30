@@ -33,3 +33,13 @@ export const Sizes: Story = {
     </div>
   ),
 }
+
+// `size="fluid"` renders no fixed dimensions — the lockup fills the parent's
+// height (`h-full w-auto`), for bars whose height a number cannot express.
+export const Fluid: Story = {
+  render: () => (
+    <div className="h-12">
+      <HorizontalLockup aria-label="Mythrun" size="fluid" />
+    </div>
+  ),
+}
