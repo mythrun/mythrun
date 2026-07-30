@@ -15,7 +15,7 @@
     "frontend/copy-workbench/**/*.{ts,tsx,mjs}",
     // Compile-time type-level test: its @ts-expect-error firing IS the
     // assertion; nothing imports it by design.
-    "frontend/src/i18n/typed-keys.guard.ts"
+    "frontend/src/i18n/typed-keys.guard.ts",
   ],
   "ignore": [
     // Wiki build-time artifacts: layout/helper.js is copied into site/ by the
@@ -27,17 +27,17 @@
     // loader — no Node import graph.
     "infra/modules/frontend-hosting/functions/**",
     // ESLint rule test fixture referenced by path from the rule tests.
-    "backend/eslint-rules/__tests__/fixtures/**"
+    "backend/eslint-rules/__tests__/fixtures/**",
   ],
   "workspaces": {
     "backend": {
       // Piped in scripts/dev-logged.sh (shell consumer, no import graph).
-      "ignoreDependencies": ["pino-pretty"]
+      "ignoreDependencies": ["pino-pretty"],
     },
     "frontend": {
       // Installed/driven by CI (frontend-check.yml: playwright install) for
       // the storybook test-runner; no direct import.
-      "ignoreDependencies": ["playwright"]
-    }
-  }
+      "ignoreDependencies": ["playwright"],
+    },
+  },
 }
