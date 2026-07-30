@@ -26,6 +26,10 @@ export {
 
 // Endpoint slices + the thin React-Query suspense hooks the screens render against.
 export { getMe, useMe, register, checkUsername } from './api/users.ts'
+// LLM outage readout (outage-resilience §4.1) — the public health GET the
+// frame's notice-strip hook polls; `LlmHealthResponse` rides the same barrel.
+export { getLlmHealth } from './api/llm-health.ts'
+export type { LlmHealthResponse } from './api/llm-health.ts'
 export {
   getMyCampaigns,
   useMyCampaigns,

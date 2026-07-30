@@ -201,6 +201,10 @@ export type {
 // function is a RUNTIME value, so it ships from the UI package, not this barrel.
 export type { BannerProps, Severity } from './banner.ts'
 export type { ToastOptions, ToastProviderProps } from './toast.ts'
+// NoticeStrip (outage resilience 2026-07-30 §4.2) — the sitewide outage notice:
+// a permanently-mounted role="status" prose strip; `message: null` collapses it
+// visually while the live-region host stays in the accessibility tree.
+export type { NoticeStripProps } from './notice-strip.ts'
 
 // Identity + display contracts (MYT-82 Wave 3d) — Avatar / AvatarGroup, Badge,
 // Dither. Avatar wraps `radix-ui`'s Avatar (image-with-fallback) behind a

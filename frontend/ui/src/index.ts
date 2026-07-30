@@ -224,6 +224,11 @@ export type { ResizeHandleProps } from './components/ResizeHandle/ResizeHandle.t
 export { Banner } from './components/Banner/Banner.tsx'
 export { ToastProvider } from './components/Toast/Toast.tsx'
 export { toast } from './components/Toast/toast-store.ts'
+// NoticeStrip (outage resilience 2026-07-30 §4.2) — the sitewide outage notice:
+// a slim full-width quiet prose strip under the sticky bar, on a PERMANENTLY-
+// MOUNTED role="status" live region (message: null collapses it visually; the
+// host never leaves the accessibility tree).
+export { NoticeStrip } from './components/NoticeStrip/NoticeStrip.tsx'
 
 // Identity + display (MYT-82 Wave 3d) — Avatar / AvatarGroup (Radix
 // image-with-fallback; the brand's one sanctioned ROUND shape), Badge (a flat
@@ -377,6 +382,7 @@ export type {
   Severity,
   ToastOptions,
   ToastProviderProps,
+  NoticeStripProps,
   AvatarProps,
   AvatarGroupProps,
   AvatarSize,
