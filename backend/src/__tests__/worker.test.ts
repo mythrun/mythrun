@@ -94,6 +94,19 @@ interface FakeQueueEvents {
 }
 const queueEventsInstances: FakeQueueEvents[] = []
 
+// llm-outage-resilience Task 7: the probe wiring constructs producer Queues
+// (the probe queue + three promote-scan handles) and registers the repeatable
+// cycle via upsertJobScheduler — capture instances so the test can assert the
+// scheduler registration and the shutdown closes by queue name.
+interface FakeQueue {
+  name: string
+  add: ReturnType<typeof vi.fn>
+  close: ReturnType<typeof vi.fn>
+  upsertJobScheduler: ReturnType<typeof vi.fn>
+  getDelayed: ReturnType<typeof vi.fn>
+}
+const queueInstances: FakeQueue[] = []
+
 // The bullmq mock now also covers Queue + QueueEvents, which the two new MYT-67
 // builders construct:
 //   - buildDmTriggerWorker (T9) makes two `new Queue(...)` producers (dm-trigger,
@@ -114,11 +127,17 @@ vi.mock('bullmq', () => ({
     workerInstances.push(instance)
     return instance
   }),
-  Queue: vi.fn((name: string) => ({
-    name,
-    add: vi.fn(() => Promise.resolve()),
-    close: vi.fn(() => Promise.resolve()),
-  })),
+  Queue: vi.fn((name: string) => {
+    const instance: FakeQueue = {
+      name,
+      add: vi.fn(() => Promise.resolve()),
+      close: vi.fn(() => Promise.resolve()),
+      upsertJobScheduler: vi.fn(() => Promise.resolve()),
+      getDelayed: vi.fn(() => Promise.resolve([])),
+    }
+    queueInstances.push(instance)
+    return instance
+  }),
   QueueEvents: vi.fn(() => {
     const instance: FakeQueueEvents = {
       close: vi.fn(() => Promise.resolve()),
@@ -157,6 +176,7 @@ describe('worker.main()', () => {
     vi.mocked(BullmqWorkerCtor).mockClear()
     workerInstances.length = 0
     queueEventsInstances.length = 0
+    queueInstances.length = 0
   })
 
   afterEach(() => {
@@ -176,12 +196,13 @@ describe('worker.main()', () => {
 
     void main() // never awaited — main blocks forever on Promise<never>
 
-    // Wait for startup: workers registered, health server up. Nine workers:
+    // Wait for startup: workers registered, health server up. Ten workers:
     // world-gen, campaign-setup, session-prep (MYT-61 T4), session-turn (MYT-66),
     // dm-trigger (MYT-67 T9), st-evaluation (MYT-69 T15), scribe (MYT-73 T11),
-    // session-reconcile (MYT-74a T13), session-analysis (MYT-74b T14).
+    // session-reconcile (MYT-74a T13), session-analysis (MYT-74b T14),
+    // llm-health-probe (llm-outage-resilience T7).
     await vi.waitFor(() => {
-      expect(workerInstances).toHaveLength(9)
+      expect(workerInstances).toHaveLength(10)
     })
     // myth-y2qfi: the escape guard's unhandledRejection + uncaughtException
     // listeners are registered at boot (the net that kept the 2026-07-19
@@ -200,6 +221,23 @@ describe('worker.main()', () => {
     // The session-analysis worker (MYT-74b T14) is on QUEUE_SESSION_ANALYSIS
     // ('session-analysis').
     expect(workerInstances.map((w) => w.name)).toContain('session-analysis')
+    // llm-outage-resilience T7: the recovery-probe worker consumes
+    // QUEUE_LLM_HEALTH_PROBE, and boot registers the repeatable 60s cycle via
+    // the IDEMPOTENT upsertJobScheduler (same scheduler id every boot — a
+    // rolling deploy must re-assert, not stack, the repeatable job).
+    expect(workerInstances.map((w) => w.name)).toContain('llm-health-probe')
+    const probeQueue = queueInstances.find((q) => q.name === 'llm-health-probe')
+    expect(probeQueue).toBeDefined()
+    expect(probeQueue?.upsertJobScheduler).toHaveBeenCalledWith(
+      'llm-health-probe-cycle',
+      { every: 60_000 },
+      { name: 'llm-health-probe' },
+    )
+    // The §3.2 promote scan's producer handles on the three prep queues exist
+    // (Worker objects can't list delayed jobs).
+    for (const scanQueue of ['world-gen', 'session-prep', 'campaign-setup']) {
+      expect(queueInstances.map((q) => q.name)).toContain(scanQueue)
+    }
     // MYT-102 A2: the campaign-setup worker attaches the 'failed' listener
     // that surfaces attempts-exhausted character-creation jobs (flips the
     // concept to 'failed' + publishes a terminal stage-failed). Without it,
@@ -248,6 +286,14 @@ describe('worker.main()', () => {
     // duplicate().quit()), else a connection leaks per deploy (§4.8).
     expect(queueEventsInstances[0]?.close).toHaveBeenCalledTimes(1)
     expect(batchDuplicateQuitMock).toHaveBeenCalledTimes(1)
+    // llm-outage-resilience T7: the probe queue + the three promote-scan
+    // producer handles are distinct Queue clients on redisBatch — each MUST be
+    // closed on SIGTERM or a connection leaks per deploy (the finalize-producer
+    // rule, extended).
+    for (const name of ['llm-health-probe', 'world-gen', 'session-prep', 'campaign-setup']) {
+      const q = queueInstances.find((instance) => instance.name === name)
+      expect(q?.close, `queue ${name} close`).toHaveBeenCalled()
+    }
     expect(pgEndMock).toHaveBeenCalledTimes(1)
     expect(batchQuitMock).toHaveBeenCalledTimes(1)
     expect(realtimeQuitMock).toHaveBeenCalledTimes(1)

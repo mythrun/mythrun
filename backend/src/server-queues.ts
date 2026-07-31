@@ -37,6 +37,7 @@ import {
 } from './session/post-session-analysis.js'
 import { QUEUE_DM_TRIGGER } from './session/dm-trigger-config.js'
 import type { DmTriggerPayload, DmTriggerQueueLike } from './session/dm-trigger-queue.js'
+import { QUEUE_LLM_HEALTH_PROBE } from './llm/llm-health-probe.js'
 
 /** MYT-51 T12: build the world-gen BullMQ queue + its plugin-facing
  *  adapter. Extracted from main() so the boot orchestrator stays under
@@ -319,6 +320,31 @@ export function buildDmTriggerQueue(redisBatch: Redis): {
     add: (name, data, opts) => bullmqQueue.add(name, data, opts),
   }
   return { bullmqQueue, dmTriggerQueue }
+}
+
+/** llm-outage-resilience §2.2: build the llm-health-probe Queue — the dedicated
+ *  queue whose repeatable 60s job scheduler drives the recovery probe cycle.
+ *  Consumed by worker.ts ONLY (scheduler upsert + Worker registration); the API
+ *  server neither enqueues nor consumes it, so there is no adapter and no
+ *  boot-gate stub variant.
+ *
+ *  Job-options policy:
+ *   - `attempts: 1` — a failed cycle must NOT retry: the next 60s scheduler
+ *     tick IS the retry, and an in-interval retry would violate the
+ *     cycle-under-interval single-flight invariant (§2.2).
+ *   - `removeOnComplete/removeOnFail: { count: 0 }` — scheduler-produced jobs
+ *     carry generated repeat ids nothing reads; prune them so a long outage
+ *     doesn't accumulate 1,440 terminal records a day in Redis. */
+export function buildLlmHealthProbeQueue(redisBatch: Redis): { bullmqQueue: Queue } {
+  const bullmqQueue = new Queue(QUEUE_LLM_HEALTH_PROBE, {
+    connection: redisBatch,
+    defaultJobOptions: {
+      attempts: 1,
+      removeOnComplete: { count: 0 },
+      removeOnFail: { count: 0 },
+    },
+  })
+  return { bullmqQueue }
 }
 
 // Stub queue/worker for the boot-gate-disabled fallback path. The fallback

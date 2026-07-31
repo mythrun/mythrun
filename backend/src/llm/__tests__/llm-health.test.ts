@@ -371,4 +371,37 @@ describe('createLlmHealthTracker', () => {
       dead.disconnect()
     })
   })
+
+  // Task 7 round-1 fix: the §3.2 fire-once recovery net. The flag is owned by
+  // the probe CYCLE (set post-clear, removed only after a promote scan
+  // completes), so unlike the four state-machine keys it is not touched by the
+  // Lua scripts — plain commands with the shared prefix + TTL discipline.
+  describe('promote-pending flag', () => {
+    it('absent by default, present after mark, absent after clear', async () => {
+      const { tracker } = makeTracker()
+      expect(await tracker.hasPromotePending()).toBe(false)
+      await tracker.markPromotePending()
+      expect(await tracker.hasPromotePending()).toBe(true)
+      await tracker.clearPromotePending()
+      expect(await tracker.hasPromotePending()).toBe(false)
+    })
+
+    it('lives under the shared prefix with the 30-min TTL bound', async () => {
+      const { tracker, prefix } = makeTracker()
+      await tracker.markPromotePending()
+      const key = `${prefix}llm-health:promote-pending`
+      expect(await redis.exists(key)).toBe(1)
+      // TTL bounds a never-clearing flag (a scan that fails forever must not
+      // bypass the §3.1 ladder indefinitely); 30 min matches the state keys.
+      const ttl = await redis.ttl(key)
+      expect(ttl).toBeGreaterThan(0)
+      expect(ttl).toBeLessThanOrEqual(30 * 60)
+    })
+
+    it('clear is idempotent when the flag is absent', async () => {
+      const { tracker } = makeTracker()
+      await expect(tracker.clearPromotePending()).resolves.toBeUndefined()
+      expect(await tracker.hasPromotePending()).toBe(false)
+    })
+  })
 })

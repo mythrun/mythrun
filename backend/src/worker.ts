@@ -46,7 +46,23 @@ import {
 import { finalizeEndedSession, type FinalizeEndedSessionDeps } from './session/session-end.js'
 import { makeSessionState } from './redis/session-state.js'
 import { buildSessionTurnQueueEvents } from './session/session-turn-queue-events.js'
-import { buildSessionReconcileQueue, buildSessionAnalysisQueue } from './server-queues.js'
+import {
+  buildSessionReconcileQueue,
+  buildSessionAnalysisQueue,
+  buildLlmHealthProbeQueue,
+  buildWorldGenQueue,
+  buildSessionPrepQueue,
+  buildCharacterCreationQueue,
+} from './server-queues.js'
+import { createLlmHealthTracker } from './llm/llm-health.js'
+import {
+  createArmedStampPromoter,
+  probeModelOnce,
+  runProbeCycle,
+  LLM_HEALTH_PROBE_EVERY_MS,
+  LLM_HEALTH_PROBE_SCHEDULER_ID,
+  QUEUE_LLM_HEALTH_PROBE,
+} from './llm/llm-health-probe.js'
 import { createRepo } from './repo/index.js'
 import { sessionChannel } from './contract/session-channel.js'
 import { QUEUE_DM_TRIGGER } from './session/dm-trigger-config.js'
@@ -244,8 +260,11 @@ async function bootWorker(partials: BootPartials): Promise<void> {
   //     consumers, no crash. Boot failures now propagate to main()'s boot gate,
   //     which closes the partials and exits non-zero (see failBoot).
   //
-  // Nothing between here and health.arm() awaits, so no job can interleave into
-  // the window that the guard does not cover — the two phases are disjoint.
+  // Between here and health.arm() the only await is the llm-health-probe
+  // scheduler upsert below — and by then the guard is already installed, so a
+  // job that starts during that await is covered; boot-phase throws (including
+  // the upsert's own) still propagate to main()'s boot gate, because awaited
+  // rejections never reach the guard.
   //
   // `shuttingDown` is declared here (hoisted from the shutdown block below) so
   // the guard no-ops during graceful teardown — a teardown-race rejection must
@@ -483,6 +502,55 @@ async function bootWorker(partials: BootPartials): Promise<void> {
     (args) => finalizeEndedSession(finalizeDeps, args),
   )
 
+  // LLM recovery probe (llm-outage-resilience §2.2 + §3.2). One repeatable
+  // 60s job — registered via idempotent upsertJobScheduler, so every worker
+  // boot re-asserts the same scheduler rather than stacking duplicates — runs
+  // runProbeCycle: healthy = one Redis GET plus the fire-once armed-stamp
+  // scan; degraded = parallel single-attempt probes that drive the Lua clear.
+  // The promote scan needs producer handles on the three prep queues (BullMQ
+  // Worker objects can't list delayed jobs); like the finalize producers above
+  // they are distinct Queue clients on redisBatch and get their own close at
+  // shutdown. The tracker rides redisRealtime — health state is app state, not
+  // queue plumbing, and GET /api/llm-health reads the same keys there.
+  const llmHealthTracker = createLlmHealthTracker(redisRealtime, env.redisKeyPrefix, logger)
+  const { bullmqQueue: llmHealthProbeQueue } = buildLlmHealthProbeQueue(redisBatch)
+  const { bullmqQueue: worldGenScanQueue } = buildWorldGenQueue(redisBatch)
+  const { bullmqQueue: sessionPrepScanQueue } = buildSessionPrepQueue(redisBatch)
+  const { bullmqQueue: characterCreationScanQueue } = buildCharacterCreationQueue(redisBatch)
+  const promoteArmed = createArmedStampPromoter({
+    stamps: repoForFinalize.resumeStamps,
+    concepts: repoForFinalize.characterConcepts,
+    queues: {
+      worldGen: worldGenScanQueue,
+      sessionPrep: sessionPrepScanQueue,
+      characterCreation: characterCreationScanQueue,
+    },
+    logger,
+  })
+  await llmHealthProbeQueue.upsertJobScheduler(
+    LLM_HEALTH_PROBE_SCHEDULER_ID,
+    { every: LLM_HEALTH_PROBE_EVERY_MS },
+    { name: QUEUE_LLM_HEALTH_PROBE },
+  )
+  const llmHealthProbeWorker = new BullmqWorker(
+    QUEUE_LLM_HEALTH_PROBE,
+    containProcessor(
+      QUEUE_LLM_HEALTH_PROBE,
+      async () => {
+        await runProbeCycle({
+          tracker: llmHealthTracker,
+          models: { probe: probeModelOnce },
+          promoteArmed,
+          logger,
+        })
+      },
+      logger,
+    ),
+    // concurrency 1 is belt-and-suspenders: the real single-flight guarantee
+    // is the timing invariant (cycle < 60s interval), per §2.2.
+    { connection: redisBatch, concurrency: 1 },
+  )
+
   // Arm the (already bound) health server last — only marks healthy once
   // everything else is up. The socket itself was claimed at the top of main()
   // as the duplicate-worker guard; this is the phase that supplies the probes.
@@ -500,6 +568,7 @@ async function bootWorker(partials: BootPartials): Promise<void> {
       scribeWorker,
       sessionReconcileWorker,
       sessionAnalysisWorker,
+      llmHealthProbeWorker,
     ],
   })
 
@@ -517,6 +586,7 @@ async function bootWorker(partials: BootPartials): Promise<void> {
         QUEUE_SCRIBE,
         QUEUE_SESSION_RECONCILE,
         QUEUE_SESSION_ANALYSIS,
+        QUEUE_LLM_HEALTH_PROBE,
       ],
     },
     'worker started',
@@ -546,6 +616,7 @@ async function bootWorker(partials: BootPartials): Promise<void> {
       closeWithDeadline(scribeWorker, WORKER_CLOSE_GRACE_MS),
       closeWithDeadline(sessionReconcileWorker, WORKER_CLOSE_GRACE_MS),
       closeWithDeadline(sessionAnalysisWorker, WORKER_CLOSE_GRACE_MS),
+      closeWithDeadline(llmHealthProbeWorker, WORKER_CLOSE_GRACE_MS),
     ])
 
     // Tear down the session-turn QueueEvents subscriber's dedicated blocking
@@ -565,6 +636,22 @@ async function bootWorker(partials: BootPartials): Promise<void> {
     await finalizeAnalysisBullQueue.close().catch((err: unknown) => {
       logger.error({ err }, 'finalize analysis queue close failed')
     })
+
+    // Close the llm-health-probe producer + the three promote-scan queue
+    // handles (llm-outage-resilience Task 7). Same rationale as the finalize
+    // producers: distinct Queue clients on redisBatch that quit() won't cover.
+    // Closed after the workers drain so an in-flight probe cycle can still
+    // finish its promote scan.
+    for (const [label, queue] of [
+      ['llm-health-probe queue', llmHealthProbeQueue],
+      ['world-gen scan queue', worldGenScanQueue],
+      ['session-prep scan queue', sessionPrepScanQueue],
+      ['character-creation scan queue', characterCreationScanQueue],
+    ] as const) {
+      await queue.close().catch((err: unknown) => {
+        logger.error({ err }, `${label} close failed`)
+      })
+    }
 
     await pg.end().catch((err: unknown) => {
       logger.error({ err }, 'pg pool end failed')

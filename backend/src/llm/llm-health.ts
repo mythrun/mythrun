@@ -27,6 +27,16 @@
 //                                     lost-update race across reporters.
 //   llm-health:probe-successes  ctr   reset on arming, any probe failure,
 //                                     any new report. TTL 30 min. At 3 → clear.
+//   llm-health:promote-pending  flag  the §3.2 fire-once recovery net, owned by
+//                                     the PROBE CYCLE (not the Lua scripts): set
+//                                     immediately after a clear, removed only
+//                                     when a promote scan completes — a healthy
+//                                     cycle that sees it re-runs the full scan,
+//                                     so a probe-worker death (or a Postgres
+//                                     blip in the scan itself) between clear
+//                                     and scan cannot strand parked jobs. TTL
+//                                     30 min bounds a never-clearing flag so it
+//                                     cannot bypass the §3.1 ladder forever.
 //
 // BOTH transitions are Lua (normative — §2.1): arm = evaluate-window +
 // SET NX + seed models atomically; clear = verify-counter + DEL all four
@@ -67,6 +77,13 @@ export interface LlmHealthTracker {
    *  models TTLs (the refresh is what makes a dead probe worker self-heal —
    *  no refresher, no state). */
   probeFailure(): Promise<void>
+  /** Arm the fire-once recovery net: called by the clearing probe cycle
+   *  BEFORE its promote scan, so a death mid-scan leaves the flag behind. */
+  markPromotePending(): Promise<void>
+  /** Disarm the net — only after a promote scan completed successfully. */
+  clearPromotePending(): Promise<void>
+  /** Healthy cycles consult this: present → re-run the full ('all') scan. */
+  hasPromotePending(): Promise<boolean>
 }
 
 const ARM_THRESHOLD = 3
@@ -155,6 +172,7 @@ export function createLlmHealthTracker(
   const stateKey = `${keyPrefix}llm-health:state`
   const modelsKey = `${keyPrefix}llm-health:models`
   const counterKey = `${keyPrefix}llm-health:probe-successes`
+  const promotePendingKey = `${keyPrefix}llm-health:promote-pending`
 
   return {
     report: async (r) => {
@@ -242,6 +260,16 @@ export function createLlmHealthTracker(
         .expire(modelsKey, STATE_TTL_SEC)
         .exec()
     },
+
+    markPromotePending: async () => {
+      await redis.set(promotePendingKey, '1', 'EX', STATE_TTL_SEC)
+    },
+
+    clearPromotePending: async () => {
+      await redis.del(promotePendingKey)
+    },
+
+    hasPromotePending: async () => (await redis.exists(promotePendingKey)) === 1,
   }
 }
 

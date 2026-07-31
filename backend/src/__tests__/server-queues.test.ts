@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import IoredisMock from 'ioredis-mock'
-import { buildSessionAnalysisQueue } from '../server-queues.js'
+import { buildLlmHealthProbeQueue, buildSessionAnalysisQueue } from '../server-queues.js'
 import { QUEUE_SESSION_ANALYSIS } from '../session/post-session-analysis.js'
+import { QUEUE_LLM_HEALTH_PROBE } from '../llm/llm-health-probe.js'
 
 // MYT-74b T14: lock in the session-analysis producer Queue's policy.
 //
@@ -42,6 +43,25 @@ describe('buildSessionAnalysisQueue', () => {
     const payload = { campaignId: 'c1', sessionId: 's1' }
     await sessionAnalysisQueue.add('analysis', payload, { jobId: 'analysis-s1' })
     expect(addSpy).toHaveBeenCalledWith('analysis', payload, { jobId: 'analysis-s1' })
+
+    await bullmqQueue.close()
+  })
+})
+
+// llm-outage-resilience Task 7: lock in the probe Queue's policy. `attempts: 1`
+// is load-bearing — the next 60s scheduler tick is the retry, and an
+// in-interval BullMQ retry would violate the cycle-under-interval single-flight
+// invariant (design §2.2). The {count: 0} pruning keeps a long outage from
+// accumulating a terminal-job record per minute in Redis.
+describe('buildLlmHealthProbeQueue', () => {
+  it('builds the probe Queue single-attempt with terminal-job pruning', async () => {
+    const { bullmqQueue } = buildLlmHealthProbeQueue(new IoredisMock())
+
+    expect(bullmqQueue.name).toBe(QUEUE_LLM_HEALTH_PROBE)
+    const opts = bullmqQueue.opts.defaultJobOptions
+    expect(opts?.attempts).toBe(1)
+    expect(opts?.removeOnComplete).toEqual({ count: 0 })
+    expect(opts?.removeOnFail).toEqual({ count: 0 })
 
     await bullmqQueue.close()
   })
