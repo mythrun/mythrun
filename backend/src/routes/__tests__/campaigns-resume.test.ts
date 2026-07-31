@@ -359,6 +359,113 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
   })
 
   // -----------------------------------------------------------------------
+  // llm-outage-resilience §3.3 — the parked representation. A park leaves
+  // the stage row failed with worlds.status still 'generating' plus an
+  // llm_resume_stamps row keyed ('world_gen', campaignId). While the stamp
+  // is armed and not overdue the phase derives generating-shaped, so the
+  // retry arm 409s as if generating; once the failed surface DOES derive
+  // (overdue / exhausted / genuine failure), a retry starts a fresh park
+  // episode — clearStamp before the re-enqueue.
+  // -----------------------------------------------------------------------
+
+  describe('parked world-gen (resume stamps)', () => {
+    async function insertStamp(
+      campaignId: string,
+      s: { nextResumeAt: Date | null; consumedMs?: number; attempt?: number },
+    ): Promise<void> {
+      await pool.query(
+        `INSERT INTO llm_resume_stamps
+           (pipeline, entity_id, resume_attempt, next_resume_at, park_consumed_ms, last_error_class)
+         VALUES ('world_gen', $1, $2, $3, $4, 'connectivity')`,
+        [campaignId, s.attempt ?? 1, s.nextResumeAt, s.consumedMs ?? 30_000],
+      )
+    }
+
+    async function stampExists(campaignId: string): Promise<boolean> {
+      const { rows } = await pool.query(
+        `SELECT 1 FROM llm_resume_stamps WHERE pipeline = 'world_gen' AND entity_id = $1`,
+        [campaignId],
+      )
+      return rows.length > 0
+    }
+
+    it('armed + not overdue → 409 world_gen_in_progress (no re-enqueue, stamp intact)', async () => {
+      const seed = await seedCampaign(pool, scope) // world stays 'generating'
+      await insertRun(pool, {
+        worldId: seed.worldId,
+        stage: 'world_and_factions',
+        status: 'failed',
+        error: '{"code":"llm_overloaded","message":"529"}',
+        startedAt: new Date(Date.now() - 1000),
+        completedAt: new Date(),
+      })
+      await insertStamp(seed.campaignId, { nextResumeAt: new Date(Date.now() + 60_000) })
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/resume`,
+        headers: { 'x-mythrun-dev-sub': seed.devSub },
+      })
+      expect(res.statusCode).toBe(409)
+      expect(res.json()).toEqual({ code: 'world_gen_in_progress' })
+      expect(res.headers['retry-after']).toBe('30')
+      expect(queueSpy.add).not.toHaveBeenCalled()
+      expect(await stampExists(seed.campaignId)).toBe(true)
+    })
+
+    it('overdue stamp (wake never claimed) → 202 re-enqueued with a FRESH episode (stamp cleared)', async () => {
+      const seed = await seedCampaign(pool, scope)
+      await insertRun(pool, {
+        worldId: seed.worldId,
+        stage: 'world_and_factions',
+        status: 'failed',
+        error: '{"code":"llm_overloaded","message":"529"}',
+        startedAt: new Date(Date.now() - 1000),
+        completedAt: new Date(),
+      })
+      // 10 minutes past the scheduled resume — beyond the 5-minute grace.
+      await insertStamp(seed.campaignId, { nextResumeAt: new Date(Date.now() - 10 * 60_000) })
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/resume`,
+        headers: { 'x-mythrun-dev-sub': seed.devSub },
+      })
+      expect(res.statusCode).toBe(202)
+      expect(res.json()).toEqual({
+        campaignId: seed.campaignId,
+        action: 'world-gen-re-enqueued',
+      })
+      expect(queueSpy.add).toHaveBeenCalledTimes(1)
+      expect(await stampExists(seed.campaignId)).toBe(false)
+    })
+
+    it('exhausted budget → 202 re-enqueued with a FRESH episode (stamp cleared)', async () => {
+      // Exhaustion ran today's failed path, so the world is entity-failed.
+      const seed = await seedCampaign(pool, scope, { worldStatus: 'failed' })
+      await insertRun(pool, {
+        worldId: seed.worldId,
+        stage: 'world_and_factions',
+        status: 'failed',
+        error: '{"code":"llm_overloaded","message":"529"}',
+        startedAt: new Date(Date.now() - 1000),
+        completedAt: new Date(),
+      })
+      await insertStamp(seed.campaignId, {
+        nextResumeAt: null,
+        consumedMs: 6 * 60 * 60 * 1000,
+        attempt: 4,
+      })
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/resume`,
+        headers: { 'x-mythrun-dev-sub': seed.devSub },
+      })
+      expect(res.statusCode).toBe(202)
+      expect(queueSpy.add).toHaveBeenCalledTimes(1)
+      expect(await stampExists(seed.campaignId)).toBe(false)
+    })
+  })
+
+  // -----------------------------------------------------------------------
   // phase = world_ready
   // -----------------------------------------------------------------------
 

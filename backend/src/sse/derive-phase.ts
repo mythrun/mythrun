@@ -6,6 +6,7 @@
 // need to dedupe.
 
 import { WORLD_GEN_STAGES } from '@mythrun/contract/events'
+import { PARK_BUDGET_MS } from '../repo/resume-stamps.js'
 
 export type PipelinePhase =
   | 'not_started'
@@ -40,6 +41,38 @@ export interface PipelineRunRow {
   readonly cost_usd: number
 }
 
+// llm-outage-resilience §3: the parked-run resume stamp, as this module needs
+// it — a structural mirror of `ResumeStamp` (repo/resume-stamps.ts) minus the
+// (pipeline, entityId) key, following the row-shape pattern above. `null`
+// nextResumeAt = claimed/in-flight (the claim cleared it); a non-null value in
+// the future = armed for a wake.
+export interface ResumeStampView {
+  readonly resumeAttempt: number
+  readonly nextResumeAt: Date | null
+  readonly parkConsumedMs: number
+  readonly lastErrorClass: 'connectivity' | 'rate-limit'
+}
+
+// §3.2 overdue arm: a wake that never claimed within this grace past its
+// scheduled resume is treated as lost — the derivation falls back to the
+// failed/retryable surface. Pure row predicate; no queue I/O.
+const PARK_OVERDUE_GRACE_MS = 5 * 60_000
+
+// §3.3: `resuming` while the stamp exists, unexhausted, not overdue. An
+// in-flight stamp (nextResumeAt NULL) cannot be overdue — the claim that
+// cleared it IS the stage start the overdue predicate waits for.
+function isResumingStamp(stamp: ResumeStampView | null, now: Date): boolean {
+  if (stamp === null) return false
+  if (stamp.parkConsumedMs >= PARK_BUDGET_MS) return false
+  if (
+    stamp.nextResumeAt !== null &&
+    now.getTime() > stamp.nextResumeAt.getTime() + PARK_OVERDUE_GRACE_MS
+  ) {
+    return false
+  }
+  return true
+}
+
 interface StageEntry {
   readonly stage: string
   readonly status: 'pending' | 'running' | 'completed' | 'failed'
@@ -60,6 +93,12 @@ export interface PhaseAndStages {
   readonly phase: PipelinePhase
   readonly stages: readonly StageEntry[]
   readonly cumulativeCostUsd: number
+  // llm-outage-resilience §3.4 (additive): present iff a resume stamp exists
+  // for the world_gen pipeline. The hold copy keys off the class via the
+  // snapshot derivation (never only the live SSE event — the class must
+  // re-derive on every (re)connect). Absent = no park episode in progress.
+  readonly lastErrorClass?: 'connectivity' | 'rate-limit'
+  readonly resumeAttempt?: number
 }
 
 // Stage taxonomy — order-preserving for the snapshot display.
@@ -101,8 +140,15 @@ export function derivePhase(input: {
   readonly campaign: CampaignRow
   readonly world: WorldRow
   readonly runs: readonly PipelineRunRow[]
+  /** llm-outage-resilience §3: the world_gen resume stamp, when one exists.
+   *  Loaded by the caller's existing data path (no queue I/O here). */
+  readonly resumeStamp?: ResumeStampView | null
+  /** Clock injection for the overdue predicate; production omits it. */
+  readonly now?: Date
 }): PhaseAndStages {
   const { campaign, world, runs } = input
+  const resumeStamp = input.resumeStamp ?? null
+  const resuming = isResumingStamp(resumeStamp, input.now ?? new Date())
 
   // Bucket runs by scope.
   const worldgen = runs.filter((r) => stageScope(r.stage) === 'worldgen')
@@ -141,9 +187,20 @@ export function derivePhase(input: {
     worldgen,
     charcreation,
     postcreation,
+    resuming,
   })
 
-  return { phase, stages, cumulativeCostUsd }
+  return {
+    phase,
+    stages,
+    cumulativeCostUsd,
+    // Surfaced whenever a stamp exists (armed, in-flight, overdue, or
+    // exhausted) — the parked hold copy AND the retryable view both key off
+    // the class. Spread keeps the wire shape byte-identical when absent.
+    ...(resumeStamp !== null
+      ? { lastErrorClass: resumeStamp.lastErrorClass, resumeAttempt: resumeStamp.resumeAttempt }
+      : {}),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -199,8 +256,9 @@ function computePhase(input: {
   readonly worldgen: readonly PipelineRunRow[]
   readonly charcreation: readonly PipelineRunRow[]
   readonly postcreation: readonly PipelineRunRow[]
+  readonly resuming: boolean
 }): PipelinePhase {
-  const { campaign, world, worldgen, charcreation, postcreation } = input
+  const { campaign, world, worldgen, charcreation, postcreation, resuming } = input
 
   // Active campaign overrides everything.
   if (campaign.status === 'active') return 'complete'
@@ -250,9 +308,15 @@ function computePhase(input: {
       return 'world_gen'
     }
 
-    // Worldgen failed but not world-status-failed: rare, treat as world_gen_failed.
+    // Worldgen failed but not world-status-failed. A PARK is exactly this
+    // shape (llm-outage-resilience §3.1: the stage row fails so the wake can
+    // claim it, but worlds.status never flips) — while the stamp is live
+    // (unexhausted, not overdue) the phase stays generating-shaped; the
+    // stamp, not the row, distinguishes parked from genuinely failed. The
+    // entity-level `world.status === 'failed'` check above is NOT gated on
+    // the stamp: only genuine failure paths flip it.
     if (worldgen.some((r) => r.status === 'failed')) {
-      return 'world_gen_failed'
+      return resuming ? 'world_gen' : 'world_gen_failed'
     }
   }
 

@@ -30,6 +30,7 @@ import { WorldColorPairSchema } from '@mythrun/contract/rest'
 import { createRepo, type Repo } from '../repo/index.js'
 import type { HubCardRow } from '../repo/campaigns.js'
 import { createPipelineRunsRepo, type PipelineRunsRepo } from '../repo/pipeline-runs.js'
+import type { ResumeStampsRepo } from '../repo/resume-stamps.js'
 import type { CharacterConceptsRepo } from '../repo/character-concepts.js'
 import { requireCampaignMember } from '../auth/access-control.js'
 import { requireDbUser } from '../auth/require-db-user.js'
@@ -280,10 +281,16 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     if (!world) return null
     /* c8 ignore stop */
     const runs = await pipelineRunsRepo.listLatestForCampaign(campaignId)
+    // llm-outage-resilience §3.4: the world_gen resume stamp rides the
+    // snapshot derivation — an armed park derives generating-shaped (with
+    // lastErrorClass surfaced for the hold copy) instead of world_gen_failed.
+    // Stamp contract: world_gen entity_id = campaignId.
+    const resumeStamp = await repo.resumeStamps.get('world_gen', campaignId)
     return derivePhase({
       campaign: { id: campaign.id, status: campaign.status, world_id: campaign.worldId },
       world: { id: world.id, status: world.status },
       runs,
+      resumeStamp,
     })
   }
 
@@ -1005,6 +1012,7 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         characterCreationQueue: opts.characterCreationQueue,
         pipelineRunsRepo,
         characterConcepts: repo.characterConcepts,
+        resumeStamps: repo.resumeStamps,
         logger: request.log as PinoLogger,
       })
     },
@@ -1285,6 +1293,7 @@ interface ResumeContext {
   characterCreationQueue: CharacterCreationResumeQueueLike | undefined
   pipelineRunsRepo: PipelineRunsRepo
   characterConcepts: CharacterConceptsRepo
+  resumeStamps: ResumeStampsRepo
   logger: PinoLogger
 }
 
@@ -1425,6 +1434,14 @@ async function resumeFromWorldGenFailed(ctx: ResumeContext): Promise<FastifyRepl
   if (errText.includes('world_gen_cost_cap_exceeded')) {
     return ctx.reply.code(409).send({ code: 'world_gen_capped' })
   }
+  // llm-outage-resilience §3.3: reaching this arm with a stamp still present
+  // means the park episode ended without a completion — exhausted budget, an
+  // overdue wake, or a genuine failure after a wake. The manual retry starts
+  // a FRESH episode (fresh 6-hour budget, rung 1): mid-outage, the retry
+  // button must arm a new ride, not instantly re-exhaust. No-op when no
+  // stamp exists. (An armed-and-not-overdue park never reaches this arm —
+  // it derives generating and 409s above.)
+  await ctx.resumeStamps.clearStamp('world_gen', ctx.campaignId)
   await ctx.queue.add('world-gen', { campaignId: ctx.campaignId }, { jobId: ctx.campaignId })
   return ctx.reply.code(202).send({ campaignId: ctx.campaignId, action: 'world-gen-re-enqueued' })
 }

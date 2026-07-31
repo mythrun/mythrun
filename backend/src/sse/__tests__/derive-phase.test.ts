@@ -455,6 +455,189 @@ describe('derivePhase', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// llm-outage-resilience §3 — parked-run resume stamps.
+//
+// A park leaves the STAGE row failed but never flips worlds.status (spec
+// §3.3: the entity stays in-progress). The stamp — armed (next_resume_at in
+// the future) or in-flight (NULL, cleared at claim) — suppresses the
+// stage-row-derived world_gen_failed and keeps the phase generating-shaped.
+// Overdue (next_resume_at + 5-min grace passed) or exhausted (parkConsumedMs
+// ≥ 6h) stamps fall back to today's failed/retryable derivation. An
+// entity-level worlds.status='failed' always wins: only genuine failure
+// paths flip it, never a park.
+// ---------------------------------------------------------------------------
+describe('derivePhase × resume stamp (llm-outage-resilience §3)', () => {
+  const NOW = new Date('2026-07-30T12:00:00Z')
+  const SIX_HOURS_MS = 6 * 60 * 60 * 1000
+
+  function stamp(partial: {
+    nextResumeAt: Date | null
+    resumeAttempt?: number
+    parkConsumedMs?: number
+    lastErrorClass?: 'connectivity' | 'rate-limit'
+  }): {
+    resumeAttempt: number
+    nextResumeAt: Date | null
+    parkConsumedMs: number
+    lastErrorClass: 'connectivity' | 'rate-limit'
+  } {
+    return {
+      resumeAttempt: partial.resumeAttempt ?? 1,
+      nextResumeAt: partial.nextResumeAt,
+      parkConsumedMs: partial.parkConsumedMs ?? 30_000,
+      lastErrorClass: partial.lastErrorClass ?? 'connectivity',
+    }
+  }
+
+  const parkedRuns = [
+    run({ stage: 'concept_intake', status: 'completed' }),
+    run({ stage: 'world_and_factions', status: 'failed', completed_at: null }),
+  ]
+
+  it('armed stamp (next_resume_at in the future) keeps the phase generating-shaped', () => {
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: baseWorld,
+      runs: parkedRuns,
+      resumeStamp: stamp({ nextResumeAt: new Date(NOW.getTime() + 60_000) }),
+      now: NOW,
+    })
+    expect(result.phase).toBe('world_gen')
+  })
+
+  it('in-flight stamp (next_resume_at NULL — cleared at claim) also derives generating', () => {
+    // Covers the re-park seam: markStageFailed lands before upsertPark re-arms
+    // the stamp; a snapshot read in that window must not flicker to failed.
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: baseWorld,
+      runs: parkedRuns,
+      resumeStamp: stamp({ nextResumeAt: null }),
+      now: NOW,
+    })
+    expect(result.phase).toBe('world_gen')
+  })
+
+  it('a tail-stage park behind the reveal boundary keeps world_snapshot_ready', () => {
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: baseWorld,
+      runs: [
+        run({ stage: 'world_introduction', status: 'completed' }),
+        run({ stage: 'coherence_pass', status: 'failed', completed_at: null }),
+      ],
+      resumeStamp: stamp({ nextResumeAt: new Date(NOW.getTime() + 60_000) }),
+      now: NOW,
+    })
+    expect(result.phase).toBe('world_snapshot_ready')
+  })
+
+  it('within the 5-minute grace past next_resume_at the hold still derives generating', () => {
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: baseWorld,
+      runs: parkedRuns,
+      resumeStamp: stamp({ nextResumeAt: new Date(NOW.getTime() - 4 * 60_000) }),
+      now: NOW,
+    })
+    expect(result.phase).toBe('world_gen')
+  })
+
+  it('overdue stamp (next_resume_at + 5-min grace passed, no stage start) derives failed/retryable', () => {
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: baseWorld,
+      runs: parkedRuns,
+      resumeStamp: stamp({ nextResumeAt: new Date(NOW.getTime() - 6 * 60_000) }),
+      now: NOW,
+    })
+    expect(result.phase).toBe('world_gen_failed')
+  })
+
+  it('exhausted stamp (parkConsumedMs ≥ 6h budget) derives failed/retryable even while armed', () => {
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: baseWorld,
+      runs: parkedRuns,
+      resumeStamp: stamp({
+        nextResumeAt: new Date(NOW.getTime() + 60_000),
+        parkConsumedMs: SIX_HOURS_MS,
+      }),
+      now: NOW,
+    })
+    expect(result.phase).toBe('world_gen_failed')
+  })
+
+  it("entity-level worlds.status='failed' wins over an armed stamp (genuine failure paths flip it, parks never do)", () => {
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: { ...baseWorld, status: 'failed' },
+      runs: parkedRuns,
+      resumeStamp: stamp({ nextResumeAt: new Date(NOW.getTime() + 60_000) }),
+      now: NOW,
+    })
+    expect(result.phase).toBe('world_gen_failed')
+  })
+
+  it('surfaces lastErrorClass + resumeAttempt in the snapshot payload while a stamp exists', () => {
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: baseWorld,
+      runs: parkedRuns,
+      resumeStamp: stamp({
+        nextResumeAt: new Date(NOW.getTime() + 60_000),
+        resumeAttempt: 3,
+        lastErrorClass: 'rate-limit',
+      }),
+      now: NOW,
+    })
+    expect(result.lastErrorClass).toBe('rate-limit')
+    expect(result.resumeAttempt).toBe(3)
+  })
+
+  it('surfaces the stamp fields on the overdue arm too (the retryable view may key copy off the class)', () => {
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: baseWorld,
+      runs: parkedRuns,
+      resumeStamp: stamp({ nextResumeAt: new Date(NOW.getTime() - 6 * 60_000) }),
+      now: NOW,
+    })
+    expect(result.phase).toBe('world_gen_failed')
+    expect(result.lastErrorClass).toBe('connectivity')
+    expect(result.resumeAttempt).toBe(1)
+  })
+
+  it('defaults the overdue clock to wall time when no `now` is injected (production path)', () => {
+    // Armed an hour out — deterministically not overdue against any real clock.
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: baseWorld,
+      runs: [
+        run({ stage: 'concept_intake', status: 'completed', started_at: null }),
+        run({ stage: 'world_and_factions', status: 'failed', completed_at: null }),
+      ],
+      resumeStamp: stamp({ nextResumeAt: new Date(Date.now() + 60 * 60_000) }),
+    })
+    expect(result.phase).toBe('world_gen')
+    // The null-started_at row (a pending-style seed) round-trips as null.
+    expect(result.stages.find((s) => s.stage === 'concept_intake')?.startedAt).toBeNull()
+  })
+
+  it('omits the stamp fields entirely when no stamp exists (wire shape unchanged)', () => {
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: baseWorld,
+      runs: parkedRuns,
+      now: NOW,
+    })
+    expect(result.phase).toBe('world_gen_failed')
+    expect('lastErrorClass' in result).toBe(false)
+    expect('resumeAttempt' in result).toBe(false)
+  })
+})
+
 describe('post-MYT-54 stage taxonomy', () => {
   it("CHARCREATION_STAGES does not include 'character_integration'", () => {
     expect((CHARCREATION_STAGES as readonly string[]).includes('character_integration')).toBe(false)

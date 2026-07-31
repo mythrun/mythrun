@@ -224,11 +224,19 @@ async function seedUserWorldCampaign(pool: Pool, scope: TestScope): Promise<Seed
   return { userId, worldId, campaignId }
 }
 
-function makeJob(campaignId: string): Job<WorldGenJobPayload> {
+// `token` + `moveToDelayed` mirror the live BullMQ Job the worker hands the
+// processor: the Worker stamps `job.token` before invoking it, and the park
+// path calls `job.moveToDelayed(ts, token)` (llm-outage-resilience §3.1).
+// Legacy tests never reach either.
+function makeJob(campaignId: string): Job<WorldGenJobPayload> & {
+  moveToDelayed: ReturnType<typeof vi.fn>
+} {
   return {
     data: { campaignId },
+    token: 'job-lock-token',
     updateProgress: vi.fn().mockResolvedValue(undefined),
-  } as unknown as Job<WorldGenJobPayload>
+    moveToDelayed: vi.fn().mockResolvedValue(undefined),
+  } as unknown as Job<WorldGenJobPayload> & { moveToDelayed: ReturnType<typeof vi.fn> }
 }
 
 interface MakeDepsOverrides {
@@ -288,6 +296,10 @@ describe('world-gen-processor (MYT-51 T7)', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks()
+    // ioredis-mock instances share one keyspace per connection config — the
+    // degraded-park test's llm-health state key must not leak into later
+    // tests' health reads.
+    await new IoredisMock().flushall()
     // myth-5jdo: scoped cleanup replaces the prior blanket DELETEs.
     // Entity/prose/fact/random_table rows live under the world we
     // create, so the worlds CASCADE in cleanupTestScope drops them.
@@ -729,21 +741,33 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     expect(rows[0]?.status).toBe('failed')
   })
 
-  it('retryable LlmOverloadedError rethrows', async () => {
-    const { campaignId } = await seedUserWorldCampaign(pool, scope)
+  it('LlmOverloadedError (529 → connectivity class) now PARKS instead of the BullMQ rethrow', async () => {
+    // llm-outage-resilience §3.1: the wrapper classifies llm_overloaded as
+    // connectivity and attaches the class to the surfaced error; the
+    // processor's containment path rides the park ladder instead of
+    // rethrowing into BullMQ's own retry policy.
+    const { DelayedError } = await import('bullmq')
+    const { campaignId, worldId } = await seedUserWorldCampaign(pool, scope)
     const { LlmOverloadedError } = await import('../../errors.js')
-    const transientErr = new LlmOverloadedError('529 overloaded')
-    vi.mocked(ai.generateText).mockRejectedValueOnce(transientErr)
+    vi.mocked(ai.generateText).mockRejectedValueOnce(new LlmOverloadedError('529 overloaded'))
 
     const deps = makeDeps(pool)
     const proc = createWorldGenProcessor(deps)
-    await expect(proc(makeJob(campaignId))).rejects.toBe(transientErr)
+    await expect(proc(makeJob(campaignId))).rejects.toBeInstanceOf(DelayedError)
 
     const stageFailed = deps.publishSpy.mock.calls
       .map((c) => String(c[1]))
       .filter((s) => s.includes('"stage-failed"'))
-      .map((s) => JSON.parse(s) as { willRetry?: boolean })
+      .map((s) => JSON.parse(s) as { willRetry?: boolean; failureClass?: string })
     expect(stageFailed[0]?.willRetry).toBe(true)
+    expect(stageFailed[0]?.failureClass).toBe('connectivity')
+
+    // A park never flips the entity (spec §3.3) — unlike the old rethrow path.
+    const { rows } = await pool.query<{ status: string }>(
+      `SELECT status FROM worlds WHERE id = $1`,
+      [worldId],
+    )
+    expect(rows[0]?.status).toBe('generating')
   })
 
   // ------------------------------------------------------------------
@@ -759,10 +783,16 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     const deps = makeDeps(pool)
     const proc = createWorldGenProcessor(deps)
     const results = await Promise.allSettled([proc(makeJob(campaignId)), proc(makeJob(campaignId))])
-    // Both runs should resolve (the loser skips concept_intake and falls
-    // through to stage 2's stage_not_implemented → expected stop).
+    // The winner resolves (falls through to stage 2's stage_not_implemented →
+    // expected stop). The loser either resolves the same way (it arrived after
+    // the winner completed concept_intake) or STOPS on the live in-flight
+    // claim with a retryable rethrow (llm-outage-resilience §3.2 — it must
+    // never continue past a stage another worker holds).
+    expect(results.some((r) => r.status === 'fulfilled')).toBe(true)
     for (const r of results) {
-      expect(r.status).toBe('fulfilled')
+      if (r.status === 'rejected') {
+        expect(String((r as PromiseRejectedResult).reason)).toMatch(/in-flight/)
+      }
     }
 
     // Exactly 2 generateText calls total — one for the generator, one for
@@ -995,6 +1025,429 @@ describe('world-gen-processor (MYT-51 T7)', () => {
 
     const phaseStrings = deps.publishSpy.mock.calls.map((c) => String(c[1]))
     expect(phaseStrings.some((p) => p.includes('"world_ready"'))).toBe(true)
+  })
+
+  // ------------------------------------------------------------------
+  // llm-outage-resilience §3.1 — parking. A park-eligible (connectivity /
+  // rate-limit via the ai.ts-attached llmFailureClass), non-terminal
+  // failure with park budget remaining marks the stage row failed AS
+  // TODAY (claimable on wake), stamps llm_resume_stamps, publishes the
+  // generating-shaped phase event, then self-delays via
+  // job.moveToDelayed + DelayedError. worlds.status NEVER flips on a
+  // park — the stamp, not the row, distinguishes parked from failed.
+  // ------------------------------------------------------------------
+  describe('parking (llm-outage-resilience §3.1)', () => {
+    const SIX_HOURS_MS = 6 * 60 * 60 * 1000
+
+    // The park predicate reads the `llmFailureClass` property ai.ts attaches
+    // to every classified error it surfaces (Task 4 contract). These tests
+    // throw from the module-mocked world_color handler — BYPASSING ai.ts —
+    // so the hand-attached class survives; the attach itself is ai.test.ts's
+    // job. (An error routed through the mocked SDK would be re-classified by
+    // the wrapper and the hand-set class overwritten.) The end-to-end
+    // wrapper-attached path is covered by the LlmOverloadedError park test
+    // above and the tail-stage park below.
+    function classedError(
+      llmFailureClass: 'connectivity' | 'rate-limit' | 'abort' | 'other',
+      opts: { terminal?: boolean } = {},
+    ): Error {
+      return Object.assign(new Error(`upstream failure (${llmFailureClass})`), {
+        llmFailureClass,
+        ...(opts.terminal === true ? { terminal: true } : {}),
+      })
+    }
+
+    // Skip concept_intake (its generateText path would need queued mock
+    // responses) so the run claims world_color directly, whose module mock
+    // throws the classed error for these scenarios.
+    async function seedConceptDone(worldId: string): Promise<void> {
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at,
+                                    completed_at, cost_usd, input_tokens, output_tokens, user_id)
+         VALUES ($1, $2, 'concept_intake', 'completed', now(), now(), 0, 0, 0, NULL)`,
+        [uuidv7(), worldId],
+      )
+    }
+
+    function worldColorThrows(err: Error): void {
+      vi.mocked(worldColorModule.runWorldColorStage).mockImplementationOnce(() => {
+        throw err
+      })
+    }
+
+    async function readStamp(campaignId: string): Promise<{
+      resume_attempt: number
+      next_resume_at: Date | null
+      park_consumed_ms: string
+      last_error_class: string
+    } | null> {
+      const { rows } = await pool.query<{
+        resume_attempt: number
+        next_resume_at: Date | null
+        park_consumed_ms: string
+        last_error_class: string
+      }>(
+        `SELECT resume_attempt, next_resume_at, park_consumed_ms, last_error_class
+           FROM llm_resume_stamps WHERE pipeline = 'world_gen' AND entity_id = $1`,
+        [campaignId],
+      )
+      return rows[0] ?? null
+    }
+
+    async function seedStamp(
+      campaignId: string,
+      s: { attempt: number; consumedMs: number; nextResumeAt: Date | null },
+    ): Promise<void> {
+      await pool.query(
+        `INSERT INTO llm_resume_stamps
+           (pipeline, entity_id, resume_attempt, next_resume_at, park_consumed_ms, last_error_class)
+         VALUES ('world_gen', $1, $2, $3, $4, 'connectivity')`,
+        [campaignId, s.attempt, s.nextResumeAt, s.consumedMs],
+      )
+    }
+
+    it('parks a connectivity failure: stamp + failed row + DelayedError, world stays generating', async () => {
+      const { DelayedError } = await import('bullmq')
+      const { worldId, campaignId } = await seedUserWorldCampaign(pool, scope)
+      await seedConceptDone(worldId)
+      // A wrapper-attached diagnostic (e.g. a repair-chain connectivity
+      // failure surfaced to the loop) must ride the parked stage-failed
+      // event exactly as it rides the ordinary failure publish.
+      worldColorThrows(
+        Object.assign(classedError('connectivity'), {
+          diagnostic: {
+            callSite: 'world_color',
+            schemaName: 'WorldColorPair',
+            modelId: 'test-model',
+            repairStrategy: 'sonnet',
+            repairAttempted: false,
+            repairOutcome: 'none',
+            rawTextSnippet: null,
+            zodIssues: null,
+          },
+        }),
+      )
+
+      const deps = makeDeps(pool)
+      const proc = createWorldGenProcessor(deps)
+      const job = makeJob(campaignId)
+      const before = Date.now()
+      // Explicit worker token (the 2nd worker arg) takes precedence.
+      await expect(proc(job, 'worker-token')).rejects.toBeInstanceOf(DelayedError)
+
+      // First park: rung 1 armed 30s out, 30s of budget consumed.
+      const stamp = await readStamp(campaignId)
+      expect(stamp).not.toBeNull()
+      expect(stamp?.resume_attempt).toBe(1)
+      expect(stamp?.last_error_class).toBe('connectivity')
+      expect(Number(stamp?.park_consumed_ms)).toBe(30_000)
+      expect(stamp?.next_resume_at).not.toBeNull()
+
+      // The stage row failed AS TODAY — claimable on wake (no stage skip).
+      const run = await pool.query<{ status: string }>(
+        `SELECT status FROM pipeline_runs WHERE world_id = $1 AND stage = 'world_color'`,
+        [worldId],
+      )
+      expect(run.rows[0]?.status).toBe('failed')
+
+      // NO worlds.markFailed on a park (spec §3.3: entity stays in-progress).
+      const world = await pool.query<{ status: string }>(
+        `SELECT status FROM worlds WHERE id = $1`,
+        [worldId],
+      )
+      expect(world.rows[0]?.status).toBe('generating')
+
+      // Self-delay: same job, ~30s out, under the worker's lock token.
+      expect(job.moveToDelayed).toHaveBeenCalledTimes(1)
+      const [ts, token] = job.moveToDelayed.mock.calls[0] as [number, string]
+      expect(token).toBe('worker-token')
+      expect(ts).toBeGreaterThanOrEqual(before + 30_000)
+      expect(ts).toBeLessThan(before + 40_000)
+
+      // stage-failed carries the class (additive); the phase event stays
+      // generating-shaped — world_gen_failed is never published on a park.
+      const events = deps.publishSpy.mock.calls.map((c) => String(c[1]))
+      const stageFailed = events
+        .filter((s) => s.includes('"stage-failed"'))
+        .map(
+          (s) =>
+            JSON.parse(s) as {
+              willRetry?: boolean
+              failureClass?: string
+              diagnostic?: { callSite?: string }
+            },
+        )
+      expect(stageFailed[0]?.willRetry).toBe(true)
+      expect(stageFailed[0]?.failureClass).toBe('connectivity')
+      expect(stageFailed[0]?.diagnostic?.callSite).toBe('world_color')
+      expect(events.some((s) => s.includes('"world_gen_failed"'))).toBe(false)
+
+      // Publish precedes the self-delay (spec step 3 ordering).
+      const lastPublishOrder = Math.max(...deps.publishSpy.mock.invocationCallOrder)
+      const delayOrder = job.moveToDelayed.mock.invocationCallOrder[0] ?? 0
+      expect(lastPublishOrder).toBeLessThan(delayOrder)
+    })
+
+    it('parks a rate-limit failure, falling back to job.token when no worker token is threaded', async () => {
+      const { DelayedError } = await import('bullmq')
+      const { campaignId, worldId } = await seedUserWorldCampaign(pool, scope)
+      await seedConceptDone(worldId)
+      worldColorThrows(classedError('rate-limit'))
+
+      const deps = makeDeps(pool)
+      const proc = createWorldGenProcessor(deps)
+      const job = makeJob(campaignId)
+      await expect(proc(job)).rejects.toBeInstanceOf(DelayedError)
+
+      const stamp = await readStamp(campaignId)
+      expect(stamp?.last_error_class).toBe('rate-limit')
+      const [, token] = job.moveToDelayed.mock.calls[0] as [number, string | undefined]
+      expect(token).toBe('job-lock-token')
+    })
+
+    it('degraded park consumes no budget (sitewide outage already known → consume:false)', async () => {
+      const { DelayedError } = await import('bullmq')
+      const { campaignId, worldId } = await seedUserWorldCampaign(pool, scope)
+      await seedConceptDone(worldId)
+      worldColorThrows(classedError('connectivity'))
+      const deps = makeDeps(pool)
+      // The tracker reads `${keyPrefix}llm-health:state` — present ⇔ degraded.
+      await deps.redisRealtime.set(
+        `${deps.redisKeyPrefix}llm-health:state`,
+        JSON.stringify({ since: Date.now() }),
+      )
+
+      const proc = createWorldGenProcessor(deps)
+      await expect(proc(makeJob(campaignId))).rejects.toBeInstanceOf(DelayedError)
+
+      const stamp = await readStamp(campaignId)
+      expect(stamp?.resume_attempt).toBe(1)
+      expect(Number(stamp?.park_consumed_ms)).toBe(0)
+      expect(stamp?.next_resume_at).not.toBeNull()
+    })
+
+    it('re-park climbs the ladder: attempt 1 → 2 delays 120s and accumulates the budget', async () => {
+      const { DelayedError } = await import('bullmq')
+      const { campaignId, worldId } = await seedUserWorldCampaign(pool, scope)
+      await seedConceptDone(worldId)
+      // A prior park whose wake claimed (next_resume_at cleared) then failed
+      // connectivity again — the surviving rung/budget fields drive rung 2.
+      await seedStamp(campaignId, { attempt: 1, consumedMs: 30_000, nextResumeAt: null })
+      worldColorThrows(classedError('connectivity'))
+
+      const deps = makeDeps(pool)
+      const proc = createWorldGenProcessor(deps)
+      const job = makeJob(campaignId)
+      const before = Date.now()
+      await expect(proc(job)).rejects.toBeInstanceOf(DelayedError)
+
+      const stamp = await readStamp(campaignId)
+      expect(stamp?.resume_attempt).toBe(2)
+      expect(Number(stamp?.park_consumed_ms)).toBe(150_000)
+      const [ts] = job.moveToDelayed.mock.calls[0] as [number]
+      expect(ts).toBeGreaterThanOrEqual(before + 120_000)
+      expect(ts).toBeLessThan(before + 130_000)
+    })
+
+    it("exhausted budget falls through to today's failed path exactly (retryable surface)", async () => {
+      const { campaignId, worldId } = await seedUserWorldCampaign(pool, scope)
+      await seedConceptDone(worldId)
+      await seedStamp(campaignId, { attempt: 4, consumedMs: SIX_HOURS_MS, nextResumeAt: null })
+      const err = classedError('connectivity')
+      worldColorThrows(err)
+
+      const deps = makeDeps(pool)
+      const proc = createWorldGenProcessor(deps)
+      const job = makeJob(campaignId)
+      // Non-terminal → rethrow so BullMQ's own retry policy fires, as today.
+      await expect(proc(job)).rejects.toBe(err)
+
+      expect(job.moveToDelayed).not.toHaveBeenCalled()
+      const world = await pool.query<{ status: string }>(
+        `SELECT status FROM worlds WHERE id = $1`,
+        [worldId],
+      )
+      expect(world.rows[0]?.status).toBe('failed')
+      const events = deps.publishSpy.mock.calls.map((c) => String(c[1]))
+      expect(events.some((s) => s.includes('"world_gen_failed"'))).toBe(true)
+      // The spent stamp is untouched (clearStamp is completion's / the manual
+      // retry route's job — the fresh-episode arm).
+      const stamp = await readStamp(campaignId)
+      expect(Number(stamp?.park_consumed_ms)).toBe(SIX_HOURS_MS)
+      expect(stamp?.next_resume_at).toBeNull()
+    })
+
+    it("a non-park-eligible class ('abort') keeps today's behavior — no stamp, no delay", async () => {
+      const { campaignId, worldId } = await seedUserWorldCampaign(pool, scope)
+      await seedConceptDone(worldId)
+      const err = classedError('abort')
+      worldColorThrows(err)
+
+      const deps = makeDeps(pool)
+      const proc = createWorldGenProcessor(deps)
+      const job = makeJob(campaignId)
+      await expect(proc(job)).rejects.toBe(err)
+
+      expect(job.moveToDelayed).not.toHaveBeenCalled()
+      expect(await readStamp(campaignId)).toBeNull()
+      const world = await pool.query<{ status: string }>(
+        `SELECT status FROM worlds WHERE id = $1`,
+        [worldId],
+      )
+      expect(world.rows[0]?.status).toBe('failed')
+    })
+
+    it('a TERMINAL error never parks even when park-eligible by class (re-entry rule stands)', async () => {
+      const { campaignId, worldId } = await seedUserWorldCampaign(pool, scope)
+      await seedConceptDone(worldId)
+      worldColorThrows(classedError('connectivity', { terminal: true }))
+
+      const deps = makeDeps(pool)
+      const proc = createWorldGenProcessor(deps)
+      const job = makeJob(campaignId)
+      // Terminal → today's clean stop (no BullMQ rethrow).
+      await expect(proc(job)).resolves.toBeUndefined()
+
+      expect(job.moveToDelayed).not.toHaveBeenCalled()
+      expect(await readStamp(campaignId)).toBeNull()
+      const world = await pool.query<{ status: string }>(
+        `SELECT status FROM worlds WHERE id = $1`,
+        [worldId],
+      )
+      expect(world.rows[0]?.status).toBe('failed')
+    })
+
+    it('claim success clears next_resume_at; rung + budget fields SURVIVE the claim', async () => {
+      const { campaignId, worldId } = await seedUserWorldCampaign(pool, scope)
+      // Armed stamp from a prior park at world_and_factions…
+      await seedStamp(campaignId, {
+        attempt: 2,
+        consumedMs: 150_000,
+        nextResumeAt: new Date(Date.now() + 60_000),
+      })
+      // …with every earlier stage already completed, so the wake claims
+      // world_and_factions directly and its default mock terminal-stops
+      // (no stage completes → the stamp row itself survives).
+      for (const stage of ['concept_intake', 'world_color', 'vocabulary_intake'] as const) {
+        await pool.query(
+          `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at,
+                                      completed_at, cost_usd, input_tokens, output_tokens, user_id)
+           VALUES ($1, $2, $3, 'completed', now(), now(), 0, 0, 0, NULL)`,
+          [uuidv7(), worldId, stage],
+        )
+      }
+
+      const deps = makeDeps(pool)
+      const proc = createWorldGenProcessor(deps)
+      await proc(makeJob(campaignId))
+
+      const stamp = await readStamp(campaignId)
+      expect(stamp).not.toBeNull()
+      expect(stamp?.next_resume_at).toBeNull()
+      expect(stamp?.resume_attempt).toBe(2)
+      expect(Number(stamp?.park_consumed_ms)).toBe(150_000)
+    })
+
+    it('stage COMPLETION clears the stamp (fresh episode budget once the outage passes)', async () => {
+      const { campaignId } = await seedUserWorldCampaign(pool, scope)
+      await seedStamp(campaignId, {
+        attempt: 3,
+        consumedMs: 450_000,
+        nextResumeAt: new Date(Date.now() + 60_000),
+      })
+      // concept_intake completes normally, then world_and_factions
+      // terminal-stops via its default stage_not_implemented mock.
+      pushConceptIntakeResponses()
+
+      const deps = makeDeps(pool)
+      const proc = createWorldGenProcessor(deps)
+      await proc(makeJob(campaignId))
+
+      expect(await readStamp(campaignId)).toBeNull()
+    })
+
+    it('a tail-stage park (behind the reveal) publishes the world_snapshot_ready shape, never world_gen', async () => {
+      const { DelayedError } = await import('bullmq')
+      const { campaignId, worldId } = await seedUserWorldCampaign(pool, scope)
+      // Everything through entity_consolidation is done; the wake claims
+      // starting_situation (behind the world_introduction reveal boundary)
+      // and its single generateText call dies on connectivity.
+      for (const stage of [
+        'concept_intake',
+        'world_color',
+        'vocabulary_intake',
+        'world_and_factions',
+        'locations_and_npcs',
+        'entity_relationships',
+        'world_introduction',
+        'entity_consolidation',
+      ] as const) {
+        await pool.query(
+          `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at,
+                                      completed_at, cost_usd, input_tokens, output_tokens, user_id)
+           VALUES ($1, $2, $3, 'completed', now(), now(), 0, 0, 0, NULL)`,
+          [uuidv7(), worldId, stage],
+        )
+      }
+      // Routed through the REAL wrapper: llm_overloaded classifies as
+      // connectivity and ai.ts attaches the class to the surfaced error —
+      // the end-to-end Task 4 → park handoff.
+      const { LlmOverloadedError } = await import('../../errors.js')
+      vi.mocked(ai.generateText).mockRejectedValueOnce(new LlmOverloadedError('529 overloaded'))
+
+      const deps = makeDeps(pool)
+      const proc = createWorldGenProcessor(deps)
+      const job = makeJob(campaignId)
+      await expect(proc(job)).rejects.toBeInstanceOf(DelayedError)
+
+      expect(job.moveToDelayed).toHaveBeenCalledTimes(1)
+      const phases = deps.publishSpy.mock.calls
+        .map((c) => String(c[1]))
+        .filter((s) => s.includes('"phase"'))
+        .map((s) => (JSON.parse(s) as { phase: string }).phase)
+      // The parked phase event (the last publish) keeps the reveal shape — a
+      // live viewer on the snapshot must not flip back to the pre-reveal view.
+      expect(phases[phases.length - 1]).toBe('world_snapshot_ready')
+      expect(phases).not.toContain('world_gen_failed')
+    })
+
+    it("the loop STOPS on an in-flight stage (retryable rethrow — never continues past it)", async () => {
+      const { campaignId, worldId } = await seedUserWorldCampaign(pool, scope)
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at,
+                                    completed_at, cost_usd, input_tokens, output_tokens, user_id)
+         VALUES ($1, $2, 'concept_intake', 'completed', now(), now(), 0, 0, 0, NULL)`,
+        [uuidv7(), worldId],
+      )
+      // A live (not-stuck) world_color row — e.g. BullMQ's stall handling
+      // re-drove a dead worker's job while the stage is genuinely running.
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, world_id, stage, status, started_at, user_id)
+         VALUES ($1, $2, 'world_color', 'running', now(), NULL)`,
+        [uuidv7(), worldId],
+      )
+
+      const deps = makeDeps(pool)
+      const proc = createWorldGenProcessor(deps)
+      await expect(proc(makeJob(campaignId))).rejects.toThrow(/in-flight/)
+
+      // The loop stopped AT the live stage: nothing later got a row, no
+      // failure surfaced, the world stays generating for the re-drive.
+      const later = await pool.query(
+        `SELECT stage FROM pipeline_runs WHERE world_id = $1
+          AND stage NOT IN ('concept_intake', 'world_color')`,
+        [worldId],
+      )
+      expect(later.rows).toEqual([])
+      const world = await pool.query<{ status: string }>(
+        `SELECT status FROM worlds WHERE id = $1`,
+        [worldId],
+      )
+      expect(world.rows[0]?.status).toBe('generating')
+      const events = deps.publishSpy.mock.calls.map((c) => String(c[1]))
+      expect(events.some((s) => s.includes('"stage-failed"'))).toBe(false)
+      expect(events.some((s) => s.includes('"world_gen_failed"'))).toBe(false)
+    })
   })
 })
 

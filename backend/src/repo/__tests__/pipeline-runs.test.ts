@@ -201,11 +201,16 @@ describe('pipeline-runs repo', () => {
   })
 
   describe('claimStage', () => {
-    it('claims a fresh world-keyed row, then returns lost-race on a recent re-claim', async () => {
+    // llm-outage-resilience §3.2: a running-not-stuck WORLD row is a live
+    // in-flight stage, not a lost race — the distinct result lets the stage
+    // loop STOP instead of continuing past a stage another worker holds
+    // (the pre-existing worker-death skip). The campaign/campaign-user
+    // variants keep 'lost-race' until their loops gain the stop arm (Task 9).
+    it("claims a fresh world-keyed row, then returns 'in-flight' on a recent re-claim", async () => {
       const { worldId } = await insertCampaign()
       const repo = pipelineRunsNs(pool)
       expect(await repo.claimStage({ kind: 'world', worldId, stage: 'concept_intake' })).toBe('claimed')
-      expect(await repo.claimStage({ kind: 'world', worldId, stage: 'concept_intake' })).toBe('lost-race')
+      expect(await repo.claimStage({ kind: 'world', worldId, stage: 'concept_intake' })).toBe('in-flight')
     })
 
     it("returns 'completed' on re-entry against a completed world claim", async () => {

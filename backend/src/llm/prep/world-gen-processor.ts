@@ -29,12 +29,15 @@
 // pg connection strings, response bodies) from landing in
 // pipeline_runs.error or the stage-failed Redis event payload.
 
-import type { Job } from 'bullmq'
+import { DelayedError, type Job } from 'bullmq'
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
 import type pino from 'pino'
 import { z } from 'zod'
 import type { LlmCallDiagnostic } from '../ai.js'
+import type { LlmFailureClass } from '../classify-llm-error.js'
+import { createLlmHealthTracker } from '../llm-health.js'
+import { isParkExhausted, nextParkDelayMs } from '../../repo/resume-stamps.js'
 import { issueCostCapRefund, sumCompletedStageCosts } from './cost-cap.js'
 import { runConceptIntakeStage } from './stages/concept-intake.js'
 import { runWorldColorStage } from './stages/world-color.js'
@@ -156,9 +159,22 @@ export type { ClaimRequest, ClaimResult } from '../../repo/pipeline-runs.js'
 
 export function createWorldGenProcessor(
   deps: WorldGenDeps,
-): (job: Job<WorldGenJobPayload>) => Promise<void> {
-  return async function processWorldGen(job: Job<WorldGenJobPayload>): Promise<void> {
+): (job: Job<WorldGenJobPayload>, token?: string) => Promise<void> {
+  // llm-outage-resilience §3.1: the park path reads the sitewide health state
+  // (one Redis GET per stage) to decide whether a park consumes budget. Built
+  // from the deps primitives the same way the worker's own tracker is
+  // (redisRealtime + keyPrefix), mirroring how createRepo is built from pool.
+  const llmHealth = createLlmHealthTracker(deps.redisRealtime, deps.redisKeyPrefix, deps.logger)
+  return async function processWorldGen(
+    job: Job<WorldGenJobPayload>,
+    token?: string,
+  ): Promise<void> {
     const { campaignId } = job.data
+    // The BullMQ Worker passes the lock token as the 2nd processor arg AND
+    // stamps it on job.token before invoking; the containment wrapper
+    // (containProcessor) forwards only the job, so the property is the path
+    // the token actually arrives by in production.
+    const lockToken = token ?? job.token
     // Single pool-bound repo for the job's recovery/claim/completion bookkeeping.
     // These run on the pool OUTSIDE any stage transaction by design (a
     // failed-status write must survive a stage-tx rollback) — see the
@@ -202,12 +218,27 @@ export function createWorldGenProcessor(
         const capUsd = deps.costCapUsd
 
         for (const stage of WORLD_GEN_STAGES) {
+          // §3.1 pinned ordering: health GET, then claim, then attempt. The
+          // pre-claim reading decides consume on a later park — a waking
+          // attempt during a known sitewide outage must re-park without
+          // burning the solo 6h budget.
+          const preClaimHealth = await llmHealth.read()
           const claim = await repo.pipelineRuns.claimStage({
             kind: 'world',
             worldId: ctx.world.id,
             stage,
           })
           setStage(stage)
+          // §3.2: a running-not-stuck row is a LIVE stage on another worker.
+          // Stop here with a retryable throw — BullMQ re-drives later, when
+          // the stuck-reset can fire. Continuing past it (the old 'lost-race'
+          // lumping) silently completed worlds with missing stages.
+          if (claim === 'in-flight') {
+            throw Object.assign(
+              new Error(`world-gen stage ${stage} is in-flight on another worker; retrying later`),
+              { code: 'stage_in_flight' },
+            )
+          }
           if (claim !== 'claimed') {
             // myth-exac T18 / myth-zaqxh: on idempotent re-entry, re-publish
             // phase=world_snapshot_ready as soon as we walk past a completed
@@ -227,6 +258,12 @@ export function createWorldGenProcessor(
              * via the idempotency suite. */
             continue
           }
+
+          // §3.1 stamp lifecycle: claim success disarms the resume (the
+          // overdue predicate goes false at stage-start); the rung + budget
+          // fields survive so a re-park continues the ladder. Pinned
+          // ordering: immediately after the claim.
+          await repo.resumeStamps.clearNextResumeAt('world_gen', campaignId)
 
           await publishEvent(deps, campaignId, {
             type: 'stage-started',
@@ -248,6 +285,10 @@ export function createWorldGenProcessor(
               inputTokens: result.inputTokens,
               outputTokens: result.outputTokens,
             })
+            // §3.1 stamp lifecycle: a COMPLETED stage ends the park episode —
+            // the outage passed, so the ladder rung and budget reset with the
+            // row. No-op when no stamp exists.
+            await repo.resumeStamps.clearStamp('world_gen', campaignId)
             await publishEvent(deps, campaignId, {
               type: 'stage-completed',
               stage,
@@ -303,6 +344,16 @@ export function createWorldGenProcessor(
              * brace + for-loop end-iteration that aren't reachable by
              * either test path. */
           } catch (err) {
+            // llm-outage-resilience §3.1: park-eligible, non-terminal, budget
+            // remaining → the job delays ITSELF (the DelayedError throw is
+            // BullMQ's sanctioned self-delay, not a failure — attempts stay
+            // untouched). Everything else keeps today's exact behavior.
+            const parked = await maybeParkStage(deps, repo, ctx, stage, err, {
+              job,
+              token: lockToken,
+              degraded: preClaimHealth.state === 'degraded',
+            })
+            if (parked) throw new DelayedError()
             const handled = await handleStageError(deps, repo, ctx, stage, err)
             if (handled === 'stop') return
             throw err
@@ -756,6 +807,111 @@ async function markStageCappedAndRefund(
   await publishEvent(deps, ctx.campaign.id, { type: 'phase', phase: 'world_gen_failed' })
 }
 
+// The §3.1 park predicate reads the class ai.ts attached to the surfaced
+// error (Task 4 contract) — a mechanical property read, never re-classification.
+// Only connectivity and rate-limit ride the ladder; abort/other keep today's
+// failure paths.
+function parkEligibleClass(err: unknown): 'connectivity' | 'rate-limit' | null {
+  /* c8 ignore start — non-object throw (a bare string/number): nothing in the
+   * stage chain throws non-objects; defensive narrowing for the property read. */
+  if (err === null || typeof err !== 'object') return null
+  /* c8 ignore stop */
+  const cls = (err as { llmFailureClass?: LlmFailureClass }).llmFailureClass
+  return cls === 'connectivity' || cls === 'rate-limit' ? cls : null
+}
+
+/**
+ * llm-outage-resilience §3.1 — the containment path. On a park-eligible
+ * (connectivity | rate-limit), NON-TERMINAL failure with park budget
+ * remaining:
+ *
+ *   1. Mark the stage row failed AS TODAY — the row must be claimable on
+ *      wake (a young 'running' row would make the wake's claim skip the
+ *      stage: silent world corruption). The STAMP, not the row, is what
+ *      distinguishes parked from genuinely failed.
+ *   2. Upsert the resume stamp (rung indexed by the surviving
+ *      resumeAttempt; degraded parks consume no budget).
+ *   3. Publish the generating-shaped phase event, THEN self-delay the SAME
+ *      job (`moveToDelayed` + the caller's DelayedError throw) — no add, no
+ *      dedup interaction, single-flight by construction.
+ *
+ * Returns false (→ today's exact behavior) for other classes, terminal
+ * errors (the re-entry rule stands — parking never converts them), and an
+ * exhausted budget (which lands on the RETRYABLE failed surface).
+ */
+async function maybeParkStage(
+  deps: WorldGenDeps,
+  repo: Repo,
+  ctx: CampaignContext,
+  stage: WorldGenStage,
+  err: unknown,
+  opts: {
+    readonly job: Job<WorldGenJobPayload>
+    readonly token: string | undefined
+    readonly degraded: boolean
+  },
+): Promise<boolean> {
+  const errorClass = parkEligibleClass(err)
+  if (errorClass === null || isTerminalError(err)) return false
+  const prior = await repo.resumeStamps.get('world_gen', ctx.campaign.id)
+  if (prior !== null && isParkExhausted(prior)) return false
+
+  const sanitized = sanitizeError(err)
+  await repo.pipelineRuns.markStageFailed({
+    kind: 'world',
+    worldId: ctx.world.id,
+    stage,
+    error: JSON.stringify(sanitized),
+  })
+
+  const delayMs = nextParkDelayMs(prior?.resumeAttempt ?? 0)
+  const stamp = await repo.resumeStamps.upsertPark({
+    pipeline: 'world_gen',
+    entityId: ctx.campaign.id,
+    delayMs,
+    consume: !opts.degraded,
+    errorClass,
+  })
+  deps.logger.warn(
+    {
+      event: 'world_gen.stage_parked',
+      stage,
+      worldId: ctx.world.id,
+      campaignId: ctx.campaign.id,
+      errorClass,
+      resumeAttempt: stamp.resumeAttempt,
+      parkConsumedMs: stamp.parkConsumedMs,
+      delayMs,
+      degraded: opts.degraded,
+    },
+    'stage parked for auto-resume',
+  )
+
+  await publishEvent(deps, ctx.campaign.id, {
+    type: 'stage-failed',
+    stage,
+    userId: null,
+    errorCode: sanitized.code,
+    willRetry: true,
+    // Additive: the live hint for the parked hold copy. Authoritative
+    // delivery is the snapshot derivation (derive-phase surfaces the
+    // persisted lastErrorClass on every (re)connect).
+    failureClass: errorClass,
+    ...(sanitized.diagnostic !== undefined ? { diagnostic: sanitized.diagnostic } : {}),
+  })
+  // The generating-shaped parked phase event. Past the world_introduction
+  // reveal boundary the generating shape IS world_snapshot_ready — a live
+  // viewer on the revealed snapshot must not flip back to the pre-reveal view.
+  const revealed =
+    WORLD_GEN_STAGES.indexOf(stage) > WORLD_GEN_STAGES.indexOf('world_introduction')
+  await publishEvent(deps, ctx.campaign.id, {
+    type: 'phase',
+    phase: revealed ? 'world_snapshot_ready' : 'world_gen',
+  })
+  await opts.job.moveToDelayed(Date.now() + delayMs, opts.token)
+  return true
+}
+
 async function handleStageError(
   deps: WorldGenDeps,
   repo: Repo,
@@ -796,12 +952,17 @@ async function handleStageError(
     stage,
     error: errorJson,
   })
+  // Additive llm-outage-resilience field: the §1.2 class when ai.ts attached
+  // one (park-ineligible classes land here too — abort/other — and so do
+  // eligible classes once the park budget is exhausted).
+  const failureClass = (err as { llmFailureClass?: LlmFailureClass } | null)?.llmFailureClass
   await publishEvent(deps, ctx.campaign.id, {
     type: 'stage-failed',
     stage,
     userId: null,
     errorCode: sanitized.code,
     willRetry: !terminal,
+    ...(failureClass !== undefined ? { failureClass } : {}),
     ...(sanitized.diagnostic !== undefined ? { diagnostic: sanitized.diagnostic } : {}),
   })
   // Eagerly flip worlds.status='failed' on EVERY error attempt — without

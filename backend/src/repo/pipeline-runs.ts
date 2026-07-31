@@ -38,8 +38,17 @@ const SENTINEL_USER_UUID = '00000000-0000-0000-0000-000000000000'
 //   - 'claimed'   — we inserted a fresh row, or coerced a pending/failed/
 //                   stuck-running row into 'running'; the caller runs the stage.
 //   - 'completed' — the row already finished; the caller skips (idempotent).
-//   - 'lost-race' — another worker holds a recent 'running' row; the caller skips.
-export type ClaimResult = 'claimed' | 'completed' | 'lost-race'
+//   - 'in-flight' — another worker holds a recent (not-stuck) 'running' row;
+//                   the caller must STOP its loop (rethrow retryable), never
+//                   continue past a live stage (llm-outage-resilience §3.2 —
+//                   the pre-existing worker-death skip: BullMQ's stall
+//                   re-drive used to see 'lost-race' here and silently skip
+//                   the stage). Currently returned by the 'world' variant
+//                   only; the campaign/campaign-user variants keep
+//                   'lost-race' until their loops gain the stop arm (Task 9).
+//   - 'lost-race' — a racing worker changed the row between our INSERT
+//                   conflict and the follow-up SELECT; the caller skips.
+export type ClaimResult = 'claimed' | 'completed' | 'in-flight' | 'lost-race'
 
 // Discriminated union over the three atomic-claim shapes pipeline_runs
 // supports (myth-tuok T6 / MYT-54 T6):
@@ -308,11 +317,10 @@ async function claimWorldStage(
     [worldId, stage],
   )
   if (stuckReset.rowCount !== null && stuckReset.rowCount > 0) return 'claimed'
-  /* c8 ignore next — fall-through 'lost-race' when the stuck-reset matched no
-   * row (running but not yet stuck). Tested via the stuck-reset reclaim path
-   * which DOES match; the not-stuck early-return is covered by the
-   * row.status==='running' guard above. */
-  return 'lost-race'
+  // Running but not yet stuck: a live worker holds the stage. Distinct from
+  // 'lost-race' so the world-gen loop STOPS instead of skipping the stage
+  // (llm-outage-resilience §3.2).
+  return 'in-flight'
 }
 
 async function claimCampaignUserStage(
