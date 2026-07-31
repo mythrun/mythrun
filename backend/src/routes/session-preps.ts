@@ -20,12 +20,24 @@ import type { SessionPrepRow } from '../repo/types.js'
 // Minimal producer surface for the session-prep BullMQ queue. Declared here
 // (not BullMQ's Queue class) so AppDeps + tests inject a hand-rolled spy —
 // exactly like WorldGenQueueLike (routes/campaigns.ts).
+
+/** The slice of a fetched job the §3.2 existence check reads — mirrors
+ *  WorldGenJobLike (routes/campaigns.ts). */
+export interface SessionPrepEnqueuedJobLike {
+  isCompleted(): Promise<boolean> | boolean
+  isFailed(): Promise<boolean> | boolean
+}
+
 export interface SessionPrepQueueLike {
   add(
     name: 'session-prep',
     data: { campaignId: string; sessionNumber: number },
     opts?: { jobId?: string },
   ): Promise<unknown>
+  /** Task 9 (llm-outage-resilience §3.2): the trigger route checks for a live
+   *  job holding the base id before answering 202 — a held id makes the D9
+   *  add a silent no-op. */
+  getJob(jobId: string): Promise<SessionPrepEnqueuedJobLike | null | undefined>
 }
 
 export interface Opts {
@@ -121,11 +133,22 @@ export const sessionPrepsPlugin: FastifyPluginAsync<Opts> = async (app, opts) =>
       const { sessionPrepQueue } = requireSessionPrepRouteDeps()
       const { campaignId } = req.params
       const { sessionNumber } = parsed.data
-      await sessionPrepQueue.add(
-        'session-prep',
-        { campaignId, sessionNumber },
-        { jobId: `sp-${campaignId}-${String(sessionNumber)}` },
-      )
+      const jobId = `sp-${campaignId}-${String(sessionNumber)}`
+      // llm-outage-resilience §3.2 (Task 9): a LIVE job (running, waiting, or
+      // a parked delayed wake) still holds the base id — the D9 add would
+      // silently no-op, so a 202 here would report a trigger that never
+      // happened. Answer the in-progress shape instead; terminal leftovers
+      // (completed/failed, normally pruned by removeOn* count:0) don't block.
+      const existingJob = await sessionPrepQueue.getJob(jobId)
+      if (existingJob) {
+        const completed = await existingJob.isCompleted()
+        const failed = await existingJob.isFailed()
+        if (!completed && !failed) {
+          reply.header('Retry-After', '30')
+          return reply.code(409).send({ code: 'prep_in_progress' })
+        }
+      }
+      await sessionPrepQueue.add('session-prep', { campaignId, sessionNumber }, { jobId })
       return reply.code(202).send({ campaignId, sessionNumber })
     },
   )

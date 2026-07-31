@@ -8,6 +8,7 @@
 // PRECONDITIONS: `pnpm db:migrate:test` (or a prior `pnpm test`) so mythrun_test has a
 // schema. Do NOT run concurrently with `pnpm test` (both hit mythrun_test).
 
+import IoredisMock from 'ioredis-mock'
 import { guardTestDatabase } from '../../src/db/__tests__/guard-db.js'
 import { createTestPool } from '../../src/repo/__tests__/_helpers/test-pool.js'
 import { loadFixture } from './fixtures/load.js'
@@ -33,6 +34,10 @@ async function main(): Promise<void> {
   const prose: ProseEvent[] = []
   const deps: SessionPrepProcessorDeps = {
     pool,
+    // Task 9: the §3.1 pre-claim health GET. Out of this smoke's scope (real
+    // Opus prose plumbing) — an empty mock keyspace reads healthy.
+    redisRealtime: new IoredisMock(),
+    redisKeyPrefix: 'smoke:session-prep:',
     publishEvent: (_campaignId, event) => {
       events.push(event)
       return Promise.resolve()
@@ -49,7 +54,10 @@ async function main(): Promise<void> {
     log('fixture_loaded', { campaignId, worldId: fixture.rootWorldId })
 
     const t0 = Date.now()
-    await processSessionPrepJob(deps, { data: { campaignId, sessionNumber: 1 } })
+    await processSessionPrepJob(deps, {
+      data: { campaignId, sessionNumber: 1 },
+      moveToDelayed: () => Promise.resolve(),
+    })
     log('processor_returned', { ms: Date.now() - t0 })
 
     // --- Assertions (fail loudly; never report success on a miss) ---

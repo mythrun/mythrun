@@ -48,6 +48,13 @@ export interface CharacterCreationQueueLike {
     data: CharacterCreationJobData,
     opts?: { jobId?: string },
   ): Promise<unknown>
+  /** Task 9 (llm-outage-resilience §3.2): the campaigns resume arm checks job
+   *  existence before re-adding (see CharacterCreationResumeQueueLike). The
+   *  JobLike slice mirrors WorldGenJobLike. */
+  getJob(jobId: string): Promise<{
+    isCompleted(): Promise<boolean> | boolean
+    isFailed(): Promise<boolean> | boolean
+  } | null | undefined>
 }
 
 export interface Opts {

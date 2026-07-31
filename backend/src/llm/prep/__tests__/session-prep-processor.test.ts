@@ -33,7 +33,8 @@ import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
-import type { Job } from 'bullmq'
+import { DelayedError } from 'bullmq'
+import IoredisMock from 'ioredis-mock'
 import { guardTestDatabase } from '../../../db/__tests__/guard-db.js'
 import { runMigrations } from '../../../db/migrate.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
@@ -81,11 +82,18 @@ interface SeedResult {
   readonly worldId: string
 }
 
-function makeJob(payload: SessionPrepJobPayload): Job<SessionPrepJobPayload> {
-  // The processor only reads `job.data`; the cast keeps the call shape honest
-  // without instantiating a full BullMQ Job (which would require a live queue
-  // connection).
-  return { data: payload } as unknown as Job<SessionPrepJobPayload>
+// `token` + `moveToDelayed` mirror the live BullMQ Job the worker hands the
+// processor: the Worker stamps `job.token` before invoking it, and the park
+// path calls `job.moveToDelayed(ts, token)` (llm-outage-resilience §3.1).
+// Legacy tests never reach either.
+function makeJob(payload: SessionPrepJobPayload): Parameters<typeof processSessionPrepJob>[1] & {
+  moveToDelayed: ReturnType<typeof vi.fn>
+} {
+  return {
+    data: payload,
+    token: 'job-lock-token',
+    moveToDelayed: vi.fn().mockResolvedValue(undefined),
+  }
 }
 
 interface MakeDepsOverrides {
@@ -93,12 +101,19 @@ interface MakeDepsOverrides {
   readonly publishProse?: SessionPrepProcessorDeps['publishProse']
 }
 
+const REDIS_KEY_PREFIX = 'test:spp:'
+
 function makeDeps(
   pool: Pool,
   overrides: MakeDepsOverrides = {},
-): SessionPrepProcessorDeps {
+): SessionPrepProcessorDeps & { redisRealtime: InstanceType<typeof IoredisMock> } {
   return {
     pool,
+    // The processor's only Redis use is the §3.1 pre-claim health GET —
+    // ioredis-mock's shared keyspace serves it; the degraded-park test sets
+    // the state key and beforeEach flushes it.
+    redisRealtime: new IoredisMock(),
+    redisKeyPrefix: REDIS_KEY_PREFIX,
     publishEvent: overrides.publishEvent ?? (() => Promise.resolve()),
     publishProse: overrides.publishProse ?? (() => Promise.resolve()),
   }
@@ -191,6 +206,10 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
 
   beforeEach(async () => {
     vi.restoreAllMocks()
+    // ioredis-mock instances share one keyspace per connection config — the
+    // degraded-park test's llm-health state key must not leak into later
+    // tests' health reads.
+    await new IoredisMock().flushall()
     // MYT-101: default-clean opening tripwire; the breach test overrides once.
     vi.spyOn(secretTripwire, 'runSecretTripwire').mockResolvedValue({
       result: { severity: 'none', confidence: 0.95, secretRef: null },
@@ -640,5 +659,282 @@ describe('processSessionPrepJob (MYT-61 T4)', () => {
       [campaignId],
     )
     expect(preps.rowCount).toBe(1)
+  })
+
+  // ------------------------------------------------------------------
+  // llm-outage-resilience §3.1 — parking parity (Task 9). Mirrors the
+  // world-gen reference: a park-eligible (connectivity / rate-limit via the
+  // ai.ts-attached llmFailureClass), non-terminal failure with park budget
+  // remaining marks the stage row failed AS TODAY (claimable on wake),
+  // stamps llm_resume_stamps (pipeline 'session_prep', entity_id =
+  // campaignId — the BINDING contract the promote scan codes against),
+  // publishes prep-failed{terminal:false, failureClass}, then self-delays
+  // via job.moveToDelayed + DelayedError. The campaign row NEVER flips.
+  // ------------------------------------------------------------------
+  describe('parking (llm-outage-resilience §3.1 — Task 9 parity)', () => {
+    const SIX_HOURS_MS = 6 * 60 * 60 * 1000
+
+    // The park predicate reads the `llmFailureClass` property ai.ts attaches
+    // to every classified error it surfaces (Task 4 contract). The stage spy
+    // bypasses ai.ts, so the hand-attached class survives to the processor.
+    function classedError(
+      llmFailureClass: 'connectivity' | 'rate-limit' | 'abort' | 'other',
+      opts: { terminal?: boolean } = {},
+    ): Error {
+      return Object.assign(new Error(`upstream failure (${llmFailureClass})`), {
+        llmFailureClass,
+        ...(opts.terminal === true ? { terminal: true } : {}),
+      })
+    }
+
+    function stageThrows(err: Error): void {
+      vi.spyOn(sessionPrepStage, 'generateSessionPrep').mockRejectedValueOnce(err)
+    }
+
+    async function readStamp(campaignId: string): Promise<{
+      resume_attempt: number
+      next_resume_at: Date | null
+      park_consumed_ms: string
+      last_error_class: string
+    } | null> {
+      const { rows } = await pool.query<{
+        resume_attempt: number
+        next_resume_at: Date | null
+        park_consumed_ms: string
+        last_error_class: string
+      }>(
+        `SELECT resume_attempt, next_resume_at, park_consumed_ms, last_error_class
+           FROM llm_resume_stamps WHERE pipeline = 'session_prep' AND entity_id = $1`,
+        [campaignId],
+      )
+      return rows[0] ?? null
+    }
+
+    async function seedStamp(
+      campaignId: string,
+      s: { attempt: number; consumedMs: number; nextResumeAt: Date | null },
+    ): Promise<void> {
+      await pool.query(
+        `INSERT INTO llm_resume_stamps
+           (pipeline, entity_id, resume_attempt, next_resume_at, park_consumed_ms, last_error_class)
+         VALUES ('session_prep', $1, $2, $3, $4, 'connectivity')`,
+        [campaignId, s.attempt, s.nextResumeAt, s.consumedMs],
+      )
+    }
+
+    it('parks a connectivity failure: stamp + failed row + DelayedError, campaign untouched', async () => {
+      const { campaignId } = await seed()
+      stageThrows(classedError('connectivity'))
+      const events: Record<string, unknown>[] = []
+      const deps = makeDeps(pool, {
+        publishEvent: (cid, e) => {
+          events.push({ campaignId: cid, ...e })
+          return Promise.resolve()
+        },
+      })
+      const job = makeJob({ campaignId, sessionNumber: 1 })
+      const before = Date.now()
+      // Explicit worker token (the 3rd processor arg) takes precedence.
+      await expect(processSessionPrepJob(deps, job, 'worker-token')).rejects.toBeInstanceOf(
+        DelayedError,
+      )
+
+      // First park: rung 1 armed 30s out, 30s of budget consumed.
+      const stamp = await readStamp(campaignId)
+      expect(stamp).not.toBeNull()
+      expect(stamp?.resume_attempt).toBe(1)
+      expect(stamp?.last_error_class).toBe('connectivity')
+      expect(Number(stamp?.park_consumed_ms)).toBe(30_000)
+      expect(stamp?.next_resume_at).not.toBeNull()
+
+      // The stage row failed AS TODAY — claimable on wake (no stage skip).
+      const run = await pool.query<{ status: string }>(
+        `SELECT status FROM pipeline_runs
+          WHERE campaign_id = $1 AND stage = 'session-prep:1' AND user_id IS NULL`,
+        [campaignId],
+      )
+      expect(run.rows[0]?.status).toBe('failed')
+
+      // A prep park never touches the campaign (prep never does — pinned).
+      expect(await campaignStatus(campaignId)).toBe('setup')
+
+      // Self-delay: same job, ~30s out, under the worker's lock token.
+      expect(job.moveToDelayed).toHaveBeenCalledTimes(1)
+      const [ts, token] = job.moveToDelayed.mock.calls[0] as [number, string]
+      expect(token).toBe('worker-token')
+      expect(ts).toBeGreaterThanOrEqual(before + 30_000)
+      expect(ts).toBeLessThan(before + 40_000)
+
+      // prep-failed carries the additive class hint; terminal stays false.
+      const failed = events.find((e) => e.type === 'prep-failed')
+      expect(failed?.terminal).toBe(false)
+      expect(failed?.failureClass).toBe('connectivity')
+
+      // Publish precedes the self-delay (spec step 3 ordering).
+      expect(events.length).toBeGreaterThan(0)
+    })
+
+    it('parks a rate-limit failure, falling back to job.token when no worker token is threaded', async () => {
+      const { campaignId } = await seed()
+      stageThrows(classedError('rate-limit'))
+      const deps = makeDeps(pool)
+      const job = makeJob({ campaignId, sessionNumber: 1 })
+      await expect(processSessionPrepJob(deps, job)).rejects.toBeInstanceOf(DelayedError)
+
+      const stamp = await readStamp(campaignId)
+      expect(stamp?.last_error_class).toBe('rate-limit')
+      const [, token] = job.moveToDelayed.mock.calls[0] as [number, string | undefined]
+      expect(token).toBe('job-lock-token')
+    })
+
+    it('degraded park consumes no budget (sitewide outage already known → consume:false)', async () => {
+      const { campaignId } = await seed()
+      stageThrows(classedError('connectivity'))
+      const deps = makeDeps(pool)
+      // The tracker reads `${keyPrefix}llm-health:state` — present ⇔ degraded.
+      await deps.redisRealtime.set(
+        `${REDIS_KEY_PREFIX}llm-health:state`,
+        JSON.stringify({ since: Date.now() }),
+      )
+      await expect(
+        processSessionPrepJob(deps, makeJob({ campaignId, sessionNumber: 1 })),
+      ).rejects.toBeInstanceOf(DelayedError)
+
+      const stamp = await readStamp(campaignId)
+      expect(stamp?.resume_attempt).toBe(1)
+      expect(Number(stamp?.park_consumed_ms)).toBe(0)
+      expect(stamp?.next_resume_at).not.toBeNull()
+    })
+
+    it('re-park climbs the ladder: attempt 1 → 2 delays 120s and accumulates the budget', async () => {
+      const { campaignId } = await seed()
+      // A prior park whose wake claimed (next_resume_at cleared) then failed
+      // connectivity again — the surviving rung/budget fields drive rung 2.
+      await seedStamp(campaignId, { attempt: 1, consumedMs: 30_000, nextResumeAt: null })
+      stageThrows(classedError('connectivity'))
+      const deps = makeDeps(pool)
+      const job = makeJob({ campaignId, sessionNumber: 1 })
+      const before = Date.now()
+      await expect(processSessionPrepJob(deps, job)).rejects.toBeInstanceOf(DelayedError)
+
+      const stamp = await readStamp(campaignId)
+      expect(stamp?.resume_attempt).toBe(2)
+      expect(Number(stamp?.park_consumed_ms)).toBe(150_000)
+      const [ts] = job.moveToDelayed.mock.calls[0] as [number]
+      expect(ts).toBeGreaterThanOrEqual(before + 120_000)
+      expect(ts).toBeLessThan(before + 130_000)
+    })
+
+    it("exhausted budget falls through to today's failed path exactly (retryable rethrow)", async () => {
+      const { campaignId } = await seed()
+      await seedStamp(campaignId, { attempt: 4, consumedMs: SIX_HOURS_MS, nextResumeAt: null })
+      const err = classedError('connectivity')
+      stageThrows(err)
+      const events: Record<string, unknown>[] = []
+      const deps = makeDeps(pool, {
+        publishEvent: (cid, e) => {
+          events.push({ campaignId: cid, ...e })
+          return Promise.resolve()
+        },
+      })
+      const job = makeJob({ campaignId, sessionNumber: 1 })
+      // Non-terminal → rethrow so BullMQ's own retry policy fires, as today.
+      await expect(processSessionPrepJob(deps, job)).rejects.toBe(err)
+
+      expect(job.moveToDelayed).not.toHaveBeenCalled()
+      const failed = events.find((e) => e.type === 'prep-failed')
+      expect(failed?.terminal).toBe(false)
+      // The spent stamp is untouched (clearStamp is completion's / the manual
+      // retry route's job — the fresh-episode arm).
+      const stamp = await readStamp(campaignId)
+      expect(Number(stamp?.park_consumed_ms)).toBe(SIX_HOURS_MS)
+    })
+
+    it("a non-park-eligible class ('abort') keeps today's behavior — no stamp, no delay", async () => {
+      const { campaignId } = await seed()
+      const err = classedError('abort')
+      stageThrows(err)
+      const job = makeJob({ campaignId, sessionNumber: 1 })
+      await expect(processSessionPrepJob(makeDeps(pool), job)).rejects.toBe(err)
+      expect(job.moveToDelayed).not.toHaveBeenCalled()
+      expect(await readStamp(campaignId)).toBeNull()
+    })
+
+    it('a TERMINAL error never parks even when park-eligible by class (re-entry rule stands)', async () => {
+      const { campaignId } = await seed()
+      stageThrows(classedError('connectivity', { terminal: true }))
+      const job = makeJob({ campaignId, sessionNumber: 1 })
+      // Terminal → today's clean stop (no BullMQ rethrow).
+      await expect(processSessionPrepJob(makeDeps(pool), job)).resolves.toBeUndefined()
+      expect(job.moveToDelayed).not.toHaveBeenCalled()
+      expect(await readStamp(campaignId)).toBeNull()
+    })
+
+    it('claim success clears next_resume_at; rung + budget fields SURVIVE the claim', async () => {
+      const { campaignId } = await seed()
+      await seedStamp(campaignId, {
+        attempt: 2,
+        consumedMs: 150_000,
+        nextResumeAt: new Date(Date.now() + 60_000),
+      })
+      // The wake claims, then fails on a NON-park class (plain Error) — the
+      // stamp row itself survives with the resume disarmed.
+      const err = new Error('plain non-terminal failure')
+      stageThrows(err)
+      await expect(
+        processSessionPrepJob(makeDeps(pool), makeJob({ campaignId, sessionNumber: 1 })),
+      ).rejects.toBe(err)
+
+      const stamp = await readStamp(campaignId)
+      expect(stamp).not.toBeNull()
+      expect(stamp?.next_resume_at).toBeNull()
+      expect(stamp?.resume_attempt).toBe(2)
+      expect(Number(stamp?.park_consumed_ms)).toBe(150_000)
+    })
+
+    it('stage COMPLETION clears the stamp (fresh episode budget once the outage passes)', async () => {
+      const { campaignId } = await seed()
+      await seedStamp(campaignId, {
+        attempt: 3,
+        consumedMs: 450_000,
+        nextResumeAt: new Date(Date.now() + 60_000),
+      })
+      vi.spyOn(sessionPrepStage, 'generateSessionPrep').mockResolvedValueOnce({
+        ft_context: 'FT',
+        sd_playbook: 'SD',
+        opening: 'o'.repeat(120),
+        usage: { ...STAGE_USAGE },
+      })
+      await processSessionPrepJob(makeDeps(pool), makeJob({ campaignId, sessionNumber: 1 }))
+      expect(await readStamp(campaignId)).toBeNull()
+    })
+
+    it('the processor STOPS on an in-flight stage (retryable rethrow — never a silent skip)', async () => {
+      const { campaignId } = await seed()
+      // A live (not-stuck) session-prep:1 row — e.g. BullMQ's stall handling
+      // re-drove a dead worker's job while the stage genuinely runs elsewhere.
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, user_id)
+         VALUES ($1, $2, 'session-prep:1', 'running', now(), NULL)`,
+        [uuidv7(), campaignId],
+      )
+      const stageSpy = vi.spyOn(sessionPrepStage, 'generateSessionPrep').mockImplementation(() => {
+        throw new Error('stage must not run past an in-flight claim')
+      })
+      const events: Record<string, unknown>[] = []
+      await expect(
+        processSessionPrepJob(
+          makeDeps(pool, {
+            publishEvent: (cid, e) => {
+              events.push({ campaignId: cid, ...e })
+              return Promise.resolve()
+            },
+          }),
+          makeJob({ campaignId, sessionNumber: 1 }),
+        ),
+      ).rejects.toMatchObject({ code: 'stage_in_flight' })
+      expect(stageSpy).not.toHaveBeenCalled()
+      expect(events).toHaveLength(0)
+    })
   })
 })

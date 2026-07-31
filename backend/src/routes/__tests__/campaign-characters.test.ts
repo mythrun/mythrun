@@ -145,6 +145,7 @@ function createQueueSpy(): QueueSpy {
       data: CharacterCreationJobData,
       opts?: { jobId?: string },
     ): Promise<unknown> => add(name, data, opts) as Promise<unknown>,
+    getJob: () => Promise.resolve(null),
   }
   return { queue, add }
 }

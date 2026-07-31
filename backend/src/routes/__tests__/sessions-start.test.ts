@@ -260,6 +260,8 @@ const fakeSessionPrepQueue = {
     prepEnqueues.push({ data, ...(opts?.jobId !== undefined ? { jobId: opts.jobId } : {}) })
     return Promise.resolve()
   },
+  // Task 9 (§3.2): the trigger route's existence check; /start never calls it.
+  getJob: () => Promise.resolve(null),
 }
 
 async function buildTestApp(pool: Pool, redis: Redis): Promise<FastifyInstance> {

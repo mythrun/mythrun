@@ -23,11 +23,13 @@
 //   - createProcessEscapeGuard — the process-level net for FLOATING escapes.
 //   - describeErrorForLog      — a secret-free error descriptor for logs.
 
-import type { Job } from 'bullmq'
+import { DelayedError, type Job } from 'bullmq'
 
-/** Structured pino slice — every helper here only logs at error level. */
+/** Structured pino slice. error is the containment level; info exists for the
+ *  one non-failure signal (a §3.1 park passing through the boundary). */
 export interface ContainmentLogger {
   error: (obj: Record<string, unknown>, msg?: string) => void
+  info: (obj: Record<string, unknown>, msg?: string) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +107,24 @@ export function containProcessor<T, R>(
     try {
       return await processor(job)
     } catch (err) {
+      // llm-outage-resilience §3.1: a park is BullMQ's sanctioned self-delay,
+      // not a failure — the processor already moveToDelayed'd itself and
+      // throws DelayedError purely as the control signal BullMQ expects.
+      // Rethrow it untouched (BullMQ matches the class) and log at info: an
+      // error-level contained_failure here would page on every routine rung.
+      if (err instanceof DelayedError) {
+        logger.info(
+          {
+            component: 'worker',
+            event: 'job.parked',
+            queue,
+            jobId: job.id,
+            jobName: job.name,
+          },
+          'job self-delayed for auto-resume (parked, not failed)',
+        )
+        throw err
+      }
       logger.error(
         {
           component: 'worker',

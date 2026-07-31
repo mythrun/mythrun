@@ -25,7 +25,10 @@ import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
+import { DelayedError } from 'bullmq'
+import IoredisMock from 'ioredis-mock'
 import * as ai from 'ai'
+import * as locationSelectionModule from '../stages/location-selection.js'
 import { guardTestDatabase } from '../../../db/__tests__/guard-db.js'
 import { runMigrations } from '../../../db/migrate.js'
 import { uuidv7 } from '../../../repo/uuidv7.js'
@@ -146,6 +149,9 @@ interface SeedResult {
   readonly factionId: string
 }
 
+// `token` + `moveToDelayed` mirror the live BullMQ Job: the Worker stamps
+// `job.token` before invoking the processor, and the §3.1 park path calls
+// `job.moveToDelayed(ts, token)`. Legacy tests never reach either.
 function makeJob(
   campaignId: string,
   userId: string,
@@ -153,11 +159,15 @@ function makeJob(
   data: CharacterCreationJobPayload
   updateProgress: () => Promise<void>
   name: string
+  token: string
+  moveToDelayed: ReturnType<typeof vi.fn>
 } {
   return {
     data: { campaignId, userId },
     updateProgress: () => Promise.resolve(),
     name: 'character-creation',
+    token: 'job-lock-token',
+    moveToDelayed: vi.fn().mockResolvedValue(undefined),
   }
 }
 
@@ -167,11 +177,19 @@ interface MakeDepsOverrides {
   readonly stageTimeoutMs?: number
 }
 
+const REDIS_KEY_PREFIX = 'test:ccp:'
+
 // Default cap matches migration 016's seeded $5.00. Tests exercising the
-// cap-exceeded path override via `costCapUsd: <tight value>`.
-function makeDeps(pool: Pool, overrides: MakeDepsOverrides = {}): CharacterCreationDeps {
+// cap-exceeded path override via `costCapUsd: <tight value>`. The Redis pair
+// serves only the §3.1 pre-claim health GET (ioredis-mock shared keyspace).
+function makeDeps(
+  pool: Pool,
+  overrides: MakeDepsOverrides = {},
+): CharacterCreationDeps & { redisRealtime: InstanceType<typeof IoredisMock> } {
   return {
     pool,
+    redisRealtime: new IoredisMock(),
+    redisKeyPrefix: REDIS_KEY_PREFIX,
     costCapUsd: overrides.costCapUsd ?? 5.0,
     publishEvent: overrides.publishEvent ?? (() => Promise.resolve()),
     ...(overrides.stageTimeoutMs !== undefined
@@ -186,6 +204,8 @@ function makeProcessorDeps(
 ): CreateCharacterCreationProcessorDeps {
   return {
     pool,
+    redisRealtime: new IoredisMock(),
+    redisKeyPrefix: REDIS_KEY_PREFIX,
     costCapUsd: overrides.costCapUsd ?? 5.0,
     publishEvent: overrides.publishEvent ?? (() => Promise.resolve()),
   }
@@ -226,8 +246,13 @@ describe('runCharacterCreationJob', () => {
     await pool.end()
   })
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
+    vi.restoreAllMocks()
+    // ioredis-mock instances share one keyspace per connection config — the
+    // degraded-park test's llm-health state key must not leak into later
+    // tests' health reads.
+    await new IoredisMock().flushall()
     // Cost-cap is injected via makeDeps()/makeProcessorDeps(); workers no
     // longer read the settings table at job time.
   })
@@ -551,17 +576,18 @@ describe('runCharacterCreationJob', () => {
     expect(stageFailed?.reason).toBeUndefined()
   })
 
-  it('a TRANSIENT (non-terminal) stage error publishes willRetry:true and RETHROWS (BullMQ attempts:2)', async () => {
-    // A rate-limit / overload is non-terminal: the stage marks the pipeline_runs
-    // row failed, publishes stage-failed with willRetry:true, and RETHROWS so
-    // BullMQ's attempts:2 policy fires. Distinct from the terminal path, it does
-    // NOT flip the concept row to 'failed' (a retry may still succeed), so the
-    // player stays on the loading beat rather than seeing a premature failure.
+  it('a TRANSIENT rate-limit through the REAL wrapper now PARKS instead of the BullMQ rethrow', async () => {
+    // llm-outage-resilience §3.1 (Task 9): the wrapper classifies
+    // llm_rate_limited as rate-limit and attaches the class to the surfaced
+    // error; the processor's containment path rides the park ladder instead
+    // of rethrowing into BullMQ's own retry policy — the end-to-end
+    // wrapper-attached handoff (mirrors world-gen's LlmOverloadedError test).
     const { userId, campaignId } = await seed()
     // Stage 2 (character_concept) throws a TRANSIENT error (terminal:false).
     mockGenerateText.mockRejectedValueOnce(new LlmRateLimitedError('upstream rate limited: 429'))
 
     const events: Record<string, unknown>[] = []
+    const job = makeJob(campaignId, userId)
     await expect(
       runCharacterCreationJob(
         makeDeps(pool, {
@@ -570,11 +596,12 @@ describe('runCharacterCreationJob', () => {
             return Promise.resolve()
           },
         }),
-        makeJob(campaignId, userId),
+        job,
       ),
-    ).rejects.toThrow(/rate limited/)
+    ).rejects.toBeInstanceOf(DelayedError)
 
-    // The pipeline_runs row for the failed stage is marked failed…
+    // The pipeline_runs row for the failed stage is marked failed (claimable
+    // on wake)…
     const run = await pool.query<{ status: string }>(
       `SELECT status FROM pipeline_runs
         WHERE campaign_id = $1 AND user_id = $2 AND stage = 'character_concept'`,
@@ -582,20 +609,23 @@ describe('runCharacterCreationJob', () => {
     )
     expect(run.rows[0]?.status).toBe('failed')
 
-    // …but the CONCEPT stays 'processing' (non-terminal — a BullMQ retry may yet
-    // succeed; only exhaustion, handled by the 'failed' listener, flips it).
+    // …but the CONCEPT stays 'processing' (spec §3.3 — a park never flips
+    // the entity; the wake may yet succeed).
     const concept = await pool.query<{ status: string }>(
       `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
       [campaignId, userId],
     )
     expect(concept.rows[0]?.status).toBe('processing')
 
-    // stage-failed event with willRetry:true + the sanitized errorCode.
+    // stage-failed event with willRetry:true + the sanitized errorCode + the
+    // additive wrapper-attached class.
     const stageFailed = events.find((e) => e.type === 'stage-failed')
     expect(stageFailed).toBeDefined()
     expect(stageFailed?.willRetry).toBe(true)
     expect(stageFailed?.errorCode).toBe('llm_rate_limited')
+    expect(stageFailed?.failureClass).toBe('rate-limit')
     expect(stageFailed?.reason).toBeUndefined()
+    expect(job.moveToDelayed).toHaveBeenCalledTimes(1)
   })
 
   it('aborts the job when cost-cap is exceeded before the first stage', async () => {
@@ -1008,6 +1038,8 @@ describe('runCharacterCreationJob', () => {
     const hangingPool = { query: () => new Promise(() => undefined) } as unknown as Pool
     const processor = createCharacterCreationProcessor({
       pool: hangingPool,
+      redisRealtime: new IoredisMock(),
+      redisKeyPrefix: REDIS_KEY_PREFIX,
       costCapUsd: 5,
       publishEvent: () => Promise.resolve(),
       jobTotalTimeoutMs: 30,
@@ -1016,6 +1048,312 @@ describe('runCharacterCreationJob', () => {
     await expect(
       processor(makeJob('camp-hang', 'user-hang') as never),
     ).rejects.toMatchObject({ terminal: true, code: 'job_timeout' })
+  })
+
+  // ------------------------------------------------------------------
+  // llm-outage-resilience §3.1 — parking parity (Task 9). Mirrors the
+  // world-gen reference: a park-eligible (connectivity / rate-limit via the
+  // ai.ts-attached llmFailureClass), non-terminal failure with park budget
+  // remaining marks the stage row failed AS TODAY (claimable on wake),
+  // stamps llm_resume_stamps (pipeline 'character_creation', entity_id =
+  // the character_concepts.id — the BINDING contract the promote scan
+  // recovers via cc-<campaignId>-<userId> → getByCampaignAndUser), publishes
+  // stage-failed{willRetry:true, failureClass}, then self-delays. The
+  // concept row NEVER flips to 'failed' on a park.
+  // ------------------------------------------------------------------
+  describe('parking (llm-outage-resilience §3.1 — Task 9 parity)', () => {
+    const SIX_HOURS_MS = 6 * 60 * 60 * 1000
+
+    // Thrown from the module-spied location_selection stage — BYPASSING
+    // ai.ts, so the hand-attached class survives (an error routed through
+    // the mocked SDK would be re-classified by the wrapper).
+    function classedError(
+      llmFailureClass: 'connectivity' | 'rate-limit' | 'abort' | 'other',
+      opts: { terminal?: boolean } = {},
+    ): Error {
+      return Object.assign(new Error(`upstream failure (${llmFailureClass})`), {
+        llmFailureClass,
+        ...(opts.terminal === true ? { terminal: true } : {}),
+      })
+    }
+
+    function locationSelectionThrows(err: Error): void {
+      vi.spyOn(locationSelectionModule, 'runLocationSelectionStage').mockRejectedValueOnce(err)
+    }
+
+    async function conceptIdOf(campaignId: string, userId: string): Promise<string> {
+      const { rows } = await pool.query<{ id: string }>(
+        `SELECT id FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+        [campaignId, userId],
+      )
+      const id = rows[0]?.id
+      if (id === undefined) throw new Error('seed invariant: concept row missing')
+      return id
+    }
+
+    async function readStamp(entityId: string): Promise<{
+      resume_attempt: number
+      next_resume_at: Date | null
+      park_consumed_ms: string
+      last_error_class: string
+    } | null> {
+      const { rows } = await pool.query<{
+        resume_attempt: number
+        next_resume_at: Date | null
+        park_consumed_ms: string
+        last_error_class: string
+      }>(
+        `SELECT resume_attempt, next_resume_at, park_consumed_ms, last_error_class
+           FROM llm_resume_stamps WHERE pipeline = 'character_creation' AND entity_id = $1`,
+        [entityId],
+      )
+      return rows[0] ?? null
+    }
+
+    async function seedStamp(
+      entityId: string,
+      s: { attempt: number; consumedMs: number; nextResumeAt: Date | null },
+    ): Promise<void> {
+      await pool.query(
+        `INSERT INTO llm_resume_stamps
+           (pipeline, entity_id, resume_attempt, next_resume_at, park_consumed_ms, last_error_class)
+         VALUES ('character_creation', $1, $2, $3, $4, 'connectivity')`,
+        [entityId, s.attempt, s.nextResumeAt, s.consumedMs],
+      )
+    }
+
+    async function conceptStatus(campaignId: string, userId: string): Promise<string | undefined> {
+      const { rows } = await pool.query<{ status: string }>(
+        `SELECT status FROM character_concepts WHERE campaign_id = $1 AND user_id = $2`,
+        [campaignId, userId],
+      )
+      return rows[0]?.status
+    }
+
+    it('parks a connectivity failure: stamp on the CONCEPT id + failed row + DelayedError, concept stays processing', async () => {
+      const { campaignId, userId } = await seed()
+      const conceptId = await conceptIdOf(campaignId, userId)
+      locationSelectionThrows(classedError('connectivity'))
+      const events: Record<string, unknown>[] = []
+      const deps = makeDeps(pool, {
+        publishEvent: (cid, e) => {
+          events.push({ campaignId: cid, ...e })
+          return Promise.resolve()
+        },
+      })
+      const job = makeJob(campaignId, userId)
+      const before = Date.now()
+      // Explicit worker token (the 3rd processor arg) takes precedence.
+      await expect(runCharacterCreationJob(deps, job, 'worker-token')).rejects.toBeInstanceOf(
+        DelayedError,
+      )
+
+      // First park: rung 1 armed 30s out, 30s of budget consumed — keyed on
+      // the character_concepts.id, NOT the campaign or user id.
+      const stamp = await readStamp(conceptId)
+      expect(stamp).not.toBeNull()
+      expect(stamp?.resume_attempt).toBe(1)
+      expect(stamp?.last_error_class).toBe('connectivity')
+      expect(Number(stamp?.park_consumed_ms)).toBe(30_000)
+      expect(stamp?.next_resume_at).not.toBeNull()
+
+      // The stage row failed AS TODAY — claimable on wake (no stage skip).
+      const run = await pool.query<{ status: string }>(
+        `SELECT status FROM pipeline_runs
+          WHERE campaign_id = $1 AND user_id = $2 AND stage = 'location_selection'`,
+        [campaignId, userId],
+      )
+      expect(run.rows[0]?.status).toBe('failed')
+
+      // A park never flips the concept (spec §3.3: entity stays in-progress).
+      expect(await conceptStatus(campaignId, userId)).toBe('processing')
+
+      // Self-delay: same job, ~30s out, under the worker's lock token.
+      expect(job.moveToDelayed).toHaveBeenCalledTimes(1)
+      const [ts, token] = job.moveToDelayed.mock.calls[0] as [number, string]
+      expect(token).toBe('worker-token')
+      expect(ts).toBeGreaterThanOrEqual(before + 30_000)
+      expect(ts).toBeLessThan(before + 40_000)
+
+      // stage-failed carries willRetry:true + the additive class hint.
+      const stageFailed = events.find((e) => e.type === 'stage-failed')
+      expect(stageFailed?.willRetry).toBe(true)
+      expect(stageFailed?.failureClass).toBe('connectivity')
+      expect(stageFailed?.userId).toBe(userId)
+    })
+
+    it('parks a rate-limit failure, falling back to job.token when no worker token is threaded', async () => {
+      const { campaignId, userId } = await seed()
+      const conceptId = await conceptIdOf(campaignId, userId)
+      locationSelectionThrows(classedError('rate-limit'))
+      const job = makeJob(campaignId, userId)
+      await expect(runCharacterCreationJob(makeDeps(pool), job)).rejects.toBeInstanceOf(
+        DelayedError,
+      )
+
+      const stamp = await readStamp(conceptId)
+      expect(stamp?.last_error_class).toBe('rate-limit')
+      const [, token] = job.moveToDelayed.mock.calls[0] as [number, string | undefined]
+      expect(token).toBe('job-lock-token')
+    })
+
+    it('degraded park consumes no budget (sitewide outage already known → consume:false)', async () => {
+      const { campaignId, userId } = await seed()
+      const conceptId = await conceptIdOf(campaignId, userId)
+      locationSelectionThrows(classedError('connectivity'))
+      const deps = makeDeps(pool)
+      // The tracker reads `${keyPrefix}llm-health:state` — present ⇔ degraded.
+      await deps.redisRealtime.set(
+        `${REDIS_KEY_PREFIX}llm-health:state`,
+        JSON.stringify({ since: Date.now() }),
+      )
+      await expect(
+        runCharacterCreationJob(deps, makeJob(campaignId, userId)),
+      ).rejects.toBeInstanceOf(DelayedError)
+
+      const stamp = await readStamp(conceptId)
+      expect(stamp?.resume_attempt).toBe(1)
+      expect(Number(stamp?.park_consumed_ms)).toBe(0)
+    })
+
+    it('re-park climbs the ladder: attempt 1 → 2 delays 120s and accumulates the budget', async () => {
+      const { campaignId, userId } = await seed()
+      const conceptId = await conceptIdOf(campaignId, userId)
+      await seedStamp(conceptId, { attempt: 1, consumedMs: 30_000, nextResumeAt: null })
+      locationSelectionThrows(classedError('connectivity'))
+      const job = makeJob(campaignId, userId)
+      const before = Date.now()
+      await expect(runCharacterCreationJob(makeDeps(pool), job)).rejects.toBeInstanceOf(
+        DelayedError,
+      )
+
+      const stamp = await readStamp(conceptId)
+      expect(stamp?.resume_attempt).toBe(2)
+      expect(Number(stamp?.park_consumed_ms)).toBe(150_000)
+      const [ts] = job.moveToDelayed.mock.calls[0] as [number]
+      expect(ts).toBeGreaterThanOrEqual(before + 120_000)
+      expect(ts).toBeLessThan(before + 130_000)
+    })
+
+    it("exhausted budget falls through to today's failed path exactly (retryable rethrow)", async () => {
+      const { campaignId, userId } = await seed()
+      const conceptId = await conceptIdOf(campaignId, userId)
+      await seedStamp(conceptId, { attempt: 4, consumedMs: SIX_HOURS_MS, nextResumeAt: null })
+      const err = classedError('connectivity')
+      locationSelectionThrows(err)
+      const events: Record<string, unknown>[] = []
+      const job = makeJob(campaignId, userId)
+      // Non-terminal → rethrow so BullMQ's own retry policy fires, as today.
+      await expect(
+        runCharacterCreationJob(
+          makeDeps(pool, {
+            publishEvent: (cid, e) => {
+              events.push({ campaignId: cid, ...e })
+              return Promise.resolve()
+            },
+          }),
+          job,
+        ),
+      ).rejects.toBe(err)
+
+      expect(job.moveToDelayed).not.toHaveBeenCalled()
+      const stageFailed = events.find((e) => e.type === 'stage-failed')
+      expect(stageFailed?.willRetry).toBe(true)
+      // The spent stamp is untouched (clearStamp is completion's / the manual
+      // retry route's job — the fresh-episode arm).
+      const stamp = await readStamp(conceptId)
+      expect(Number(stamp?.park_consumed_ms)).toBe(SIX_HOURS_MS)
+    })
+
+    it("a non-park-eligible class ('abort') keeps today's behavior — no stamp, no delay", async () => {
+      const { campaignId, userId } = await seed()
+      const conceptId = await conceptIdOf(campaignId, userId)
+      const err = classedError('abort')
+      locationSelectionThrows(err)
+      const job = makeJob(campaignId, userId)
+      await expect(runCharacterCreationJob(makeDeps(pool), job)).rejects.toBe(err)
+      expect(job.moveToDelayed).not.toHaveBeenCalled()
+      expect(await readStamp(conceptId)).toBeNull()
+    })
+
+    it('a TERMINAL error never parks even when park-eligible by class (re-entry rule stands)', async () => {
+      const { campaignId, userId } = await seed()
+      const conceptId = await conceptIdOf(campaignId, userId)
+      locationSelectionThrows(classedError('connectivity', { terminal: true }))
+      const job = makeJob(campaignId, userId)
+      // Terminal → today's clean stop (concept fails, no BullMQ rethrow).
+      await expect(runCharacterCreationJob(makeDeps(pool), job)).resolves.toBeUndefined()
+      expect(job.moveToDelayed).not.toHaveBeenCalled()
+      expect(await readStamp(conceptId)).toBeNull()
+      expect(await conceptStatus(campaignId, userId)).toBe('failed')
+    })
+
+    it('claim success clears next_resume_at; rung + budget fields SURVIVE the claim', async () => {
+      const { campaignId, userId } = await seed()
+      const conceptId = await conceptIdOf(campaignId, userId)
+      await seedStamp(conceptId, {
+        attempt: 2,
+        consumedMs: 150_000,
+        nextResumeAt: new Date(Date.now() + 60_000),
+      })
+      // The wake claims, then fails on a NON-park class (plain Error) — the
+      // stamp row itself survives with the resume disarmed.
+      const err = new Error('plain non-terminal failure')
+      locationSelectionThrows(err)
+      await expect(
+        runCharacterCreationJob(makeDeps(pool), makeJob(campaignId, userId)),
+      ).rejects.toBe(err)
+
+      const stamp = await readStamp(conceptId)
+      expect(stamp).not.toBeNull()
+      expect(stamp?.next_resume_at).toBeNull()
+      expect(stamp?.resume_attempt).toBe(2)
+      expect(Number(stamp?.park_consumed_ms)).toBe(150_000)
+    })
+
+    it('stage COMPLETION clears the stamp (fresh episode budget once the outage passes)', async () => {
+      const { campaignId, userId } = await seed()
+      const conceptId = await conceptIdOf(campaignId, userId)
+      await seedStamp(conceptId, {
+        attempt: 3,
+        consumedMs: 450_000,
+        nextResumeAt: new Date(Date.now() + 60_000),
+      })
+      // location_selection COMPLETES (ending the park episode), then stage 2
+      // dies terminally so the run stops without reaching the sheet stage.
+      vi.spyOn(locationSelectionModule, 'runLocationSelectionStage').mockResolvedValueOnce({
+        locationEntityId: uuidv7(),
+        costUsd: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+      })
+      mockGenerateText.mockRejectedValueOnce(new LlmStructuredOutputError('repair exhausted'))
+
+      await runCharacterCreationJob(makeDeps(pool), makeJob(campaignId, userId))
+      expect(await readStamp(conceptId)).toBeNull()
+    })
+
+    it('the loop STOPS on an in-flight stage (retryable rethrow — never continues past it)', async () => {
+      const { campaignId, userId } = await seed()
+      // A live (not-stuck) location_selection row — e.g. BullMQ's stall
+      // handling re-drove a dead worker's job while the stage genuinely runs.
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, user_id)
+         VALUES ($1, $2, 'location_selection', 'running', now(), $3)`,
+        [uuidv7(), campaignId, userId],
+      )
+      const stageSpy = vi
+        .spyOn(locationSelectionModule, 'runLocationSelectionStage')
+        .mockImplementation(() => {
+          throw new Error('stage must not run past an in-flight claim')
+        })
+      await expect(
+        runCharacterCreationJob(makeDeps(pool), makeJob(campaignId, userId)),
+      ).rejects.toMatchObject({ code: 'stage_in_flight' })
+      expect(stageSpy).not.toHaveBeenCalled()
+      // The concept is untouched — the live worker still owns the stage.
+      expect(await conceptStatus(campaignId, userId)).toBe('processing')
+    })
   })
 })
 

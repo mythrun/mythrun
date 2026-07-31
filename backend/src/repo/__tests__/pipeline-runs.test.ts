@@ -201,11 +201,11 @@ describe('pipeline-runs repo', () => {
   })
 
   describe('claimStage', () => {
-    // llm-outage-resilience §3.2: a running-not-stuck WORLD row is a live
-    // in-flight stage, not a lost race — the distinct result lets the stage
-    // loop STOP instead of continuing past a stage another worker holds
-    // (the pre-existing worker-death skip). The campaign/campaign-user
-    // variants keep 'lost-race' until their loops gain the stop arm (Task 9).
+    // llm-outage-resilience §3.2: a running-not-stuck row is a live in-flight
+    // stage, not a lost race — the distinct result lets the stage loop STOP
+    // instead of continuing past a stage another worker holds (the
+    // pre-existing worker-death skip). Task 9 extends the arm to all three
+    // variants (world / campaign-user / campaign) now that their loops stop.
     it("claims a fresh world-keyed row, then returns 'in-flight' on a recent re-claim", async () => {
       const { worldId } = await insertCampaign()
       const repo = pipelineRunsNs(pool)
@@ -281,7 +281,7 @@ describe('pipeline-runs repo', () => {
       ).toBe('claimed')
     })
 
-    it('returns lost-race for a campaign-user row that is running but not yet stuck', async () => {
+    it("returns 'in-flight' for a campaign-user row that is running but not yet stuck", async () => {
       const { campaignId, userId } = await insertCampaign()
       const repo = pipelineRunsNs(pool)
       await pool.query(
@@ -291,7 +291,7 @@ describe('pipeline-runs repo', () => {
       )
       expect(
         await repo.claimStage({ kind: 'campaign-user', campaignId, userId, stage: 'character_concept' }),
-      ).toBe('lost-race')
+      ).toBe('in-flight')
     })
 
     it('claims a campaign-scoped row with user_id NULL', async () => {
@@ -305,6 +305,32 @@ describe('pipeline-runs repo', () => {
         [campaignId],
       )
       expect(row.rows).toHaveLength(1)
+    })
+
+    it("returns 'in-flight' for a campaign-scoped row that is running but not yet stuck", async () => {
+      const { campaignId } = await insertCampaign()
+      const repo = pipelineRunsNs(pool)
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, user_id)
+         VALUES ($1, $2, 'session-prep:1', 'running', now(), NULL)`,
+        [uuidv7(), campaignId],
+      )
+      expect(
+        await repo.claimStage({ kind: 'campaign', campaignId, stage: 'session-prep:1' }),
+      ).toBe('in-flight')
+    })
+
+    it('reclaims a stuck (>5min running) campaign-scoped row via the stuck-reset path', async () => {
+      const { campaignId } = await insertCampaign()
+      const repo = pipelineRunsNs(pool)
+      await pool.query(
+        `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, user_id)
+         VALUES ($1, $2, 'session-prep:1', 'running', now() - INTERVAL '6 minutes', NULL)`,
+        [uuidv7(), campaignId],
+      )
+      expect(
+        await repo.claimStage({ kind: 'campaign', campaignId, stage: 'session-prep:1' }),
+      ).toBe('claimed')
     })
   })
 

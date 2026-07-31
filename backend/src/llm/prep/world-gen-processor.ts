@@ -810,8 +810,9 @@ async function markStageCappedAndRefund(
 // The §3.1 park predicate reads the class ai.ts attached to the surfaced
 // error (Task 4 contract) — a mechanical property read, never re-classification.
 // Only connectivity and rate-limit ride the ladder; abort/other keep today's
-// failure paths.
-function parkEligibleClass(err: unknown): 'connectivity' | 'rate-limit' | null {
+// failure paths. Exported (Task 9) so the session-prep / character-creation
+// processors share the predicate — same pattern as atomicClaimStage above.
+export function parkEligibleClass(err: unknown): 'connectivity' | 'rate-limit' | null {
   /* c8 ignore start — non-object throw (a bare string/number): nothing in the
    * stage chain throws non-objects; defensive narrowing for the property read. */
   if (err === null || typeof err !== 'object') return null

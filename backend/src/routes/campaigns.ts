@@ -42,6 +42,7 @@ import { resolveSpeaker } from '../session/attribution.js'
 import {
   derivePhase,
   deriveCardPhase,
+  isResumingStamp,
   type PhaseAndStages,
   type PipelinePhase,
 } from '../sse/derive-phase.js'
@@ -88,6 +89,10 @@ export interface CharacterCreationResumeQueueLike {
     data: { campaignId: string; userId: string },
     opts?: { jobId?: string },
   ): Promise<unknown>
+  /** Task 9 (llm-outage-resilience §3.2): the resume arm checks each stuck
+   *  member's cc-jobId for a live holder before re-adding — a held id makes
+   *  the D9 re-add a silent no-op, so the member is in-progress, not stuck. */
+  getJob(jobId: string): Promise<WorldGenJobLike | null | undefined>
 }
 
 export interface Opts {
@@ -456,8 +461,27 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       detach = opts.subscriber.attach(campaignId, sink)
 
       const exists = await repo.sessionPreps.existsFor(campaignId, PREP_SESSION_NUMBER)
+      // llm-outage-resilience §3.4 (Task 9): the snapshot gains the
+      // armed/overdue stamp arms — the hold copy re-derives on every
+      // (re)connect (the live prep-failed event is only an optimization).
+      // Stamp contract: pipeline 'session_prep', entity_id = campaignId. A
+      // persisted prep row wins over any stale stamp (terminal truth); while
+      // the stamp is resuming (§3.3: unexhausted, not overdue) the snapshot
+      // stays generating-shaped with the additive lastErrorClass; an overdue
+      // or exhausted stamp derives failed (the retryable surface).
+      const stamp = exists ? null : await repo.resumeStamps.get('session_prep', campaignId)
+      const status = exists
+        ? 'ready'
+        : stamp === null || isResumingStamp(stamp, new Date())
+          ? 'generating'
+          : 'failed'
       sink.write(
-        `event: snapshot\ndata: ${JSON.stringify({ status: exists ? 'ready' : 'generating' })}\n\n`,
+        `event: snapshot\ndata: ${JSON.stringify({
+          status,
+          ...(stamp !== null
+            ? { lastErrorClass: stamp.lastErrorClass, resumeAttempt: stamp.resumeAttempt }
+            : {}),
+        })}\n\n`,
       )
       return reply
     },
@@ -1386,26 +1410,46 @@ async function resumeFromCharacterCreation(ctx: ResumeContext): Promise<FastifyR
   if (stuck.length === 0) {
     return ctx.reply.code(409).send({ code: 'nothing_to_resume' })
   }
+  // llm-outage-resilience §3.2 (Task 9): a parked wake matches the stuck
+  // shape (failed stage row, no running one) while its delayed job is still
+  // ALIVE — the D9 re-add would silently no-op, so a live-held member is
+  // in-progress, never counted as re-enqueued. Terminal leftovers
+  // (completed/failed, normally pruned by removeOn* count:0) don't block.
+  const reEnqueuedUserIds: string[] = []
   for (const row of stuck) {
+    const jobId = `cc-${ctx.campaignId}-${row.user_id}`
+    const existingJob = await ctx.characterCreationQueue.getJob(jobId)
+    if (existingJob) {
+      const completed = await existingJob.isCompleted()
+      const failed = await existingJob.isFailed()
+      if (!completed && !failed) continue
+    }
     await ctx.characterCreationQueue.add(
       'character-creation',
       { campaignId: ctx.campaignId, userId: row.user_id },
-      { jobId: `cc-${ctx.campaignId}-${row.user_id}` },
+      { jobId },
     )
+    reEnqueuedUserIds.push(row.user_id)
+  }
+  if (reEnqueuedUserIds.length === 0) {
+    // Every stuck member's job is backlogged-but-alive — the in-progress
+    // shape, mirroring the world_gen arm.
+    ctx.reply.header('Retry-After', '30')
+    return ctx.reply.code(409).send({ code: 'character_creation_in_progress' })
   }
   ctx.logger.info(
     {
       event: 'resume_character_creation_re_enqueued',
       campaignId: ctx.campaignId,
-      userIds: stuck.map((r) => r.user_id),
-      reEnqueued: stuck.length,
+      userIds: reEnqueuedUserIds,
+      reEnqueued: reEnqueuedUserIds.length,
     },
     'resume re-enqueued stuck character-creation jobs',
   )
   return ctx.reply.code(202).send({
     campaignId: ctx.campaignId,
     action: 'character-creation-re-enqueued',
-    reEnqueued: stuck.length,
+    reEnqueued: reEnqueuedUserIds.length,
   })
 }
 
@@ -1433,6 +1477,21 @@ async function resumeFromWorldGenFailed(ctx: ResumeContext): Promise<FastifyRepl
   /* c8 ignore stop */
   if (errText.includes('world_gen_cost_cap_exceeded')) {
     return ctx.reply.code(409).send({ code: 'world_gen_capped' })
+  }
+  // llm-outage-resilience §3.2 (Task 9): before surfacing the retry, check
+  // the queue for a live job still holding the base id — an overdue-derived
+  // failed surface can coexist with a backlogged-but-alive wake, and the D9
+  // add would silently no-op against it. The live wake owns the episode:
+  // answer the in-progress shape and leave the stamp intact. Terminal
+  // leftovers (completed/failed) don't block the retry.
+  const existingJob = await ctx.queue.getJob(ctx.campaignId)
+  if (existingJob) {
+    const completed = await existingJob.isCompleted()
+    const failed = await existingJob.isFailed()
+    if (!completed && !failed) {
+      ctx.reply.header('Retry-After', '30')
+      return ctx.reply.code(409).send({ code: 'world_gen_in_progress' })
+    }
   }
   // llm-outage-resilience §3.3: reaching this arm with a stamp still present
   // means the park episode ended without a completion — exhausted budget, an

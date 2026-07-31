@@ -18,6 +18,7 @@ import { probeMigrationsCurrent } from './boot/migrations-current.js'
 import { waitFor } from './boot/wait-for.js'
 import { probeVoyageAtBoot } from './boot/voyage-probe.js'
 import { createVoyageEmbedder } from './llm/embed.js'
+import { createLlmHealthTracker } from './llm/llm-health.js'
 import { createPgPool } from './db/postgres.js'
 import { createRedisClient } from './redis/client.js'
 import { createBullmqRedisClient } from './redis/bullmq-client.js'
@@ -187,6 +188,8 @@ async function buildCharacterCreationWorker(
   }
   const characterCreationProcessor = createCharacterCreationProcessor({
     pool,
+    redisRealtime,
+    redisKeyPrefix,
     costCapUsd,
     publishEvent,
   })
@@ -235,7 +238,7 @@ async function buildSessionPrepWorker(
   const { publishEvent, publishProse } = makePipelinePublishers(redisRealtime, redisKeyPrefix)
   return new Worker(
     QUEUE_SESSION_PREP,
-    createSessionPrepProcessor({ pool, publishEvent, publishProse }),
+    createSessionPrepProcessor({ pool, redisRealtime, redisKeyPrefix, publishEvent, publishProse }),
     { connection, concurrency: CONCURRENCY_SESSION_PREP },
   )
 }
@@ -512,6 +515,14 @@ export async function main(): Promise<void> {
     const repo = createRepo(pgRef)
     const authOpts = buildAuthOpts(env)
 
+    // llm-outage-resilience §4.1: the outage tracker behind GET /api/llm-health.
+    // Rides redisRealtime (health state is app state, not queue plumbing) under
+    // the same key prefix the worker's reporter + probe cycle write, so the API
+    // reads the fleet-shared verdict. Uses the llm pino logger already imported
+    // above — the tracker's report/probe arms log through it; the route's read
+    // path never logs.
+    const llmHealthTracker = createLlmHealthTracker(rTRRef, env.redisKeyPrefix, llmLogger)
+
     // MYT-51 T12 + myth-epo4 T22 / MYT-53: BullMQ queues for world-gen +
     // character-creation. Queue connections share redisBatch (non-blocking
     // commands, fast-fail). Workers (built below after buildApp so they
@@ -551,6 +562,7 @@ export async function main(): Promise<void> {
         redisBatch: rTBRef,
         redisKeyPrefix: env.redisKeyPrefix,
         repo,
+        llmHealthTracker,
         worldGenQueue,
         characterCreationQueue,
         sessionPrepQueue,

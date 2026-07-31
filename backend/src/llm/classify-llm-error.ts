@@ -180,9 +180,13 @@ const walk = (err: unknown, ctx: LlmFailureContext, depth: number): LlmFailureVe
     if (status !== undefined && status >= 400) return classifyStatus(status)
   }
 
-  // §1.2 item 4: Mythrun-mapped LlmOverloadedError (529) → connectivity;
-  // the other mapped classes carry their status via cause.
+  // §1.2 item 4: Mythrun-mapped classes. LlmOverloadedError (529) →
+  // connectivity; LlmRateLimitedError (429) → rate-limit (a bare mapped
+  // instance with no cause chain used to fall through to 'other', leaving
+  // the §3.1 park predicate blind to it); the other mapped classes carry
+  // their status via cause.
   if (code === 'llm_overloaded') return CONNECTIVITY
+  if (code === 'llm_rate_limited') return RATE_LIMIT
 
   // §1.2 item 7: dispatcher-aware abort rule.
   if (isAbortShape(name, code)) return classifyAbort(ctx)

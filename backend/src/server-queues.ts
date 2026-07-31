@@ -115,6 +115,8 @@ export function buildCharacterCreationQueue(redisBatch: Redis): {
   })
   const characterCreationQueue: CharacterCreationQueueLike = {
     add: (name, data, opts) => bullmqQueue.add(name, data, opts),
+    // Task 9 (§3.2): the resume arm's job-existence check.
+    getJob: (jobId) => bullmqQueue.getJob(jobId),
   }
   return { bullmqQueue, characterCreationQueue }
 }
@@ -147,6 +149,8 @@ export function buildSessionPrepQueue(redisBatch: Redis): {
   })
   const sessionPrepQueue: SessionPrepQueueLike = {
     add: (name, data, opts) => bullmqQueue.add(name, data, opts),
+    // Task 9 (§3.2): the trigger route's job-existence check.
+    getJob: (jobId) => bullmqQueue.getJob(jobId),
   }
   return { bullmqQueue, sessionPrepQueue }
 }
@@ -372,6 +376,7 @@ export function stubCharacterCreationQueue(): CharacterCreationQueueLike & BullM
       Promise.reject(
         new Error('character-creation queue unavailable: BOOT_GATE_ENABLED is off'),
       ),
+    getJob: () => Promise.resolve(null),
     close: () => Promise.resolve(),
   }
 }
@@ -381,6 +386,7 @@ export function stubCharacterCreationQueue(): CharacterCreationQueueLike & BullM
 export function stubSessionPrepQueue(): SessionPrepQueueLike & BullMqQueueShutdown {
   return {
     add: () => Promise.reject(new Error('queue unavailable: BOOT_GATE_ENABLED is off')),
+    getJob: () => Promise.resolve(null),
     close: () => Promise.resolve(),
   }
 }

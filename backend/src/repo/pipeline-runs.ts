@@ -43,9 +43,8 @@ const SENTINEL_USER_UUID = '00000000-0000-0000-0000-000000000000'
 //                   continue past a live stage (llm-outage-resilience §3.2 —
 //                   the pre-existing worker-death skip: BullMQ's stall
 //                   re-drive used to see 'lost-race' here and silently skip
-//                   the stage). Currently returned by the 'world' variant
-//                   only; the campaign/campaign-user variants keep
-//                   'lost-race' until their loops gain the stop arm (Task 9).
+//                   the stage). Returned by all three variants; every
+//                   processor loop stops on it (Task 9).
 //   - 'lost-race' — a racing worker changed the row between our INSERT
 //                   conflict and the follow-up SELECT; the caller skips.
 export type ClaimResult = 'claimed' | 'completed' | 'in-flight' | 'lost-race'
@@ -370,7 +369,10 @@ async function claimCampaignUserStage(
     [campaignId, stage, userId],
   )
   if (stuckReset.rowCount !== null && stuckReset.rowCount > 0) return 'claimed'
-  return 'lost-race'
+  // Running but not yet stuck: a live worker holds the stage. Distinct from
+  // 'lost-race' so the character-creation loop STOPS instead of skipping the
+  // stage (llm-outage-resilience §3.2, Task 9 parity).
+  return 'in-flight'
 }
 
 async function claimCampaignStage(
@@ -409,11 +411,6 @@ async function claimCampaignStage(
   if (row.status !== 'running') return 'lost-race'
   /* c8 ignore stop */
 
-  /* c8 ignore start — stuck-reset path mirrors the per-player claim. The
-   * deterministic coverage applies to the (still-running, not-stuck)
-   * early-return path inside the guards above; aging started_at by 5+ minutes
-   * for the campaign shape is exercised via the world/campaign-user reset
-   * tests that share this identical SQL. */
   const stuckReset = await c.query<{ id: string }>(
     `UPDATE pipeline_runs
         SET status = 'running', started_at = now(), error = NULL
@@ -424,8 +421,11 @@ async function claimCampaignStage(
     [campaignId, stage],
   )
   if (stuckReset.rowCount !== null && stuckReset.rowCount > 0) return 'claimed'
-  return 'lost-race'
-} /* c8 ignore stop */
+  // Running but not yet stuck: a live worker holds the stage. Distinct from
+  // 'lost-race' so the session-prep / character-integration callers STOP
+  // instead of skipping the stage (llm-outage-resilience §3.2, Task 9 parity).
+  return 'in-flight'
+}
 
 const SUM_COST_FOR_WORLD_QUERY = `
   SELECT COALESCE(SUM(cost_usd), 0)::float8 AS total

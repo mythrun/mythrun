@@ -23,11 +23,15 @@
 //      retry). Non-terminal errors rethrow so BullMQ's retry policy
 //      fires.
 
-import type { Job } from 'bullmq'
+import { DelayedError, type Job } from 'bullmq'
 import type { Pool } from 'pg'
+import type { Redis } from 'ioredis'
 import { isTerminalError } from '../errors.js'
+import { logger } from '../logger.js'
+import { createLlmHealthTracker } from '../llm-health.js'
+import { isParkExhausted, nextParkDelayMs } from '../../repo/resume-stamps.js'
 import { withJobTimeout } from '../../queue/job-containment.js'
-import { atomicClaimStage, sanitizeError } from './world-gen-processor.js'
+import { atomicClaimStage, parkEligibleClass, sanitizeError } from './world-gen-processor.js'
 import { sumCharacterCreationStageCosts } from './cost-cap.js'
 import { runLocationSelectionStage } from './stages/location-selection.js'
 import { runCharacterConceptStage } from './stages/character-concept.js'
@@ -96,6 +100,11 @@ const CHARACTER_CREATION_JOB_TIMEOUT_MS = 16 * 60_000
 
 export interface CharacterCreationDeps {
   readonly pool: Pool
+  /** llm-outage-resilience §3.1: the park path reads the sitewide health
+   *  state (one Redis GET per stage, BEFORE the claim) to decide whether a
+   *  park consumes budget. Same primitives world-gen builds its tracker from. */
+  readonly redisRealtime: Redis
+  readonly redisKeyPrefix: string
   readonly publishEvent: (
     campaignId: string,
     event: Record<string, unknown>,
@@ -110,9 +119,12 @@ export interface CharacterCreationDeps {
   readonly stageTimeoutMs?: number
 }
 
+/** `moveToDelayed` + `token` serve the §3.1 self-delay; the containment
+ *  wrapper forwards only the job, so `job.token` (stamped by the Worker
+ *  before invoking) is the path the lock token actually arrives by. */
 export type CharacterCreationJobLike = Pick<
   Job<CharacterCreationJobPayload>,
-  'data' | 'updateProgress' | 'name'
+  'data' | 'updateProgress' | 'name' | 'moveToDelayed' | 'token'
 >
 
 // Top-level orchestration loop. Exceeds the 50-line max-lines-per-function
@@ -125,9 +137,16 @@ export type CharacterCreationJobLike = Pick<
 export async function runCharacterCreationJob(
   deps: CharacterCreationDeps,
   job: CharacterCreationJobLike,
+  token?: string,
 ): Promise<void> {
   const { campaignId, userId } = job.data
+  const lockToken = token ?? job.token
   const repo = createRepo(deps.pool)
+  // llm-outage-resilience §3.1: one tracker per job; each stage iteration
+  // does its own pre-claim GET (pinned ordering: check, then claim, then
+  // attempt) so a waking attempt during a known sitewide outage re-parks
+  // without burning the solo 6h budget.
+  const llmHealth = createLlmHealthTracker(deps.redisRealtime, deps.redisKeyPrefix, logger)
 
   // 1. Cost-cap precheck. Sums all prior completed character-creation
   //    stage costs for this campaign (across all players) and compares to
@@ -183,6 +202,16 @@ export async function runCharacterCreationJob(
   }
   const startingLevel = campaign.starting_level
 
+  // llm-outage-resilience §3.1: the resume stamp is keyed on the CONCEPT id
+  // (entity_id = character_concepts.id — the BINDING identity the §3.2
+  // promote scan recovers from the `cc-<campaignId>-<userId>` jobId via
+  // getByCampaignAndUser). The fan-out route's flip-to-processing guarantees
+  // the row exists; the null arm is defensive (admin-delete race) and simply
+  // disables park bookkeeping for the job.
+  const conceptRow = await repo.characterConcepts.getByCampaignAndUser(campaignId, userId)
+  /* c8 ignore next — defensive: the fan-out route guarantees the row. */
+  const conceptId = conceptRow?.id ?? null
+
   // 3. Reuse stage outputs across stages where the next stage needs them.
   //    On re-entry (idempotent), conceptOutput / characterId start null
   //    and are reloaded from persisted state by the runStage dispatcher
@@ -192,6 +221,8 @@ export async function runCharacterCreationJob(
   let characterId: string | null = null
 
   for (const stage of STAGES_IN_ORDER) {
+    // §3.1 pinned ordering: health GET, then claim, then attempt.
+    const preClaimHealth = await llmHealth.read()
     const claim = await atomicClaimStage(deps.pool, {
       kind: 'campaign-user',
       campaignId,
@@ -199,11 +230,30 @@ export async function runCharacterCreationJob(
       stage,
     })
     if (claim === 'completed') continue
+    // §3.2: a running-not-stuck row is a LIVE stage on another worker. Stop
+    // here with a retryable throw — BullMQ re-drives later, when the
+    // stuck-reset can fire. Continuing past it (the old 'lost-race' lumping)
+    // would silently complete pipelines with missing stages.
+    if (claim === 'in-flight') {
+      throw Object.assign(
+        new Error(
+          `character-creation stage ${stage} is in-flight on another worker; retrying later`,
+        ),
+        { code: 'stage_in_flight' },
+      )
+    }
     // 'lost-race' arm only triggers when two workers race on the same
     // (campaign, user, stage); tests stage a single worker so this branch
     // isn't exercised. atomicClaimStage is unit-tested separately.
     /* c8 ignore next */
     if (claim === 'lost-race') return
+
+    // §3.1 stamp lifecycle: claim success disarms the resume (the overdue
+    // predicate goes false at stage-start); rung + budget fields survive so
+    // a re-park continues the ladder. Pinned: immediately after the claim.
+    if (conceptId !== null) {
+      await repo.resumeStamps.clearNextResumeAt('character_creation', conceptId)
+    }
 
     await deps.publishEvent(campaignId, {
       type: 'stage-started',
@@ -266,6 +316,12 @@ export async function runCharacterCreationJob(
         inputTokens: result.inputTokens,
         outputTokens: result.outputTokens,
       })
+      // §3.1 stamp lifecycle: a COMPLETED stage ends the park episode — the
+      // outage passed, so the ladder rung and budget reset with the row.
+      // No-op when no stamp exists.
+      if (conceptId !== null) {
+        await repo.resumeStamps.clearStamp('character_creation', conceptId)
+      }
       await deps.publishEvent(campaignId, {
         type: 'stage-completed',
         stage,
@@ -274,6 +330,18 @@ export async function runCharacterCreationJob(
         costUsd: result.costUsd,
       })
     } catch (err) {
+      // llm-outage-resilience §3.1: park-eligible, non-terminal, budget
+      // remaining → the job delays ITSELF (the DelayedError throw is
+      // BullMQ's sanctioned self-delay, not a failure). Everything else
+      // keeps today's exact behavior. The concept row NEVER flips on a park.
+      const parked = await maybeParkCharacterStage(
+        deps,
+        repo,
+        { campaignId, userId, stage, conceptId },
+        err,
+        { job, token: lockToken, degraded: preClaimHealth.state === 'degraded' },
+      )
+      if (parked) throw new DelayedError()
       const terminal = isTerminalError(err)
       // Non-Error throw branch defense; stage handlers propagate Error
       // subclasses (LlmStructuredOutputError, pg errors, etc.).
@@ -331,6 +399,93 @@ export async function runCharacterCreationJob(
     type: 'character_creation_complete',
     userId,
   })
+}
+
+/**
+ * llm-outage-resilience §3.1 — the containment path, mirroring the world-gen
+ * reference (maybeParkStage). On a park-eligible (connectivity | rate-limit),
+ * NON-TERMINAL failure with park budget remaining:
+ *
+ *   1. Mark the stage row failed AS TODAY — claimable on wake. The STAMP, not
+ *      the row, distinguishes parked from genuinely failed.
+ *   2. Upsert the resume stamp keyed on the CONCEPT id (the §3.2 promote
+ *      scan's cc-jobId → concept identity). Degraded parks consume no budget.
+ *   3. Publish stage-failed{willRetry:true, failureClass}, THEN self-delay
+ *      the SAME job (`moveToDelayed` + the caller's DelayedError throw).
+ *
+ * Returns false (→ today's exact behavior) for other classes, terminal
+ * errors, an exhausted budget, and the defensive missing-concept arm.
+ */
+async function maybeParkCharacterStage(
+  deps: CharacterCreationDeps,
+  repo: Repo,
+  ids: {
+    campaignId: string
+    userId: string
+    stage: CharacterCreationStage
+    conceptId: string | null
+  },
+  err: unknown,
+  opts: {
+    readonly job: CharacterCreationJobLike
+    readonly token: string | undefined
+    readonly degraded: boolean
+  },
+): Promise<boolean> {
+  const errorClass = parkEligibleClass(err)
+  /* c8 ignore next — the conceptId null arm is the same defensive
+   * admin-delete race as the load site; park bookkeeping is simply off. */
+  if (errorClass === null || isTerminalError(err) || ids.conceptId === null) return false
+  const prior = await repo.resumeStamps.get('character_creation', ids.conceptId)
+  if (prior !== null && isParkExhausted(prior)) return false
+
+  /* c8 ignore next — non-Error throw defense, mirroring the catch above. */
+  const message = err instanceof Error ? err.message : String(err)
+  await repo.pipelineRuns.markStageFailed({
+    kind: 'campaign-user',
+    campaignId: ids.campaignId,
+    userId: ids.userId,
+    stage: ids.stage,
+    error: message,
+  })
+
+  const delayMs = nextParkDelayMs(prior?.resumeAttempt ?? 0)
+  const stamp = await repo.resumeStamps.upsertPark({
+    pipeline: 'character_creation',
+    entityId: ids.conceptId,
+    delayMs,
+    consume: !opts.degraded,
+    errorClass,
+  })
+  logger.warn(
+    {
+      event: 'character_creation.stage_parked',
+      stage: ids.stage,
+      campaignId: ids.campaignId,
+      userId: ids.userId,
+      conceptId: ids.conceptId,
+      errorClass,
+      resumeAttempt: stamp.resumeAttempt,
+      parkConsumedMs: stamp.parkConsumedMs,
+      delayMs,
+      degraded: opts.degraded,
+    },
+    'character-creation stage parked for auto-resume',
+  )
+
+  // willRetry:true (a park is a retrying state); the additive failureClass is
+  // the live hint for the parked hold copy — authoritative delivery is the
+  // creation-progress snapshot derivation.
+  await deps.publishEvent(ids.campaignId, {
+    type: 'stage-failed',
+    stage: ids.stage,
+    userId: ids.userId,
+    errorCode: sanitizeError(err).code,
+    willRetry: true,
+    failureClass: errorClass,
+  })
+  await opts.job.moveToDelayed(Date.now() + delayMs, opts.token)
+  return true
 }
 
 // -- per-stage dispatch -----------------------------------------------------
@@ -518,6 +673,9 @@ async function loadWorldContext(
  *  Redis client — same channel the pipeline subscriber PSUBSCRIBE's on. */
 export interface CreateCharacterCreationProcessorDeps {
   readonly pool: Pool
+  /** §3.1 health-read primitives — see CharacterCreationDeps. */
+  readonly redisRealtime: Redis
+  readonly redisKeyPrefix: string
   readonly publishEvent: (
     campaignId: string,
     event: Record<string, unknown>,
@@ -531,17 +689,18 @@ export interface CreateCharacterCreationProcessorDeps {
 
 export function createCharacterCreationProcessor(
   deps: CreateCharacterCreationProcessorDeps,
-): (job: Job<CharacterCreationJobPayload>) => Promise<void> {
-  return async (job) => {
+): (job: Job<CharacterCreationJobPayload>, token?: string) => Promise<void> {
+  return async (job, token) => {
     // myth-3u4a0: the whole-job backstop. Bounds EVERY external await in the
     // job — including the orchestration-loop DB/Redis awaits the per-stage
     // watchdog does not cover — so no await can renew the BullMQ lock forever.
     // On trip it throws the terminal `{ terminal: true }` shape: BullMQ's
     // attempts:2 exhausts and the on('failed') handler flips the concept to
     // 'failed' (handleCharacterCreationJobFailure); the stale-'processing'
-    // reset is the earlier player-side recovery.
+    // reset is the earlier player-side recovery. A §3.1 park's DelayedError
+    // races through untouched (the work promise rejects before the timer).
     await withJobTimeout(
-      runCharacterCreationJob(deps, job),
+      runCharacterCreationJob(deps, job, token),
       deps.jobTotalTimeoutMs ?? CHARACTER_CREATION_JOB_TIMEOUT_MS,
       `character-creation job ${job.data.campaignId}/${job.data.userId}`,
     )

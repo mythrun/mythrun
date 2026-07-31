@@ -29,6 +29,7 @@ import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import pino, { type DestinationStream } from 'pino'
 import type { Pool } from 'pg'
+import IoredisMock from 'ioredis-mock'
 import * as ai from 'ai'
 import { guardTestDatabase } from '../../../db/__tests__/guard-db.js'
 import { runMigrations } from '../../../db/migrate.js'
@@ -267,6 +268,10 @@ describe('character-creation-processor — stage 2 persists concept_output', () 
     await runCharacterCreationJob(
       {
         pool,
+        // Task 9: the §3.1 pre-claim health GET rides ioredis-mock; this
+        // happy-path run never parks, so the keyspace stays untouched.
+        redisRealtime: new IoredisMock(),
+        redisKeyPrefix: 'test:cop:',
         costCapUsd: 5.0,
         publishEvent: () => Promise.resolve(),
       },
@@ -274,6 +279,7 @@ describe('character-creation-processor — stage 2 persists concept_output', () 
         data: { campaignId, userId },
         updateProgress: () => Promise.resolve(),
         name: 'character-creation',
+        moveToDelayed: () => Promise.resolve(),
       },
     )
 

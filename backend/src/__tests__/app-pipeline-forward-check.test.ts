@@ -65,7 +65,7 @@ function makeStubDeps(): AppDeps {
       getJobCounts: (): Promise<Record<string, number>> => Promise.resolve({}),
       getJob: (): Promise<null> => Promise.resolve(null),
     },
-    sessionPrepQueue: { add: (): Promise<unknown> => Promise.resolve(undefined) },
+    sessionPrepQueue: { add: (): Promise<unknown> => Promise.resolve(undefined), getJob: () => Promise.resolve(null) },
     sessionSuspendQueue: noopSessionSuspendQueue(),
     sessionTurnQueue: noopSessionTurnQueue(),
     dmTriggerQueue: noopDmTriggerQueue(),

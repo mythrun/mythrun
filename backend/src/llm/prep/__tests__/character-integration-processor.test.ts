@@ -216,6 +216,30 @@ describe('processCharacterIntegrationJob (MYT-54 T11)', () => {
     expect(completed?.costUsd).toBe(0.42)
   })
 
+  it("llm-outage-resilience §3.2 (Task 9): STOPS with a retryable throw on an in-flight (running, not stuck) claim", async () => {
+    const { campaignId, ownerUserId } = await seed()
+    // A live (not-stuck) character_integration row — e.g. BullMQ's stall
+    // handling re-drove a dead worker's job while another container genuinely
+    // runs the stage. Falling through would double-run it; returning cleanly
+    // (the old 'lost-race' lumping) would let a stall re-drive complete the
+    // job with the stage unfinished.
+    await pool.query(
+      `INSERT INTO pipeline_runs (id, campaign_id, stage, status, started_at, user_id)
+       VALUES ($1, $2, 'character_integration', 'running', now(), NULL)`,
+      [uuidv7(), campaignId],
+    )
+    const handlerSpy = vi
+      .spyOn(integrationStage, 'runCharacterIntegrationStage')
+      .mockImplementation(() => {
+        throw new Error('handler must not be called past an in-flight claim')
+      })
+
+    await expect(
+      processCharacterIntegrationJob(makeDeps(pool), makeJob({ campaignId, ownerUserId })),
+    ).rejects.toMatchObject({ code: 'stage_in_flight' })
+    expect(handlerSpy).not.toHaveBeenCalled()
+  })
+
   it('idempotent re-entry: returns without invoking handler when pipeline_runs is already completed', async () => {
     const { campaignId, ownerUserId } = await seed()
 

@@ -190,6 +190,7 @@ export function characterConceptsNs(c: ClientLike) {
       campaignId: string,
     ): Promise<
       readonly {
+        id: string
         user_id: string
         status: string
         submitted_at: Date
@@ -198,7 +199,11 @@ export function characterConceptsNs(c: ClientLike) {
         character_id: string | null
       }[]
     > => {
+      // Task 9 additive: `cc.id` rides along — the llm-outage-resilience §3.4
+      // progress derivation joins llm_resume_stamps on it (stamp contract:
+      // pipeline 'character_creation', entity_id = character_concepts.id).
       const result = await c.query<{
+        id: string
         user_id: string
         status: string
         submitted_at: Date
@@ -206,7 +211,7 @@ export function characterConceptsNs(c: ClientLike) {
         confirmed_at: Date | null
         character_id: string | null
       }>(
-        `SELECT cc.user_id, cc.status, cc.submitted_at, cc.error, cc.confirmed_at,
+        `SELECT cc.id, cc.user_id, cc.status, cc.submitted_at, cc.error, cc.confirmed_at,
                 ccx.character_id
            FROM character_concepts cc
            LEFT JOIN campaign_characters ccx

@@ -285,6 +285,91 @@ describe('GET /api/campaigns/:campaignId/prep-status (MYT-62 T6)', () => {
     stream.destroy()
   })
 
+  // llm-outage-resilience §3.4 (Task 9): the snapshot derivation gains the
+  // armed/overdue stamp arms — the hold copy must re-derive on every
+  // (re)connect (CloudFront buffers SSE; the live event is an optimization).
+  // Stamp contract: pipeline 'session_prep', entity_id = campaignId.
+  async function seedStamp(
+    campaignId: string,
+    s: { attempt: number; consumedMs: number; nextResumeAt: Date | null },
+  ): Promise<void> {
+    await pool.query(
+      `INSERT INTO llm_resume_stamps
+         (pipeline, entity_id, resume_attempt, next_resume_at, park_consumed_ms, last_error_class)
+       VALUES ('session_prep', $1, $2, $3, $4, 'connectivity')`,
+      [campaignId, s.attempt, s.nextResumeAt, s.consumedMs],
+    )
+  }
+
+  async function readSnapshot(campaignId: string, devSub: string): Promise<string> {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/${campaignId}/prep-status`,
+      headers: { 'x-mythrun-dev-sub': devSub },
+      payloadAsStream: true,
+    })
+    expect(res.statusCode).toBe(200)
+    const stream = res.stream()
+    const { reached } = drainUntil(stream, 'event: snapshot', 2000)
+    const collected = await reached
+    stream.destroy()
+    return collected
+  }
+
+  it('an ARMED park keeps the snapshot generating-shaped and surfaces lastErrorClass', async () => {
+    const { campaignId, devSub } = await seedCampaignWithMember()
+    await seedStamp(campaignId, {
+      attempt: 2,
+      consumedMs: 150_000,
+      nextResumeAt: new Date(Date.now() + 60_000),
+    })
+    const collected = await readSnapshot(campaignId, devSub)
+    expect(collected).toContain('"status":"generating"')
+    expect(collected).toContain('"lastErrorClass":"connectivity"')
+    expect(collected).toContain('"resumeAttempt":2')
+  })
+
+  it('an OVERDUE park (nextResumeAt + 5min grace passed) derives failed/retryable', async () => {
+    const { campaignId, devSub } = await seedCampaignWithMember()
+    await seedStamp(campaignId, {
+      attempt: 1,
+      consumedMs: 30_000,
+      nextResumeAt: new Date(Date.now() - 6 * 60_000),
+    })
+    const collected = await readSnapshot(campaignId, devSub)
+    expect(collected).toContain('"status":"failed"')
+    expect(collected).toContain('"lastErrorClass":"connectivity"')
+  })
+
+  it('an EXHAUSTED park budget derives failed/retryable', async () => {
+    const { campaignId, devSub } = await seedCampaignWithMember()
+    await seedStamp(campaignId, {
+      attempt: 4,
+      consumedMs: 6 * 60 * 60 * 1000,
+      nextResumeAt: null,
+    })
+    const collected = await readSnapshot(campaignId, devSub)
+    expect(collected).toContain('"status":"failed"')
+  })
+
+  it('a READY prep wins over a stale stamp (the row is the terminal truth)', async () => {
+    const { campaignId, devSub } = await seedCampaignWithMember()
+    const repo = createRepo(pool)
+    await repo.sessionPreps.insert({
+      campaignId,
+      sessionNumber: PREP_SESSION_NUMBER,
+      ftContext: 'public-ft-context',
+      sdPlaybook: 'SECRET-PLAYBOOK',
+    })
+    await seedStamp(campaignId, {
+      attempt: 1,
+      consumedMs: 30_000,
+      nextResumeAt: new Date(Date.now() + 60_000),
+    })
+    const collected = await readSnapshot(campaignId, devSub)
+    expect(collected).toContain('"status":"ready"')
+  })
+
   it('returns 403 for a non-member', async () => {
     const { campaignId } = await seedCampaignWithMember(0)
     const otherUserId = uuidv7()

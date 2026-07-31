@@ -138,6 +138,17 @@ export async function processCharacterIntegrationJob(
     logger.info({ event: 'character_integration.lost_race', campaignId }, 'lost claim race')
     return
   }
+  // llm-outage-resilience §3.2 (Task 9): a running-not-stuck row is a LIVE
+  // stage on another worker. Stop with a retryable throw — BullMQ re-drives
+  // later, when the stuck-reset can fire. Falling through would double-run
+  // the stage; returning cleanly would let a stall re-drive complete the job
+  // with the stage unfinished.
+  if (claim === 'in-flight') {
+    throw Object.assign(
+      new Error('character-integration stage is in-flight on another worker; retrying later'),
+      { code: 'stage_in_flight' },
+    )
+  }
 
   // myth-gp2c Cluster C: the integration stage persists through the unified
   // repo surface (reads + Opus call outside `repo.transaction`, the 7-table

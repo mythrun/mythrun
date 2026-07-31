@@ -101,16 +101,42 @@ function createQueueSpy(): QueueSpy {
   }
 }
 
-// MYT-102 A3: character-creation queue spy for the resume arm — the handler
-// only calls .add() on it.
+// MYT-102 A3: character-creation queue spy for the resume arm. Task 9 (§3.2):
+// the handler now also calls .getJob() per stuck member — a live job holding
+// the base id means the D9 re-add would silently no-op, so the member is
+// skipped instead of counted as re-enqueued.
 interface CcQueueSpy {
   readonly queue: CharacterCreationResumeQueueLike
   readonly add: ReturnType<typeof vi.fn>
+  readonly getJob: ReturnType<typeof vi.fn>
+  /** Register a live/terminal job under a specific cc-jobId. */
+  setJob(jobId: string, job: WorldGenJobLike | null): void
 }
 
 function createCcQueueSpy(): CcQueueSpy {
+  const jobs = new Map<string, WorldGenJobLike>()
   const add = vi.fn().mockResolvedValue({ id: 'stub-cc-job' })
-  return { queue: { add }, add }
+  const getJob = vi.fn<(jobId: string) => Promise<WorldGenJobLike | null>>((jobId) =>
+    Promise.resolve(jobs.get(jobId) ?? null),
+  )
+  const queue: CharacterCreationResumeQueueLike = {
+    add: (name, data, opts) => add(name, data, opts) as Promise<unknown>,
+    getJob: (jobId) => getJob(jobId),
+  }
+  return {
+    queue,
+    add,
+    getJob,
+    setJob: (jobId, job): void => {
+      if (job === null) jobs.delete(jobId)
+      else jobs.set(jobId, job)
+    },
+  }
+}
+
+/** A JobLike in a live (waiting/active/delayed) state — the held-id case. */
+function liveJob(): WorldGenJobLike {
+  return { isCompleted: () => false, isFailed: () => false }
 }
 
 // --- Seed helpers ---------------------------------------------------------
@@ -412,6 +438,57 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
       expect(await stampExists(seed.campaignId)).toBe(true)
     })
 
+    it('§3.2: a LIVE job still holding the base id → 409 world_gen_in_progress (the D9 add would silently no-op); stamp intact', async () => {
+      const seed = await seedCampaign(pool, scope)
+      await insertRun(pool, {
+        worldId: seed.worldId,
+        stage: 'world_and_factions',
+        status: 'failed',
+        error: '{"code":"llm_overloaded","message":"529"}',
+        startedAt: new Date(Date.now() - 1000),
+        completedAt: new Date(),
+      })
+      // Overdue on the clock, but the wake job is ALIVE (backlogged delayed/
+      // waiting) — the route can reach the queue, so it must not offer a
+      // duplicate retry whose add would no-op against the held id.
+      await insertStamp(seed.campaignId, { nextResumeAt: new Date(Date.now() - 10 * 60_000) })
+      queueSpy.setJob(liveJob())
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/resume`,
+        headers: { 'x-mythrun-dev-sub': seed.devSub },
+      })
+      expect(res.statusCode).toBe(409)
+      expect(res.json()).toEqual({ code: 'world_gen_in_progress' })
+      expect(res.headers['retry-after']).toBe('30')
+      expect(queueSpy.getJob).toHaveBeenCalledWith(seed.campaignId)
+      expect(queueSpy.add).not.toHaveBeenCalled()
+      // The live wake still owns the episode — its stamp must survive.
+      expect(await stampExists(seed.campaignId)).toBe(true)
+    })
+
+    it('§3.2: a TERMINAL leftover job under the id does not block the retry (202, fresh episode)', async () => {
+      const seed = await seedCampaign(pool, scope, { worldStatus: 'failed' })
+      await insertRun(pool, {
+        worldId: seed.worldId,
+        stage: 'world_and_factions',
+        status: 'failed',
+        error: '{"code":"llm_overloaded","message":"529"}',
+        startedAt: new Date(Date.now() - 1000),
+        completedAt: new Date(),
+      })
+      await insertStamp(seed.campaignId, { nextResumeAt: new Date(Date.now() - 10 * 60_000) })
+      queueSpy.setJob({ isCompleted: () => false, isFailed: () => true })
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/resume`,
+        headers: { 'x-mythrun-dev-sub': seed.devSub },
+      })
+      expect(res.statusCode).toBe(202)
+      expect(queueSpy.add).toHaveBeenCalledTimes(1)
+      expect(await stampExists(seed.campaignId)).toBe(false)
+    })
+
     it('overdue stamp (wake never claimed) → 202 re-enqueued with a FRESH episode (stamp cleared)', async () => {
       const seed = await seedCampaign(pool, scope)
       await insertRun(pool, {
@@ -622,6 +699,82 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
         'character-creation',
         { campaignId: seed.campaignId, userId: seed.userId },
         { jobId: `cc-${seed.campaignId}-${seed.userId}` },
+      )
+    })
+
+    it('§3.2: a backlogged-but-ALIVE cc job is not offered a duplicate retry — all held → 409 character_creation_in_progress', async () => {
+      const seed = await seedCharCreationCampaign()
+      await insertConcept(seed.campaignId, seed.userId, 'processing')
+      // A parked wake's stage-1 shape: location_selection failed (claimable)
+      // + the character_concept seed row still pending (the POST /characters
+      // tx wrote it) — listStuckProcessing sweeps the member — but the
+      // delayed job is ALIVE, so the D9 re-add would silently no-op.
+      await insertRun(pool, {
+        campaignId: seed.campaignId,
+        stage: 'location_selection',
+        status: 'failed',
+        userId: seed.userId,
+        error: 'llm_overloaded',
+        startedAt: new Date(Date.now() - 60_000),
+        completedAt: new Date(Date.now() - 59_000),
+      })
+      await insertRun(pool, {
+        campaignId: seed.campaignId,
+        stage: 'character_concept',
+        status: 'pending',
+        userId: seed.userId,
+      })
+      ccQueueSpy.setJob(`cc-${seed.campaignId}-${seed.userId}`, liveJob())
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/resume`,
+        headers: { 'x-mythrun-dev-sub': seed.devSub },
+      })
+      expect(res.statusCode).toBe(409)
+      expect(res.json()).toEqual({ code: 'character_creation_in_progress' })
+      expect(res.headers['retry-after']).toBe('30')
+      expect(ccQueueSpy.add).not.toHaveBeenCalled()
+    })
+
+    it('§3.2 mixed: the live-held member is skipped, the free member re-enqueued (202, reEnqueued:1)', async () => {
+      const seed = await seedCharCreationCampaign()
+      // Member A: stuck AND their job id is still held live → skip.
+      await insertConcept(seed.campaignId, seed.userId, 'processing')
+      await insertRun(pool, {
+        campaignId: seed.campaignId,
+        stage: 'location_selection',
+        status: 'failed',
+        userId: seed.userId,
+        error: 'llm_overloaded',
+        startedAt: new Date(Date.now() - 60_000),
+        completedAt: new Date(Date.now() - 59_000),
+      })
+      ccQueueSpy.setJob(`cc-${seed.campaignId}-${seed.userId}`, liveJob())
+      // Member B: stuck with NO job on the queue → genuinely lost, re-add.
+      const memberB = await addMember(seed.campaignId, 6)
+      await insertConcept(seed.campaignId, memberB.userId, 'processing')
+      await insertRun(pool, {
+        campaignId: seed.campaignId,
+        stage: 'character_concept',
+        status: 'pending',
+        userId: memberB.userId,
+      })
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/resume`,
+        headers: { 'x-mythrun-dev-sub': seed.devSub },
+      })
+      expect(res.statusCode).toBe(202)
+      expect(res.json()).toEqual({
+        campaignId: seed.campaignId,
+        action: 'character-creation-re-enqueued',
+        reEnqueued: 1,
+      })
+      expect(ccQueueSpy.add).toHaveBeenCalledTimes(1)
+      expect(ccQueueSpy.add).toHaveBeenCalledWith(
+        'character-creation',
+        { campaignId: seed.campaignId, userId: memberB.userId },
+        { jobId: `cc-${seed.campaignId}-${memberB.userId}` },
       )
     })
 

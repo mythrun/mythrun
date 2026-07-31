@@ -127,8 +127,23 @@ describe('classifyLlmError', () => {
     expect(classifyLlmError(und(code), CTX_NS)).toEqual(CONNECTIVITY)
   })
 
-  it('a code outside every connectivity family (llm_rate_limited, no cause) → other', () => {
-    expect(classifyLlmError(new LlmRateLimitedError('limited'), CTX_S)).toEqual(OTHER)
+  // Task 9 follow-up: the mapped class is item 4 alongside llm_overloaded — a
+  // bare LlmRateLimitedError (no cause chain) used to fall through to 'other',
+  // leaving the §3.1 park predicate blind to the mapped 429 shape.
+  it('bare LlmRateLimitedError (mapped 429, no cause) → rate-limit pair', () => {
+    expect(classifyLlmError(new LlmRateLimitedError('limited'), CTX_S)).toEqual({
+      retryWorthy: true,
+      outageSignal: false,
+      failureClass: 'rate-limit',
+    })
+  })
+
+  it('a bare code:llm_rate_limited object (cross-realm shape) → rate-limit pair', () => {
+    expect(classifyLlmError({ name: 'Error', code: 'llm_rate_limited' }, CTX_NS)).toEqual({
+      retryWorthy: true,
+      outageSignal: false,
+      failureClass: 'rate-limit',
+    })
   })
 
   // §1.2 walk item 3 — HTTP statuses via APICallError.statusCode (≥400 only).

@@ -10,6 +10,8 @@
 import type { FastifyPluginAsync } from 'fastify'
 import { createRepo } from '../repo/index.js'
 import { requireCampaignMember } from '../auth/access-control.js'
+import { isResumingStamp } from '../sse/derive-phase.js'
+import type { ResumeStamp } from '../repo/resume-stamps.js'
 import type { Opts } from './campaign-characters.js'
 
 // FastifyPluginAsync requires an async function shape; the body has no
@@ -78,6 +80,18 @@ export const characterRosterRoutes: FastifyPluginAsync<Opts> = async (app, opts)
       const conceptRows = await repo.characterConcepts.listForCampaign(req.params.campaignId)
       const byUserId = new Map(conceptRows.map((r) => [r.user_id, r]))
 
+      // llm-outage-resilience §3.4 (Task 9): the armed/overdue stamp arms.
+      // Only a 'processing' concept can be parked (the processor never flips
+      // the row on a park), so the stamp read is bounded to those members.
+      // Stamp contract: pipeline 'character_creation', entity_id = concept id.
+      const stampByConceptId = new Map<string, ResumeStamp>()
+      for (const r of conceptRows) {
+        if (r.status !== 'processing') continue
+        const stamp = await repo.resumeStamps.get('character_creation', r.id)
+        if (stamp !== null) stampByConceptId.set(r.id, stamp)
+      }
+      const now = new Date()
+
       const concepts: {
         userId: string
         displayName: string
@@ -86,15 +100,24 @@ export const characterRosterRoutes: FastifyPluginAsync<Opts> = async (app, opts)
         confirmedAt: string | null
         characterId: string | null
         error?: unknown
+        lastErrorClass?: 'connectivity' | 'rate-limit'
+        resumeAttempt?: number
       }[] = []
       const missing: { userId: string; displayName: string }[] = []
       for (const m of memberRows) {
         const c = byUserId.get(m.user_id)
         if (c) {
+          const stamp = stampByConceptId.get(c.id) ?? null
+          // While the stamp is resuming (§3.3: unexhausted, not overdue) the
+          // concept stays 'processing' — generating-never-failed-while-armed;
+          // an overdue or exhausted stamp derives 'failed' (the retryable
+          // surface) as a PURE read; the row itself is untouched.
+          const status =
+            stamp !== null && !isResumingStamp(stamp, now) ? 'failed' : c.status
           concepts.push({
             userId: m.user_id,
             displayName: m.display_name,
-            status: c.status,
+            status,
             submittedAt: c.submitted_at.toISOString(),
             // MYT-90 D8: null until the player confirms ("This is me") /
             // until the sheet stage persists the character row.
@@ -106,6 +129,11 @@ export const characterRosterRoutes: FastifyPluginAsync<Opts> = async (app, opts)
             // due to historical writes.
             ...(c.status === 'failed' && c.error !== null && c.error !== undefined
               ? { error: c.error }
+              : {}),
+            // Additive park fields — the parked hold copy AND the retryable
+            // view both key off the class (spec §3.4).
+            ...(stamp !== null
+              ? { lastErrorClass: stamp.lastErrorClass, resumeAttempt: stamp.resumeAttempt }
               : {}),
           })
         } else {

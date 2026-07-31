@@ -68,6 +68,7 @@ export function noopWorldGenQueue(): WorldGenQueueLike {
 export function noopSessionPrepQueue(): SessionPrepQueueLike {
   return {
     add: (): Promise<unknown> => Promise.resolve(undefined),
+    getJob: () => Promise.resolve(null),
   }
 }
 

@@ -37,6 +37,7 @@
 // Cost: ~$0.10–3 of Anthropic (a handful of real Sonnet calls). Expected.
 
 import type { Pool } from 'pg'
+import IoredisMock from 'ioredis-mock'
 import { createPgPool } from '../../src/db/postgres.js'
 import { createRepo } from '../../src/repo/index.js'
 import { uuidv7 } from '../../src/repo/uuidv7.js'
@@ -304,13 +305,22 @@ async function runCharacterCase(pool: Pool, spec: RunSpec): Promise<void> {
   await runCharacterCreationJob(
     {
       pool,
+      // Task 9: the §3.1 pre-claim health GET. Out of this smoke's scope —
+      // an empty mock keyspace reads healthy.
+      redisRealtime: new IoredisMock(),
+      redisKeyPrefix: 'smoke:myt-90:',
       costCapUsd: 50,
       publishEvent: (_cid, e) => {
         events.push(e)
         return Promise.resolve()
       },
     },
-    { data: { campaignId, userId }, updateProgress: () => Promise.resolve(), name: 'character-creation' },
+    {
+      data: { campaignId, userId },
+      updateProgress: () => Promise.resolve(),
+      name: 'character-creation',
+      moveToDelayed: () => Promise.resolve(),
+    },
   )
   const elapsed = Date.now() - t0
 

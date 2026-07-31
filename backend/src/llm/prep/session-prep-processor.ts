@@ -34,16 +34,19 @@
 // (session-prep.ts uses the OPUS model constant), so a single-tier price is
 // correct here.
 
-import type { Job } from 'bullmq'
+import { DelayedError, type Job } from 'bullmq'
 import type { Pool } from 'pg'
+import type { Redis } from 'ioredis'
 import type { PipelineEvent, ProseEvent } from '../../contract/pipeline-events.js'
 import { isTerminalError } from '../errors.js'
 import { logger } from '../logger.js'
-import { atomicClaimStage } from './world-gen-processor.js'
+import { createLlmHealthTracker } from '../llm-health.js'
+import { isParkExhausted, nextParkDelayMs } from '../../repo/resume-stamps.js'
+import { atomicClaimStage, parkEligibleClass } from './world-gen-processor.js'
 import { generateSessionPrep } from './stages/session-prep.js'
 import { runSecretTripwire } from '../secret-tripwire.js'
 import { buildPriorSessionContext } from './prior-session-context.js'
-import { createRepo } from '../../repo/index.js'
+import { createRepo, type Repo } from '../../repo/index.js'
 import { computeCostUsd } from '../../billing/model-pricing.js'
 import { OPUS_ID } from '../models.js'
 import type { SessionHandoff } from '../schemas/post-session-analysis.js'
@@ -86,6 +89,12 @@ export interface SessionPrepJobPayload {
 
 export interface SessionPrepProcessorDeps {
   readonly pool: Pool
+  // llm-outage-resilience §3.1: the park path reads the sitewide health state
+  // (one Redis GET per job, BEFORE the claim) to decide whether a park
+  // consumes budget. Same primitives the world-gen processor builds its
+  // tracker from.
+  readonly redisRealtime: Redis
+  readonly redisKeyPrefix: string
   // Player-facing phase events ride the `pipeline:campaign:` channel. Typed to
   // PipelineEvent so the prose-carrying `prep-delta` (a ProseEvent) is a
   // compile error here — enforced ignorance at the type level.
@@ -96,20 +105,42 @@ export interface SessionPrepProcessorDeps {
   readonly publishProse: (campaignId: string, event: ProseEvent) => Promise<void>
 }
 
-// Top-level orchestration: claim → resolve world → generate → persist → mark
-// → publish. Kept linear (no helper extraction) so the per-stage invariant is
-// grep-friendly in one read; under the 50-line budget.
+/** The Job slice the processor reads. `moveToDelayed` + `token` serve the
+ *  §3.1 self-delay; the containment wrapper forwards only the job, so
+ *  `job.token` (stamped by the Worker before invoking) is the path the lock
+ *  token actually arrives by in production. */
+export type SessionPrepJobLike = Pick<
+  Job<SessionPrepJobPayload>,
+  'data' | 'moveToDelayed' | 'token'
+>
+
+// Top-level orchestration: health-read → claim → resolve world → generate →
+// persist → mark → publish, with the §3.1 park containment on the failure
+// path. Kept linear (no helper extraction beyond maybeParkPrep) so the
+// per-stage invariant is grep-friendly in one read. Exceeds the 50-line
+// budget for the same reason the character-creation loop does: splitting the
+// claim/publish/mark/classify steps would thread the campaign+session tuple
+// through nested boundaries and lose the linear-read property.
+// eslint-disable-next-line max-lines-per-function
 export async function processSessionPrepJob(
   deps: SessionPrepProcessorDeps,
-  job: Pick<Job<SessionPrepJobPayload>, 'data'>,
+  job: SessionPrepJobLike,
+  token?: string,
 ): Promise<void> {
   const { campaignId, sessionNumber } = job.data
   const stage = `session-prep:${String(sessionNumber)}`
+  const lockToken = token ?? job.token
 
   logger.info(
     { event: 'session_prep.job_received', campaignId, sessionNumber },
     'session-prep job received',
   )
+
+  // §3.1 pinned ordering: health GET, then claim, then attempt. The pre-claim
+  // reading decides consume on a later park — a waking attempt during a known
+  // sitewide outage must re-park without burning the solo 6h budget.
+  const llmHealth = createLlmHealthTracker(deps.redisRealtime, deps.redisKeyPrefix, logger)
+  const preClaimHealth = await llmHealth.read()
 
   const claim = await atomicClaimStage(deps.pool, {
     kind: 'campaign',
@@ -124,6 +155,15 @@ export async function processSessionPrepJob(
     )
     return
   }
+  // §3.2: a running-not-stuck row is a LIVE stage on another worker. Stop
+  // with a retryable throw — BullMQ re-drives later, when the stuck-reset can
+  // fire. Proceeding past it would double-run the prep.
+  if (claim === 'in-flight') {
+    throw Object.assign(
+      new Error(`session-prep stage ${stage} is in-flight on another worker; retrying later`),
+      { code: 'stage_in_flight' },
+    )
+  }
   // 'lost-race' only triggers when two workers race on the same (campaign,
   // stage); concurrency >1 makes this possible if a duplicate job is
   // enqueued. Return cleanly — the winner will publish completion.
@@ -137,6 +177,11 @@ export async function processSessionPrepJob(
   }
 
   const repo = createRepo(deps.pool)
+
+  // §3.1 stamp lifecycle: claim success disarms the resume (the overdue
+  // predicate goes false at stage-start); the rung + budget fields survive so
+  // a re-park continues the ladder. Pinned ordering: immediately after claim.
+  await repo.resumeStamps.clearNextResumeAt('session_prep', campaignId)
 
   // Claim won → announce the prep is starting on the player-facing channel
   // before any generation work.
@@ -198,12 +243,26 @@ export async function processSessionPrepJob(
       stage,
       costUsd,
     })
+    // §3.1 stamp lifecycle: a COMPLETED stage ends the park episode — the
+    // outage passed, so the ladder rung and budget reset with the row. No-op
+    // when no stamp exists.
+    await repo.resumeStamps.clearStamp('session_prep', campaignId)
     await deps.publishEvent(campaignId, { type: 'prep-ready', sessionNumber, costUsd })
     logger.info(
       { event: 'session_prep.completed', campaignId, sessionNumber, costUsd },
       'session-prep completed',
     )
   } catch (err) {
+    // llm-outage-resilience §3.1: park-eligible, non-terminal, budget
+    // remaining → the job delays ITSELF (the DelayedError throw is BullMQ's
+    // sanctioned self-delay, not a failure — attempts stay untouched).
+    // Everything else keeps today's exact behavior.
+    const parked = await maybeParkPrep(deps, repo, { campaignId, sessionNumber, stage }, err, {
+      job,
+      token: lockToken,
+      degraded: preClaimHealth.state === 'degraded',
+    })
+    if (parked) throw new DelayedError()
     const terminal = isTerminalError(err)
     // Non-Error throw branch defense; the stage throws Error subclasses
     // (LlmStructuredOutputError, LlmRateLimitedError, pg errors, etc.).
@@ -233,11 +292,91 @@ export async function processSessionPrepJob(
   }
 }
 
+/**
+ * llm-outage-resilience §3.1 — the containment path, mirroring the world-gen
+ * reference (maybeParkStage). On a park-eligible (connectivity | rate-limit),
+ * NON-TERMINAL failure with park budget remaining:
+ *
+ *   1. Mark the stage row failed AS TODAY — the row must be claimable on
+ *      wake. The STAMP, not the row, distinguishes parked from failed.
+ *   2. Upsert the resume stamp (pipeline 'session_prep', entity_id =
+ *      campaignId — the BINDING identity the §3.2 promote scan recovers from
+ *      the `sp-<campaignId>-<n>` jobId). Degraded parks consume no budget.
+ *   3. Publish prep-failed{terminal:false, failureClass}, THEN self-delay the
+ *      SAME job (`moveToDelayed` + the caller's DelayedError throw) — no add,
+ *      no dedup interaction, single-flight by construction.
+ *
+ * Returns false (→ today's exact behavior) for other classes, terminal
+ * errors, and an exhausted budget (which lands on the retryable surface).
+ */
+async function maybeParkPrep(
+  deps: SessionPrepProcessorDeps,
+  repo: Repo,
+  ids: { campaignId: string; sessionNumber: number; stage: string },
+  err: unknown,
+  opts: {
+    readonly job: SessionPrepJobLike
+    readonly token: string | undefined
+    readonly degraded: boolean
+  },
+): Promise<boolean> {
+  const errorClass = parkEligibleClass(err)
+  if (errorClass === null || isTerminalError(err)) return false
+  const prior = await repo.resumeStamps.get('session_prep', ids.campaignId)
+  if (prior !== null && isParkExhausted(prior)) return false
+
+  /* c8 ignore next — non-Error throw defense, mirroring the catch above. */
+  const message = err instanceof Error ? err.message : String(err)
+  await repo.pipelineRuns.markStageFailed({
+    kind: 'campaign',
+    campaignId: ids.campaignId,
+    stage: ids.stage,
+    error: message,
+  })
+
+  const delayMs = nextParkDelayMs(prior?.resumeAttempt ?? 0)
+  const stamp = await repo.resumeStamps.upsertPark({
+    pipeline: 'session_prep',
+    entityId: ids.campaignId,
+    delayMs,
+    consume: !opts.degraded,
+    errorClass,
+  })
+  logger.warn(
+    {
+      event: 'session_prep.stage_parked',
+      campaignId: ids.campaignId,
+      sessionNumber: ids.sessionNumber,
+      errorClass,
+      resumeAttempt: stamp.resumeAttempt,
+      parkConsumedMs: stamp.parkConsumedMs,
+      delayMs,
+      degraded: opts.degraded,
+    },
+    'session-prep parked for auto-resume',
+  )
+
+  // The parked event stays terminal:false (a park is a retrying state); the
+  // additive failureClass is the live hint for the parked hold copy —
+  // authoritative delivery is the prep-status snapshot derivation.
+  await deps.publishEvent(ids.campaignId, {
+    type: 'prep-failed',
+    sessionNumber: ids.sessionNumber,
+    terminal: false,
+    failureClass: errorClass,
+  })
+  await opts.job.moveToDelayed(Date.now() + delayMs, opts.token)
+  return true
+}
+
+// The returned processor takes the narrow SessionPrepJobLike (parameter
+// contravariance makes it assignable where BullMQ's `(job: Job, token?)`
+// processor shape is expected), so tests and the Worker share one signature.
 export function createSessionPrepProcessor(
   deps: SessionPrepProcessorDeps,
-): (job: Job<SessionPrepJobPayload>) => Promise<void> {
-  return async (job) => {
-    await processSessionPrepJob(deps, job)
+): (job: SessionPrepJobLike, token?: string) => Promise<void> {
+  return async (job, token) => {
+    await processSessionPrepJob(deps, job, token)
   }
 }
 

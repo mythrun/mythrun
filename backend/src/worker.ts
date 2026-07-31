@@ -31,6 +31,7 @@ import {
   type CharacterIntegrationJobPayload,
 } from './llm/prep/character-integration-processor.js'
 import { createSessionPrepProcessor } from './llm/prep/session-prep-processor.js'
+import { buildPrepQueueEvents } from './llm/prep/prep-queue-events.js'
 import { buildSessionTurnWorker } from './session/turn-worker.js'
 import { QUEUE_SESSION_TURN } from './session/turn-queue.js'
 import { buildDmTriggerWorker } from './session/dm-trigger-worker.js'
@@ -314,6 +315,8 @@ async function bootWorker(partials: BootPartials): Promise<void> {
   // the real processor — no stub fallthrough.
   const characterCreationProcessor = createCharacterCreationProcessor({
     pool: pg,
+    redisRealtime,
+    redisKeyPrefix: env.redisKeyPrefix,
     costCapUsd: characterCreationCostCapUsd,
     publishEvent,
   })
@@ -361,7 +364,13 @@ async function bootWorker(partials: BootPartials): Promise<void> {
     QUEUE_SESSION_PREP,
     containProcessor(
       QUEUE_SESSION_PREP,
-      createSessionPrepProcessor({ pool: pg, publishEvent, publishProse }),
+      createSessionPrepProcessor({
+        pool: pg,
+        redisRealtime,
+        redisKeyPrefix: env.redisKeyPrefix,
+        publishEvent,
+        publishProse,
+      }),
       logger,
     ),
     { connection: redisBatch, concurrency: CONCURRENCY_SESSION_PREP },
@@ -502,6 +511,21 @@ async function bootWorker(partials: BootPartials): Promise<void> {
     (args) => finalizeEndedSession(finalizeDeps, args),
   )
 
+  // Prep-queue QueueEvents subscribers (llm-outage-resilience §3.2, Task 9) —
+  // the same broker-side terminal net for the three prep queues. A parked
+  // run's wake that dies terminally (stall exhaustion) leaves an entity
+  // stranded in-progress with no job; the handlers recover the identity from
+  // the event's jobId alone (removeOnFail count:0 — the job is already gone),
+  // cross-check llm_resume_stamps, and drive each pipeline's existing
+  // terminal path + clearStamp. Same dedicated-blocking-connection + shutdown
+  // close discipline as sessionTurnEvents above.
+  const prepQueueEvents = buildPrepQueueEvents({
+    redisBatch,
+    pool: pg,
+    publishEvent,
+    logger,
+  })
+
   // LLM recovery probe (llm-outage-resilience §2.2 + §3.2). One repeatable
   // 60s job — registered via idempotent upsertJobScheduler, so every worker
   // boot re-asserts the same scheduler rather than stacking duplicates — runs
@@ -624,6 +648,12 @@ async function bootWorker(partials: BootPartials): Promise<void> {
     // redisBatch.quit() below, so skipping this leaks a connection per deploy.
     await sessionTurnEvents.close().catch((err: unknown) => {
       logger.error({ err }, 'session-turn queue-events close failed')
+    })
+
+    // Same for the three prep-queue subscribers (Task 9) — three dedicated
+    // blocking connections that redisBatch.quit() does not cover.
+    await prepQueueEvents.close().catch((err: unknown) => {
+      logger.error({ err }, 'prep queue-events close failed')
     })
 
     // Close the QueueEvents-backstop finalize producers (MYT-74b T14). They `add`

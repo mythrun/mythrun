@@ -8,6 +8,7 @@
 // Usage (from backend/): tsx --env-file=.env.development scripts/smoke/guided-subclass-smoke.ts [worldId]
 
 import type { Pool } from 'pg'
+import IoredisMock from 'ioredis-mock'
 import { createPgPool } from '../../src/db/postgres.js'
 import { uuidv7 } from '../../src/repo/uuidv7.js'
 import { runCharacterCreationJob } from '../../src/llm/prep/character-creation-processor.js'
@@ -60,6 +61,10 @@ async function main(): Promise<void> {
     await runCharacterCreationJob(
       {
         pool,
+        // Task 9: the §3.1 pre-claim health GET. Out of this smoke's scope —
+        // an empty mock keyspace reads healthy.
+        redisRealtime: new IoredisMock(),
+        redisKeyPrefix: 'smoke:guided-subclass:',
         costCapUsd: 50,
         publishEvent: () => Promise.resolve(),
       },
@@ -67,6 +72,7 @@ async function main(): Promise<void> {
         data: { campaignId, userId },
         updateProgress: () => Promise.resolve(),
         name: 'character-creation',
+        moveToDelayed: () => Promise.resolve(),
       },
     )
     console.log(`pipeline completed in ${String(Math.round((Date.now() - t0) / 1000))}s`)

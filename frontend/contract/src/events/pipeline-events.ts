@@ -53,6 +53,14 @@ export const PIPELINE_SSE_EVENTS: readonly string[] = [
 
 export type PipelineSseEvent = (typeof PIPELINE_SSE_EVENTS)[number]
 
+// Mirror of LlmFailureClass from backend/src/llm/classify-llm-error.ts
+// (llm-outage-resilience §1.2). Kept structurally identical, same reasoning as
+// PipelineStageDiagnostic below: the contract layer never imports from llm/.
+// Only `connectivity` and `rate-limit` are park-eligible (§3.1) — the frontend
+// keys the parked hold copy off exactly that pair; `abort`/`other` ride the
+// event for diagnostics only.
+export type PipelineFailureClass = 'connectivity' | 'rate-limit' | 'abort' | 'other'
+
 // Mirror of WrapperDiagnostic from backend/src/llm/ai.ts. Kept structurally
 // identical so the canonical type can be re-aliased there as
 // `LlmCallDiagnostic = PipelineStageDiagnostic`. The contract layer
@@ -129,6 +137,13 @@ export type PipelineEvent =
       // wrapper attached `.diagnostic` to the rethrown error; absent for
       // non-LLM stage failures (DB errors, cost-cap, stage-not-implemented).
       diagnostic?: PipelineStageDiagnostic
+      // llm-outage-resilience §3.4 (additive): the §1.2 class ai.ts attached
+      // to the surfaced error, when one exists. A park-eligible class
+      // (`connectivity`/`rate-limit`) is the LIVE hint for the parked hold
+      // copy — authoritative delivery stays the snapshot derivation's
+      // `lastErrorClass` (the class re-derives on every (re)connect); absent
+      // for failures ai.ts never classified.
+      failureClass?: PipelineFailureClass
     }
   // cost-update is ABSOLUTE (not delta); emitted only post-COMMIT.
   | { type: 'cost-update'; cumulativeUsd: number }
@@ -209,7 +224,15 @@ export type PipelineEvent =
   // Session-prep phase events (MYT-62) — player-safe, ride pipeline:campaign:
   | { type: 'prep-started'; sessionNumber: number }
   | { type: 'prep-ready'; sessionNumber: number; costUsd: number }
-  | { type: 'prep-failed'; sessionNumber: number; terminal: boolean }
+  | {
+      type: 'prep-failed'
+      sessionNumber: number
+      terminal: boolean
+      // llm-outage-resilience §3.1 (Task 9): present on a parked prep failure —
+      // the live hint for the parked hold copy, mirroring stage-failed's field.
+      // Authoritative delivery stays the snapshot/status derivation.
+      failureClass?: PipelineFailureClass
+    }
 
 // Prose events (MYT-62) — dev-only, ride the SEPARATE prep:campaign: channel.
 // Deliberately NOT in PipelineEvent / PIPELINE_SSE_EVENTS: prep-delta carries

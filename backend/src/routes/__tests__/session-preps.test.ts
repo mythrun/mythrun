@@ -75,13 +75,27 @@ async function addMember(pool: Pool, campaignId: string, user: SeededUser): Prom
 interface QueueSpy {
   readonly queue: SessionPrepQueueLike
   readonly add: ReturnType<typeof vi.fn>
+  readonly getJob: ReturnType<typeof vi.fn>
+  /** Register a job as live/terminal under a specific sp-jobId (Task 9 §3.2). */
+  setJob(jobId: string, job: { isCompleted(): boolean; isFailed(): boolean } | null): void
 }
 function createQueueSpy(): QueueSpy {
+  const jobs = new Map<string, { isCompleted(): boolean; isFailed(): boolean }>()
   const add = vi.fn().mockResolvedValue({ id: 'stub-job' })
+  const getJob = vi.fn((jobId: string) => Promise.resolve(jobs.get(jobId) ?? null))
   const queue: SessionPrepQueueLike = {
     add: (name, data, opts) => add(name, data, opts) as Promise<unknown>,
+    getJob: (jobId) => getJob(jobId),
   }
-  return { queue, add }
+  return {
+    queue,
+    add,
+    getJob,
+    setJob: (jobId, job): void => {
+      if (job === null) jobs.delete(jobId)
+      else jobs.set(jobId, job)
+    },
+  }
 }
 
 async function buildTestApp(pool: Pool, queue?: SessionPrepQueueLike): Promise<FastifyInstance> {
@@ -139,6 +153,38 @@ describe('sessionPrepsPlugin (MYT-63)', () => {
         { campaignId, sessionNumber: 1 },
         { jobId: `sp-${campaignId}-1` },
       )
+    })
+
+    it('§3.2 (Task 9): a LIVE job holding sp-<id>-<n> → 409 prep_in_progress (the D9 add would silently no-op)', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const { campaignId } = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      // A parked (delayed) or still-running prep job holds the base id —
+      // answering 202 would report a re-trigger that never happened.
+      queueSpy.setJob(`sp-${campaignId}-1`, { isCompleted: () => false, isFailed: () => false })
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${campaignId}/session-prep`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: {},
+      })
+      expect(res.statusCode).toBe(409)
+      expect(res.json()).toEqual({ code: 'prep_in_progress' })
+      expect(res.headers['retry-after']).toBe('30')
+      expect(queueSpy.add).not.toHaveBeenCalled()
+    })
+
+    it('§3.2 (Task 9): a terminal leftover job under the id does not block the trigger (202)', async () => {
+      const owner = await seedUser(pool, scope, 0)
+      const { campaignId } = await seedCampaignOwnedBy(pool, scope, owner, 0)
+      queueSpy.setJob(`sp-${campaignId}-1`, { isCompleted: () => true, isFailed: () => false })
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${campaignId}/session-prep`,
+        headers: { 'content-type': 'application/json', 'x-mythrun-dev-sub': owner.devSub },
+        payload: {},
+      })
+      expect(res.statusCode).toBe(202)
+      expect(queueSpy.add).toHaveBeenCalledTimes(1)
     })
 
     it('403 — non-member', async () => {

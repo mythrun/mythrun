@@ -15,7 +15,7 @@
 //   - describeErrorForLog  — secret-free error descriptor for structured logs.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Job } from 'bullmq'
+import { DelayedError, type Job } from 'bullmq'
 import {
   withJobTimeout,
   JOB_TIMEOUT_CODE,
@@ -31,14 +31,21 @@ function fakeJob(overrides: Partial<Job> = {}): Job {
 
 function collectingLogger(): {
   error: (obj: Record<string, unknown>, msg?: string) => void
+  info: (obj: Record<string, unknown>, msg?: string) => void
   calls: { obj: Record<string, unknown>; msg: string | undefined }[]
+  infoCalls: { obj: Record<string, unknown>; msg: string | undefined }[]
 } {
   const calls: { obj: Record<string, unknown>; msg: string | undefined }[] = []
+  const infoCalls: { obj: Record<string, unknown>; msg: string | undefined }[] = []
   return {
     error: (obj, msg) => {
       calls.push({ obj, msg })
     },
+    info: (obj, msg) => {
+      infoCalls.push({ obj, msg })
+    },
     calls,
+    infoCalls,
   }
 }
 
@@ -123,6 +130,25 @@ describe('containProcessor', () => {
     )
     await expect(wrapped(fakeJob())).rejects.toBeInstanceOf(TypeError)
     expect(logger.calls[0]?.obj.event).toBe('job.contained_failure')
+  })
+
+  // llm-outage-resilience §3.1 (Task 9 carve-out): a park is BullMQ's
+  // sanctioned self-delay, not a failure — the DelayedError signal must reach
+  // BullMQ untouched, and it must NOT raise an error-level contained_failure
+  // (a routine park would page as a job failure on every rung).
+  it('rethrows a DelayedError untouched and logs job.parked at info, never contained_failure', async () => {
+    const logger = collectingLogger()
+    const park = new DelayedError()
+    const wrapped = containProcessor('world-gen', () => Promise.reject(park), logger)
+    await expect(wrapped(fakeJob({ id: 'jw', name: 'world-gen' }))).rejects.toBe(park)
+    expect(logger.calls).toHaveLength(0)
+    expect(logger.infoCalls).toHaveLength(1)
+    expect(logger.infoCalls[0]?.obj).toMatchObject({
+      component: 'worker',
+      event: 'job.parked',
+      queue: 'world-gen',
+      jobId: 'jw',
+    })
   })
 })
 

@@ -715,30 +715,36 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     expect(stageFailed[0]?.errorCode).toBe('concept_intake_paint_job_loop_exhausted')
   })
 
-  it('retryable LlmRateLimitedError rethrows (BullMQ retries)', async () => {
+  it('LlmRateLimitedError (mapped 429 → rate-limit class) now PARKS instead of the BullMQ rethrow', async () => {
+    // Task 9 follow-up: classify-llm-error's walk item 4 now maps a bare
+    // LlmRateLimitedError to the rate-limit class (it used to fall to
+    // 'other' → today's rethrow). Rate-limit is park-eligible (§3.1) — a
+    // sustained 429 window is exactly what the ladder rides out.
+    const { DelayedError } = await import('bullmq')
     const { campaignId, worldId } = await seedUserWorldCampaign(pool, scope)
     const { LlmRateLimitedError } = await import('../../errors.js')
-    const transientErr = new LlmRateLimitedError('429 backoff')
-    vi.mocked(ai.generateText).mockRejectedValueOnce(transientErr)
+    vi.mocked(ai.generateText).mockRejectedValueOnce(new LlmRateLimitedError('429 backoff'))
 
     const deps = makeDeps(pool)
     const proc = createWorldGenProcessor(deps)
-    await expect(proc(makeJob(campaignId))).rejects.toBe(transientErr)
+    await expect(proc(makeJob(campaignId))).rejects.toBeInstanceOf(DelayedError)
 
     const stageFailed = deps.publishSpy.mock.calls
       .map((c) => String(c[1]))
       .filter((s) => s.includes('"stage-failed"'))
-      .map((s) => JSON.parse(s) as { willRetry?: boolean; errorCode?: string })
+      .map(
+        (s) => JSON.parse(s) as { willRetry?: boolean; errorCode?: string; failureClass?: string },
+      )
     expect(stageFailed[0]?.willRetry).toBe(true)
     expect(stageFailed[0]?.errorCode).toBe('llm_rate_limited')
+    expect(stageFailed[0]?.failureClass).toBe('rate-limit')
 
-    // Eager worlds.status='failed' still fires — BullMQ's retry path resets
-    // back to 'generating' on the next attempt. See handleStageError comment.
+    // A park never flips the entity (spec §3.3) — unlike the old rethrow path.
     const { rows } = await pool.query<{ status: string }>(
       `SELECT status FROM worlds WHERE id = $1`,
       [worldId],
     )
-    expect(rows[0]?.status).toBe('failed')
+    expect(rows[0]?.status).toBe('generating')
   })
 
   it('LlmOverloadedError (529 → connectivity class) now PARKS instead of the BullMQ rethrow', async () => {
@@ -791,7 +797,7 @@ describe('world-gen-processor (MYT-51 T7)', () => {
     expect(results.some((r) => r.status === 'fulfilled')).toBe(true)
     for (const r of results) {
       if (r.status === 'rejected') {
-        expect(String((r as PromiseRejectedResult).reason)).toMatch(/in-flight/)
+        expect(String(r.reason)).toMatch(/in-flight/)
       }
     }
 
@@ -1615,13 +1621,15 @@ describe('atomicClaimStage with userId', () => {
 
     // A second claim with the same args immediately afterwards sees the
     // row in 'running' state with a fresh started_at → must NOT reclaim.
+    // Task 9: the campaign-user variant now reports the live holder as
+    // 'in-flight' (the §3.2 stop arm), mirroring the world variant.
     const second = await atomicClaimStage(pool, {
       kind: 'campaign-user',
       campaignId,
       userId,
       stage: 'character_concept',
     })
-    expect(second).toBe('lost-race')
+    expect(second).toBe('in-flight')
   })
 
   it('still supports the world-level (user_id IS NULL) shape', async () => {

@@ -393,6 +393,118 @@ describe('GET /api/campaigns/:campaignId/character-creation-progress (MYT-54 T12
     expect(body.missing[0]?.userId).toBe(owner.userId)
   })
 
+  // llm-outage-resilience §3.4 (Task 9): the progress derivation gains the
+  // armed/overdue stamp arms. Stamp contract: pipeline 'character_creation',
+  // entity_id = the character_concepts.id. While the stamp is resuming the
+  // concept stays 'processing' (generating-never-failed-while-armed) with the
+  // additive lastErrorClass; an overdue or exhausted stamp derives 'failed'
+  // (the retryable surface) as a pure read — the row itself is untouched.
+  async function seedStamp(
+    conceptId: string,
+    s: { attempt: number; consumedMs: number; nextResumeAt: Date | null },
+  ): Promise<void> {
+    await pool.query(
+      `INSERT INTO llm_resume_stamps
+         (pipeline, entity_id, resume_attempt, next_resume_at, park_consumed_ms, last_error_class)
+       VALUES ('character_creation', $1, $2, $3, $4, 'rate-limit')`,
+      [conceptId, s.attempt, s.nextResumeAt, s.consumedMs],
+    )
+  }
+
+  it('200 — a PARKED (armed, resuming) processing concept stays processing and surfaces lastErrorClass', async () => {
+    const owner = await seedUser(pool, scope, 0)
+    const campaign = await seedCampaignOwnedBy(pool, scope, owner, 0)
+    const conceptId = await insertConcept(pool, campaign.campaignId, owner.userId, 'processing')
+    await seedStamp(conceptId, {
+      attempt: 2,
+      consumedMs: 150_000,
+      nextResumeAt: new Date(Date.now() + 60_000),
+    })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/${campaign.campaignId}/character-creation-progress`,
+      headers: { 'x-mythrun-dev-sub': owner.devSub },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json<ProgressBody>()
+    const entry = body.concepts.find((c) => c.userId === owner.userId) as
+      | (ProgressBody['concepts'][number] & { lastErrorClass?: string; resumeAttempt?: number })
+      | undefined
+    expect(entry?.status).toBe('processing')
+    expect(entry?.lastErrorClass).toBe('rate-limit')
+    expect(entry?.resumeAttempt).toBe(2)
+  })
+
+  it("200 — an OVERDUE park derives status 'failed' (retryable) without touching the row", async () => {
+    const owner = await seedUser(pool, scope, 0)
+    const campaign = await seedCampaignOwnedBy(pool, scope, owner, 0)
+    const conceptId = await insertConcept(pool, campaign.campaignId, owner.userId, 'processing')
+    await seedStamp(conceptId, {
+      attempt: 1,
+      consumedMs: 30_000,
+      nextResumeAt: new Date(Date.now() - 6 * 60_000),
+    })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/${campaign.campaignId}/character-creation-progress`,
+      headers: { 'x-mythrun-dev-sub': owner.devSub },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json<ProgressBody>()
+    const entry = body.concepts.find((c) => c.userId === owner.userId) as
+      | (ProgressBody['concepts'][number] & { lastErrorClass?: string })
+      | undefined
+    expect(entry?.status).toBe('failed')
+    expect(entry?.lastErrorClass).toBe('rate-limit')
+
+    // Pure read predicate — the DB row itself stays 'processing'.
+    const row = await pool.query<{ status: string }>(
+      `SELECT status FROM character_concepts WHERE id = $1`,
+      [conceptId],
+    )
+    expect(row.rows[0]?.status).toBe('processing')
+  })
+
+  it("200 — an EXHAUSTED park budget derives status 'failed' (retryable)", async () => {
+    const owner = await seedUser(pool, scope, 0)
+    const campaign = await seedCampaignOwnedBy(pool, scope, owner, 0)
+    const conceptId = await insertConcept(pool, campaign.campaignId, owner.userId, 'processing')
+    await seedStamp(conceptId, {
+      attempt: 4,
+      consumedMs: 6 * 60 * 60 * 1000,
+      nextResumeAt: null,
+    })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/${campaign.campaignId}/character-creation-progress`,
+      headers: { 'x-mythrun-dev-sub': owner.devSub },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json<ProgressBody>()
+    expect(body.concepts.find((c) => c.userId === owner.userId)?.status).toBe('failed')
+  })
+
+  it('200 — a processing concept WITHOUT a stamp carries no park fields (byte-identical shape)', async () => {
+    const owner = await seedUser(pool, scope, 0)
+    const campaign = await seedCampaignOwnedBy(pool, scope, owner, 0)
+    await insertConcept(pool, campaign.campaignId, owner.userId, 'processing')
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/campaigns/${campaign.campaignId}/character-creation-progress`,
+      headers: { 'x-mythrun-dev-sub': owner.devSub },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json<ProgressBody>()
+    const entry = body.concepts.find((c) => c.userId === owner.userId)
+    expect(entry?.status).toBe('processing')
+    expect(entry !== undefined && 'lastErrorClass' in entry).toBe(false)
+    expect(entry !== undefined && 'resumeAttempt' in entry).toBe(false)
+  })
+
   it('403 not_campaign_member — stranger', async () => {
     const owner = await seedUser(pool, scope, 0)
     const stranger = await seedUser(pool, scope, 1)

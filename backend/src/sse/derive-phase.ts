@@ -61,7 +61,9 @@ const PARK_OVERDUE_GRACE_MS = 5 * 60_000
 // §3.3: `resuming` while the stamp exists, unexhausted, not overdue. An
 // in-flight stamp (nextResumeAt NULL) cannot be overdue — the claim that
 // cleared it IS the stage start the overdue predicate waits for.
-function isResumingStamp(stamp: ResumeStampView | null, now: Date): boolean {
+// Exported (Task 9): the session-prep and character-creation status
+// derivations apply the same armed/overdue arms to their own snapshots.
+export function isResumingStamp(stamp: ResumeStampView | null, now: Date): boolean {
   if (stamp === null) return false
   if (stamp.parkConsumedMs >= PARK_BUDGET_MS) return false
   if (
