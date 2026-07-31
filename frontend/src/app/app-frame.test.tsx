@@ -7,6 +7,7 @@ import {
   ApiClientProvider,
   type ApiContext,
   type BalanceResponse,
+  type LlmHealthResponse,
   type MeResponse,
 } from '@mythrun/client-core'
 import { AppFrame } from './app-frame.tsx'
@@ -57,7 +58,7 @@ const SEED_ME: MeResponse = {
 }
 
 function renderFrame(
-  options: { fullBleed?: boolean; forceElevated?: boolean } = {},
+  options: { fullBleed?: boolean; forceElevated?: boolean; llmHealth?: LlmHealthResponse } = {},
 ): ReturnType<typeof createMemoryRouter> {
   const child: RouteObject = {
     path: '*',
@@ -78,6 +79,9 @@ function renderFrame(
   })
   queryClient.setQueryData(['billing', 'balance'], SEED_BALANCE)
   queryClient.setQueryData(['me'], SEED_ME)
+  // The llm-health poll behind the outage strip — seeded like the header
+  // caches (staleTime Infinity, no live fetch in jsdom). Default ok.
+  queryClient.setQueryData(['llm-health'], options.llmHealth ?? { state: 'ok', since: null })
   render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={queryClient}>
@@ -183,6 +187,39 @@ describe('AppFrame — the banner chrome (navbar redesign)', () => {
     renderFrame()
     const buy = screen.getByTestId('frame-buy-credits')
     expect(buy.querySelector('svg')).toBeNull()
+  })
+})
+
+describe('AppFrame — the sitewide outage strip (llm-outage-resilience §4.2)', () => {
+  const DEGRADED: LlmHealthResponse = { state: 'degraded', since: 1_722_300_000_000 }
+
+  it('mounts the strip host PERMANENTLY with role=status, directly beneath the sticky bar', () => {
+    // A live region inserted already-populated is unreliably announced: the
+    // host must exist from first paint on EVERY authed surface, ok or not.
+    renderFrame()
+    const strip = screen.getByTestId('frame-notice')
+    expect(strip.getAttribute('role')).toBe('status')
+    // Directly beneath StickyBar: the header precedes the strip, and the strip
+    // precedes the content region, in document order.
+    const header = screen.getByTestId('app-frame-header')
+    const content = screen.getByTestId('app-frame-content')
+    expect(header.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(strip.compareDocumentPosition(content) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('collapses to empty content while ok — the element stays in the accessibility tree', () => {
+    renderFrame()
+    expect(screen.getByTestId('frame-notice').textContent).toBe('')
+  })
+
+  it('renders the outage notice while degraded', () => {
+    renderFrame({ llmHealth: DEGRADED })
+    expect(screen.getByTestId('frame-notice').textContent).toBe(i18n.t('frame.outageNotice'))
+  })
+
+  it('renders the strip on the full-bleed (immersive) frame too', () => {
+    renderFrame({ fullBleed: true, llmHealth: DEGRADED })
+    expect(screen.getByTestId('frame-notice').textContent).toBe(i18n.t('frame.outageNotice'))
   })
 })
 

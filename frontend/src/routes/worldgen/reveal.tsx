@@ -275,7 +275,15 @@ function MobileReveal({
  *  This makes the explore prompt above ("wander your world, continue when you're
  *  ready") truthful — the affordance exists, it just isn't ready yet — instead of
  *  promising a control the old `null` gate hid entirely. */
-function ContinueAffordance({ ready, onPress }: { ready: boolean; onPress: () => void }): React.JSX.Element {
+function ContinueAffordance({
+  ready,
+  degraded,
+  onPress,
+}: {
+  ready: boolean
+  degraded: boolean
+  onPress: () => void
+}): React.JSX.Element {
   const { t } = useTranslation()
   return (
     <Stack direction="row" align="center" gap={3}>
@@ -294,8 +302,12 @@ function ContinueAffordance({ ready, onPress }: { ready: boolean; onPress: () =>
           <span aria-hidden="true" className="inline-flex flex-none">
             <Spinner size="xs" tone="accent" />
           </span>
+          {/* llm-outage-resilience §3.4: six of twelve stages run BEHIND the
+              reveal boundary — a tail-stage park swaps the settling line for
+              the stamp-keyed hold variant, never an indefinite unexplained
+              "the table is still being set". */}
           <Text role="meta" as="span">
-            {t('worldReveal.settling')}
+            {degraded ? t('worldReveal.degradedSettling') : t('worldReveal.settling')}
           </Text>
         </Stack>
       )}
@@ -316,6 +328,13 @@ export interface WorldRevealProps extends Pick<WorldGenStream, 'nodes' | 'edges'
    *  indicator, and true on completion to enable it in place. Default true (a
    *  settled world). */
   continueReady?: boolean
+  /** llm-outage-resilience §3.4: whether a park episode is in progress behind
+   *  the reveal boundary (the route derives it from the stream's
+   *  `lastErrorClass`). While set AND the tail is still settling, the quiet
+   *  settling line swaps for `worldReveal.degradedSettling` — the interruption
+   *  is explained, never an indefinite "the table is still being set". Default
+   *  false (a healthy tail). */
+  degraded?: boolean
   /** Continue intent — leads to the starting-situation pick (D4). Defaults to
    *  navigating to the situation route; injectable so callers/tests override. */
   onContinue?: () => void
@@ -376,6 +395,7 @@ export function WorldReveal({
   edges,
   stages = NO_STAGES,
   continueReady = true,
+  degraded = false,
   onContinue,
   fetchSnapshot = getWorldSnapshot,
   moment = SETTLED_MOMENT,
@@ -473,7 +493,9 @@ export function WorldReveal({
       navigation={wikiNavigation}
     />
   )
-  const continueAction = <ContinueAffordance ready={continueReady} onPress={handleContinue} />
+  const continueAction = (
+    <ContinueAffordance ready={continueReady} degraded={degraded} onPress={handleContinue} />
+  )
   // The OUTLINE H1 (+ the mobile drawer's title): the world's NAME once the
   // model delivers it (myth-8ozsw); generic fallback only pre-model. Visually
   // hidden on the glass since ux-run3 — the wiki panel's header carries it.

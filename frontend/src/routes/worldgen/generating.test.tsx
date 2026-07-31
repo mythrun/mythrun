@@ -102,6 +102,7 @@ interface RenderOpts {
   readonly stageTimings?: readonly StageTiming[] | null
   readonly resumedMidGen?: boolean
   readonly campaignId?: string
+  readonly lastErrorClass?: 'connectivity' | 'rate-limit'
 }
 
 function renderGenerating({
@@ -110,6 +111,7 @@ function renderGenerating({
   stageTimings = null,
   resumedMidGen = false,
   campaignId,
+  lastErrorClass,
 }: RenderOpts = {}): void {
   render(
     <I18nextProvider i18n={i18n}>
@@ -120,6 +122,7 @@ function renderGenerating({
         stageTimings={stageTimings}
         resumedMidGen={resumedMidGen}
         {...(campaignId !== undefined ? { campaignId } : {})}
+        {...(lastErrorClass !== undefined ? { lastErrorClass } : {})}
       />
     </I18nextProvider>,
   )
@@ -138,6 +141,7 @@ function renderGeneratingRerenderable(opts: RenderOpts = {}): {
         stages={o.stages ?? []}
         stageTimings={o.stageTimings ?? null}
         resumedMidGen={o.resumedMidGen ?? false}
+        {...(o.lastErrorClass !== undefined ? { lastErrorClass: o.lastErrorClass } : {})}
       />
     </I18nextProvider>
   )
@@ -711,6 +715,114 @@ describe('GeneratingView — the coarse remaining-wait line (MYT-102 timer revam
       ],
     })
     expect(screen.getByTestId('worldgen-loading-countdown').textContent).toBe(underMinute)
+  })
+})
+
+describe('GeneratingView — the parked hold (llm-outage-resilience §3.4)', () => {
+  const T0 = new Date('2026-07-07T12:00:00.000Z')
+  const ago = (ms: number): string => new Date(T0.getTime() - ms).toISOString()
+  const mins = (n: number): string =>
+    i18n.t('worldGen.countdown', { time: i18n.t('shared.wait.minutes', { count: n }) })
+  const hold = (): string => i18n.t('worldGen.degradedHold')
+
+  // A stream shape whose estimate WOULD show a countdown ("2 min") — the park
+  // must suppress exactly that.
+  const RUNNING_STAGES = (): readonly StageProgress[] => [
+    ...ENTITY_UNDERWAY.slice(0, 3),
+    stage('world_and_factions', 'running', ago(30_000)),
+  ]
+  const TIMINGS: StageTiming[] = [
+    { stage: 'world_and_factions', avgMs: 60_000 },
+    { stage: 'locations_and_npcs', avgMs: 60_000 },
+  ]
+
+  it('act one: the hold copy owns the wait narrative — no countdown, never the stalled line', () => {
+    mockMatchMedia(false)
+    vi.useFakeTimers()
+    vi.setSystemTime(T0)
+    renderGenerating({
+      stages: RUNNING_STAGES(),
+      stageTimings: TIMINGS,
+      lastErrorClass: 'connectivity',
+    })
+    // The ETA countdown is suppressed even though a live estimate exists…
+    expect(screen.queryByTestId('worldgen-loading-countdown')).toBeNull()
+    // …and the wait-language slot carries the HOLD copy, not "Still working"
+    // ("Still working" and "the making was interrupted" never share a screen).
+    expect(screen.getByTestId('worldgen-loading-stalled').textContent).toBe(hold())
+    expect(screen.getByTestId('worldgen-loading-stalled').textContent).not.toBe(
+      i18n.t('shared.wait.stalled'),
+    )
+  })
+
+  it('act one: the hold replaces the STALLED reassurance too (exhausted estimate)', () => {
+    mockMatchMedia(false)
+    vi.useFakeTimers()
+    vi.setSystemTime(T0)
+    // Overrun running stage → the un-parked view would show shared.wait.stalled.
+    renderGenerating({
+      stages: [
+        stage('concept_intake', 'completed'),
+        stage('world_color', 'completed'),
+        stage('vocabulary_intake', 'running', ago(60_000)),
+      ],
+      stageTimings: [{ stage: 'vocabulary_intake', avgMs: 20_000 }],
+      lastErrorClass: 'rate-limit',
+    })
+    expect(screen.getByTestId('worldgen-loading-stalled').textContent).toBe(hold())
+  })
+
+  it('act two: feeds the status card the hold line and NO countdown while parked', () => {
+    mockMatchMedia(false)
+    vi.useFakeTimers()
+    vi.setSystemTime(T0)
+    renderWatching({
+      stages: RUNNING_STAGES(),
+      stageTimings: TIMINGS,
+      lastErrorClass: 'connectivity',
+    })
+    expect(lastGraphProps().status?.countdownLabel).toBeUndefined()
+    expect(lastGraphProps().status?.stalledLabel).toBe(hold())
+  })
+
+  it('resets the ETA damper/clamp refs when the park clears — a FRESH estimate is adopted even upward', () => {
+    // Pre-park the monotonic clamp pinned "2 min". A resumed generation may
+    // honestly need MORE than the pre-park floor (the outage cost real time);
+    // without the ref reset the clamp would hold the stale 2-minute floor and
+    // the damper would leak the pre-park cadence. The park clears → the view
+    // re-adopts the fresh raw estimate fully (7 min), proving both refs reset.
+    mockMatchMedia(false)
+    vi.useFakeTimers()
+    vi.setSystemTime(T0)
+    const view = renderGeneratingRerenderable({
+      stages: RUNNING_STAGES(),
+      stageTimings: TIMINGS,
+    })
+    expect(screen.getByTestId('worldgen-loading-countdown').textContent).toBe(mins(2))
+
+    // The park arrives (a contained connectivity failure).
+    view.rerenderWith({
+      stages: RUNNING_STAGES(),
+      stageTimings: TIMINGS,
+      lastErrorClass: 'connectivity',
+    })
+    expect(screen.queryByTestId('worldgen-loading-countdown')).toBeNull()
+    expect(screen.getByTestId('worldgen-loading-stalled').textContent).toBe(hold())
+
+    // The park clears; the resumed pipeline's fresh estimate is HIGHER (7 min).
+    view.rerenderWith({
+      stages: [
+        ...ENTITY_UNDERWAY.slice(0, 3),
+        stage('world_and_factions', 'completed'),
+        stage('locations_and_npcs', 'running', T0.toISOString()),
+      ],
+      stageTimings: [
+        { stage: 'locations_and_npcs', avgMs: 300_000 },
+        { stage: 'entity_relationships', avgMs: 120_000 },
+      ],
+    })
+    expect(screen.getByTestId('worldgen-loading-countdown').textContent).toBe(mins(7))
+    expect(screen.queryByTestId('worldgen-loading-stalled')).toBeNull()
   })
 })
 

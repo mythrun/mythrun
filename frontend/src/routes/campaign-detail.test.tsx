@@ -327,6 +327,47 @@ describe('CampaignDetailRoute — phase-aware world-gen routing', () => {
     expect(screen.queryByTestId('worldgen-reveal')).toBeNull()
   })
 
+  it('threads the stream park stamp into the generating view — the hold copy owns the wait (llm-outage-resilience §3.4)', () => {
+    mockStream.mockReturnValue(
+      streamValue({
+        status: 'generating',
+        phase: 'world_gen',
+        nodes: [],
+        stages: [st('concept_intake', 'running')],
+        lastErrorClass: 'connectivity',
+        resumeAttempt: 1,
+      }),
+    )
+    renderDetail()
+    expect(screen.getByTestId('worldgen-generating')).toBeDefined()
+    // The parked hold line replaces the wait narrative; the stalled
+    // reassurance and any countdown never share this screen with it.
+    expect(screen.getByTestId('worldgen-loading-stalled').textContent).toBe(
+      i18n.t('worldGen.degradedHold'),
+    )
+    expect(screen.queryByTestId('worldgen-loading-countdown')).toBeNull()
+  })
+
+  it('threads a TAIL-stage park into the revealed surface — degradedSettling, not the unexplained settling line', async () => {
+    // Six of twelve stages run behind the reveal boundary: parked there, the
+    // reveal stays up (the phase keeps its generating shape) and the settling
+    // meta line swaps for the stamp-keyed hold variant.
+    mockStream.mockReturnValue(
+      streamValue({
+        status: 'generating',
+        phase: 'world_snapshot_ready',
+        nodes: NODES,
+        stages: CONNECTIONS_DONE_STAGES,
+        lastErrorClass: 'connectivity',
+        resumeAttempt: 2,
+      }),
+    )
+    renderDetail()
+    expect(await screen.findByTestId('worldgen-reveal')).toBeDefined()
+    expect(screen.getByText(i18n.t('worldReveal.degradedSettling'))).toBeDefined()
+    expect(screen.queryByText(i18n.t('worldReveal.settling'))).toBeNull()
+  })
+
   it('fires the wiki reveal the MOMENT world_introduction completes — mid-generation', async () => {
     // The tail (consolidation → embed) is still running and worlds.status is
     // still 'generating': the reveal shows anyway (MYT-89 reveal timing —

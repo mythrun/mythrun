@@ -28,6 +28,9 @@ export const BACKEND_ROUTES: readonly BackendRoute[] = [
   // Health
   { method: 'GET', path: '/health' },
   { method: 'GET', path: '/health/ready' },
+  // llm-outage-resilience §4.1 — public sitewide LLM outage readout (one
+  // tracker read; the frame's NoticeStrip polls it). Not a pipeline route.
+  { method: 'GET', path: '/api/llm-health' },
 
   // Users
   { method: 'POST', path: '/api/users/register' },

@@ -14,6 +14,13 @@ import type { FastifyInstance } from 'fastify'
 export const PUBLIC_ROUTE_ALLOWLIST: ReadonlySet<string> = new Set([
   'GET /health',
   'GET /health/ready',
+  // llm-outage-resilience §4.1: the sitewide LLM outage readout the frame's
+  // NoticeStrip polls. Public by design (mirrors /health/ready): it serves a
+  // binary {state, since} with no tenant data, no secrets, and no per-user
+  // state — one shared Redis read. Signin/join surfaces sit outside AppFrame
+  // and never call it; the poll must still work for every authed surface
+  // without burning a JWT verify per minute per tab.
+  'GET /api/llm-health',
   'GET /api/invites/:inviteCode/preview',
   'GET /api/billing/skus',
   'POST /webhooks/stripe',

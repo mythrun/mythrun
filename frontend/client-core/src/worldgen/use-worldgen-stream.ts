@@ -41,6 +41,11 @@ import { snapshotToGraph, type GraphSeed, type GraphSeedSource } from './snapsho
  *  phase-derived status (the connection failed before any frame). */
 export type WorldGenStatus = 'generating' | 'failed' | 'terminal' | 'complete' | 'denied'
 
+/** The park-eligible slice of the failure-class union (llm-outage-resilience
+ *  §3.1) — the only classes that ride the auto-resume ladder and therefore the
+ *  only ones the parked hold copy keys off. */
+export type ParkErrorClass = 'connectivity' | 'rate-limit'
+
 export interface WorldGenStream {
   readonly phase: PipelinePhase | null
   readonly nodes: GraphNode[]
@@ -58,6 +63,19 @@ export interface WorldGenStream {
    *  the loading screen; a genuine first visit (connects during prep, no entities
    *  yet) leaves it false, preserving the deliberate watch-button beat. */
   readonly resumedMidGen: boolean
+  /** llm-outage-resilience §3.4 (additive): present iff a park episode is in
+   *  progress — the world-gen job contained a connectivity/rate-limit failure
+   *  and is auto-resuming. The generating view swaps its wait narrative for
+   *  the hold copy while set. AUTHORITATIVE delivery is the (re)connect
+   *  snapshot (derive-phase surfaces the persisted stamp — CloudFront buffers
+   *  SSE, and the view invites leave-and-return); a live park-eligible
+   *  `stage-failed.failureClass` arms it in-window, and any `stage-completed`
+   *  clears it (a completed stage ends the park episode, §3.1). Absent = no
+   *  park. */
+  readonly lastErrorClass?: ParkErrorClass
+  /** The park episode's ladder rung (1-based), snapshot-delivered alongside
+   *  `lastErrorClass`; absent when no park episode is in progress. */
+  readonly resumeAttempt?: number
   readonly retry: () => Promise<void>
 }
 
@@ -113,6 +131,10 @@ interface SnapshotProgress extends GraphSeedSource {
   readonly phase: PipelinePhase | null
   readonly stages: readonly StageProgress[]
   readonly costUsd: number | null
+  /** The §3.4 park stamp surfaced by derive-phase, when one exists. `null` =
+   *  the payload omits it (no park episode) — the authoritative clear. */
+  readonly lastErrorClass: ParkErrorClass | null
+  readonly resumeAttempt: number | null
 }
 
 /** Parse the first-frame snapshot payload into its phase + per-stage progress +
@@ -126,7 +148,15 @@ interface SnapshotProgress extends GraphSeedSource {
  *  `resumedMidGen` stays false. */
 function parseSnapshotProgress(raw: unknown): SnapshotProgress {
   if (typeof raw !== 'object' || raw === null) {
-    return { phase: null, stages: [], costUsd: null, entities: [], relationships: [] }
+    return {
+      phase: null,
+      stages: [],
+      costUsd: null,
+      lastErrorClass: null,
+      resumeAttempt: null,
+      entities: [],
+      relationships: [],
+    }
   }
   const phase =
     'phase' in raw && typeof raw.phase === 'string' ? (raw.phase as PipelinePhase) : null
@@ -136,6 +166,16 @@ function parseSnapshotProgress(raw: unknown): SnapshotProgress {
     'cumulativeCostUsd' in raw && typeof raw.cumulativeCostUsd === 'number'
       ? raw.cumulativeCostUsd
       : null
+  // The §3.4 park stamp (additive; absent = no park episode). The class is
+  // value-checked (not just presence-checked) so a widened backend union can
+  // never leak an unknown class into the hold-copy branch.
+  const lastErrorClass =
+    'lastErrorClass' in raw &&
+    (raw.lastErrorClass === 'connectivity' || raw.lastErrorClass === 'rate-limit')
+      ? raw.lastErrorClass
+      : null
+  const resumeAttempt =
+    'resumeAttempt' in raw && typeof raw.resumeAttempt === 'number' ? raw.resumeAttempt : null
   const entities =
     'entities' in raw && Array.isArray(raw.entities)
       ? (raw.entities as GraphSeedSource['entities'])
@@ -144,7 +184,7 @@ function parseSnapshotProgress(raw: unknown): SnapshotProgress {
     'relationships' in raw && Array.isArray(raw.relationships)
       ? (raw.relationships as GraphSeedSource['relationships'])
       : []
-  return { phase, stages, costUsd, entities, relationships }
+  return { phase, stages, costUsd, lastErrorClass, resumeAttempt, entities, relationships }
 }
 
 /** Stage-progress identity: the `(stage, userId)` pair — worldgen stages are
@@ -304,6 +344,15 @@ export function useWorldGenStream(
   const [seed, setSeed] = useState<GraphSeed | null>(null)
   const [resumedMidGen, setResumedMidGen] = useState(false)
   const [override, setOverride] = useState<WorldGenStatus | null>(null)
+  // The §3.4 park episode, as one atomic pair (class + ladder rung). The
+  // snapshot SETS it authoritatively on every (re)connect frame — including
+  // back to null when the payload omits the stamp; the live events only
+  // optimize inside an open window (arm on park-eligible stage-failed, clear
+  // on any stage-completed — a completed stage ends the episode, §3.1).
+  const [park, setPark] = useState<{
+    readonly cls: ParkErrorClass
+    readonly attempt: number | null
+  } | null>(null)
   // The access-control dead end: the SSE open returned 403/404, so the client's
   // connection settled `failed{denied}` and STOPPED retrying — no snapshot, no
   // phase, ever. Surfaced as the coarse `denied` status so the route can render a
@@ -337,6 +386,17 @@ export function useWorldGenStream(
       // cost-update is ABSOLUTE (post-commit cumulative) — track it live so the
       // status card's spend advances instead of freezing at the snapshot value.
       if (event.type === 'cost-update') setCostUsd(event.cumulativeUsd)
+      // The live park optimization (§3.4): a park-eligible class arms the hold
+      // in-window (the rung stays whatever the last snapshot said); any
+      // completed stage ends the episode. Other classes (abort/other/absent)
+      // ride today's failure surfaces untouched.
+      if (event.type === 'stage-failed') {
+        const cls = event.failureClass
+        if (cls === 'connectivity' || cls === 'rate-limit') {
+          setPark((prev) => ({ cls, attempt: prev?.attempt ?? null }))
+        }
+      }
+      if (event.type === 'stage-completed') setPark(null)
     })
     const offSnapshot = client.onSnapshot((raw) => {
       if (!mountedRef.current) return
@@ -344,6 +404,14 @@ export function useWorldGenStream(
       if (snapshot.phase !== null) setPhase(snapshot.phase)
       setSnapshotStages(snapshot.stages)
       setCostUsd(snapshot.costUsd)
+      // Authoritative park SET (never a merge): a frame without the stamp
+      // clears any live-armed hold — the backend derivation is the truth on
+      // every (re)connect.
+      setPark(
+        snapshot.lastErrorClass !== null
+          ? { cls: snapshot.lastErrorClass, attempt: snapshot.resumeAttempt }
+          : null,
+      )
       // myth-gcsp1: a connect frame carrying a non-empty gen-seed is a mid-gen
       // rejoin/refresh — SEED the graph from it at once (the world-snapshot route
       // still 409s pre-reveal, so this is the only pre-reveal rehydration path)
@@ -392,5 +460,19 @@ export function useWorldGenStream(
   // it wins over the phase/override-derived status.
   const status: WorldGenStatus = denied ? 'denied' : (override ?? statusForPhase(phase))
 
-  return { phase, nodes, edges, status, stages, costUsd, resumedMidGen, retry }
+  return {
+    phase,
+    nodes,
+    edges,
+    status,
+    stages,
+    costUsd,
+    resumedMidGen,
+    // Spread-omit the absent park fields (exactOptionalPropertyTypes — the
+    // wire discipline: absent, never an explicit undefined).
+    ...(park !== null
+      ? { lastErrorClass: park.cls, ...(park.attempt !== null ? { resumeAttempt: park.attempt } : {}) }
+      : {}),
+    retry,
+  }
 }

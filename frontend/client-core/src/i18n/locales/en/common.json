@@ -206,6 +206,7 @@
       },
       "prompt": "How do you want to make your character?"
     },
+    "degradedHold": "The writing was interrupted. Your character is safe. It keeps trying on its own.",
     "freeform": {
       "conceptPrompt": "Who are you?",
       "conceptWhisper": "A name, a calling, an outfit. Whatever matters most.",
@@ -540,6 +541,7 @@
     "logout": "Log out",
     "logoutFailed": "Couldn't log out. Try again.",
     "menu": "Menu",
+    "outageNotice": "The storyteller's connection is unsteady. Some things may pause and pick themselves back up.",
     "sessionsBilling": "Sessions & billing",
     "wordmark": "Mythrun"
   },
@@ -792,6 +794,9 @@
     "title": "The session ends",
     "waitContract": "It will be waiting on the campaign page when it's ready. You don't have to stay."
   },
+  "sessionPrep": {
+    "degradedHold": "The preparing was interrupted. Your session is safe. It keeps trying on its own."
+  },
   "shared": {
     "beginAgain": "Begin again",
     "cooldown": "That's a lot of tries. Give it a moment.",
@@ -876,6 +881,7 @@
       "entityList": "What's appeared so far"
     },
     "countdown": "Ready in {{time}}",
+    "degradedHold": "The making was interrupted. Your world is safe. It keeps trying on its own.",
     "failedBody": "The making was interrupted.",
     "failedTitle": "The world stalled",
     "flavor1": "The gods decide what to name themselves.",
@@ -927,6 +933,7 @@
   },
   "worldReveal": {
     "continue": "Continue",
+    "degradedSettling": "The table-setting was interrupted. It keeps trying on its own.",
     "empty": "Nothing here yet",
     "explorePrompt": "Wander your world. Continue when you're ready.",
     "graphNodeList": "Select a node to learn more",

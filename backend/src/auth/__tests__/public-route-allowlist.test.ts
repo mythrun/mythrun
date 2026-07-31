@@ -6,8 +6,8 @@ import {
 } from '../public-route-allowlist.js'
 
 describe('public-route allowlist', () => {
-  it('contains the expected 10 entries', () => {
-    expect(PUBLIC_ROUTE_ALLOWLIST.size).toBe(10)
+  it('contains the expected 11 entries', () => {
+    expect(PUBLIC_ROUTE_ALLOWLIST.size).toBe(11)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /health')).toBe(true)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('POST /webhooks/stripe')).toBe(true)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /api/billing/skus')).toBe(true)
@@ -20,6 +20,9 @@ describe('public-route allowlist', () => {
     expect(PUBLIC_ROUTE_ALLOWLIST.has('POST /api/auth/logout')).toBe(true)
     // Dev/staging-only API-cost ticker (never registered in prod).
     expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /api/dev/api-cost')).toBe(true)
+    // llm-outage-resilience §4.1: the sitewide outage readout (no tenant
+    // data, no secrets — one shared Redis read; mirrors /health/ready).
+    expect(PUBLIC_ROUTE_ALLOWLIST.has('GET /api/llm-health')).toBe(true)
   })
 
   it('allowlisted public route registers cleanly', async () => {

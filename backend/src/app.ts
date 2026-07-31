@@ -15,6 +15,7 @@ import { typedErrorHandler } from './error-handler.js'
 import { requireOnboarded } from './auth/require-onboarded.js'
 import type { Env } from './config/env.js'
 import { registerReadyRoute } from './routes/health-ready.js'
+import { registerLlmHealthRoute } from './routes/llm-health.js'
 import { usersRoutes } from './routes/users.js'
 import { invitesRoutes } from './routes/invites.js'
 import { sessionsRoutes } from './routes/sessions.js'
@@ -240,6 +241,7 @@ export const buildApp = async (
 
   app.get('/health', { config: { auth: 'public' } }, () => ({ status: 'ok' })) // liveness
   registerReadyRoute(app, deps) // /health/ready opts out via config: { auth: 'public' } INSIDE the route file
+  registerLlmHealthRoute(app, deps) // /api/llm-health — public outage readout (§4.1), same opt-out idiom
 
   // Custom 404 handler so unmatched paths return a stable JSON shape
   // instead of Fastify's default HTML-ish error. The auth hook's

@@ -310,6 +310,7 @@ export type {
 // library's WorldGenGraph imports.
 export { useWorldGenStream } from './worldgen/use-worldgen-stream.ts'
 export type {
+  ParkErrorClass,
   WorldGenStream,
   WorldGenStatus,
   WorldGenStreamDeps,

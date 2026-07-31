@@ -950,4 +950,128 @@ describe('useWorldGenStream', () => {
 
     expect(result.current.nodes.map((n) => n.name)).toEqual(['The Ashen Court'])
   })
+
+  describe('parked-hold surfacing (llm-outage-resilience §3.4)', () => {
+    const renderStream = (mock: ReturnType<typeof makeMockClient>) =>
+      renderHook(() =>
+        useWorldGenStream(ctx, CID, {
+          createClient: () => mock.client,
+          fetchSnapshot: vi.fn(),
+          resume: vi.fn(),
+        }),
+      )
+
+    it('surfaces lastErrorClass + resumeAttempt from the connect-time snapshot (the authoritative path)', () => {
+      // CloudFront buffers SSE and the generating view invites leave-and-return
+      // (§3.4): the class must re-derive on every (re)connect via the snapshot,
+      // never only the live event.
+      const mock = makeMockClient()
+      const { result } = renderStream(mock)
+      expect(result.current.lastErrorClass).toBeUndefined()
+      expect(result.current.resumeAttempt).toBeUndefined()
+
+      act(() => {
+        mock.emitSnapshot({
+          phase: 'world_gen',
+          stages: [],
+          cumulativeCostUsd: 0,
+          lastErrorClass: 'connectivity',
+          resumeAttempt: 2,
+        })
+      })
+      expect(result.current.lastErrorClass).toBe('connectivity')
+      expect(result.current.resumeAttempt).toBe(2)
+      // The park keeps the generating shape — the hold copy replaces the wait
+      // narrative INSIDE the generating view, never a failure surface.
+      expect(result.current.status).toBe('generating')
+    })
+
+    it('a later snapshot WITHOUT the fields clears them (authoritative SET, not merge)', () => {
+      const mock = makeMockClient()
+      const { result } = renderStream(mock)
+      act(() => {
+        mock.emitSnapshot({
+          phase: 'world_gen',
+          stages: [],
+          cumulativeCostUsd: 0,
+          lastErrorClass: 'rate-limit',
+          resumeAttempt: 1,
+        })
+      })
+      expect(result.current.lastErrorClass).toBe('rate-limit')
+
+      // Reconnect after the park episode ended: the derivation omits the fields.
+      act(() => {
+        mock.emitSnapshot({ phase: 'world_gen', stages: [], cumulativeCostUsd: 0 })
+      })
+      expect(result.current.lastErrorClass).toBeUndefined()
+      expect(result.current.resumeAttempt).toBeUndefined()
+    })
+
+    it('arms the hold LIVE on a park-eligible stage-failed (the in-window optimization)', () => {
+      const mock = makeMockClient()
+      const { result } = renderStream(mock)
+      act(() => {
+        mock.emit({
+          type: 'stage-failed',
+          stage: 'coherence_pass',
+          userId: null,
+          errorCode: 'llm_connection_failed',
+          willRetry: true,
+          failureClass: 'connectivity',
+        })
+      })
+      expect(result.current.lastErrorClass).toBe('connectivity')
+    })
+
+    it('ignores non-park-eligible failure classes (abort/other/absent stay on today’s failure surfaces)', () => {
+      const mock = makeMockClient()
+      const { result } = renderStream(mock)
+      act(() => {
+        mock.emit({
+          type: 'stage-failed',
+          stage: 'coherence_pass',
+          userId: null,
+          errorCode: 'llm_structured_output_failed',
+          willRetry: false,
+          failureClass: 'other',
+        })
+        mock.emit({
+          type: 'stage-failed',
+          stage: 'random_tables',
+          userId: null,
+          errorCode: 'stage_not_implemented',
+          willRetry: false,
+        })
+      })
+      expect(result.current.lastErrorClass).toBeUndefined()
+    })
+
+    it('clears the hold on ANY stage-completed (a completed stage ends the park episode, §3.1)', () => {
+      const mock = makeMockClient()
+      const { result } = renderStream(mock)
+      act(() => {
+        mock.emitSnapshot({
+          phase: 'world_gen',
+          stages: [],
+          cumulativeCostUsd: 0,
+          lastErrorClass: 'connectivity',
+          resumeAttempt: 3,
+        })
+      })
+      expect(result.current.lastErrorClass).toBe('connectivity')
+
+      act(() => {
+        mock.emit({
+          type: 'stage-completed',
+          stage: 'coherence_pass',
+          userId: null,
+          durationMs: 4000,
+          costUsd: 0.2,
+        })
+      })
+      expect(result.current.lastErrorClass).toBeUndefined()
+      expect(result.current.resumeAttempt).toBeUndefined()
+    })
+  })
 })

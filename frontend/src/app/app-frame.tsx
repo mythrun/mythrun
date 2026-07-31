@@ -1,10 +1,11 @@
 import { Outlet, useMatches, useNavigate } from 'react-router-dom'
-import { Box, Stack, Button, HorizontalLockup, Link, Show, StickyBar } from '@mythrun/ui'
+import { Box, Stack, Button, HorizontalLockup, Link, NoticeStrip, Show, StickyBar } from '@mythrun/ui'
 import { useTranslation } from 'react-i18next'
 import { useScrollElevation } from '../platform/web/use-scroll-elevation.ts'
 import { HeaderCredits } from './header-credits.tsx'
 import { HeaderMenu } from './header-menu.tsx'
 import { useHeaderDisplayName } from './use-header-display-name.ts'
+import { useLlmHealth } from './use-llm-health.ts'
 import { BILLING_PATH, BUY_ANCHOR, HOME_PATH } from './paths.ts'
 
 // The quiet brand frame (brand decisions.md — "the brand is the frame, not the
@@ -61,6 +62,11 @@ export function AppFrame({ forceElevated }: { forceElevated?: boolean } = {}): R
   // Elevated story can't scroll deterministically under the CI gate).
   const { elevated, sentinelRef } = useScrollElevation(forceElevated)
   const displayName = useHeaderDisplayName()
+  // The sitewide LLM outage readout (llm-outage-resilience §4.2) — a 60s poll,
+  // positive-assertion-only (a failed poll reads as ok; no strip off local
+  // noise). The strip HOST below is permanently mounted; this only toggles
+  // its content.
+  const { degraded } = useLlmHealth()
   const goToBuy = (): void => {
     void navigate(`${BILLING_PATH}${BUY_ANCHOR}`)
   }
@@ -125,6 +131,19 @@ export function AppFrame({ forceElevated }: { forceElevated?: boolean } = {}): R
           </Stack>
         </Show>
       </StickyBar>
+      {/* The sitewide outage notice (llm-outage-resilience §4.2) — a slim quiet
+          prose strip DIRECTLY beneath the bar, on every authed surface incl. the
+          full-bleed stage. The host is a permanently-mounted role="status" live
+          region (NoticeStrip owns that contract — a status node inserted
+          already-populated is unreliably announced); degraded toggles only its
+          CONTENT. In-flow on purpose: an accepted layout shift for an
+          exceptional state (StickyBar's zero-CLS contract untouched), and on
+          scrolling surfaces it scrolls away with the page top — the mid-flow
+          surfaces carry their own hold copy. */}
+      <NoticeStrip
+        message={degraded ? t('frame.outageNotice') : null}
+        data-testid="frame-notice"
+      />
       {/* The content surface — the matched authed route renders here. A route that
           declares handle.fullBleed (MYT-92 T15) escapes the padded Box and fills the
           viewport below the header (the live-play stage); every other route keeps the

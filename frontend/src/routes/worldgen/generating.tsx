@@ -73,7 +73,7 @@ import { coarseWaitTime } from '../wait-format.ts'
  *  `useWorldGenStream`) plus the route's historical stage timings (the input to
  *  the per-second countdown). */
 interface GeneratingViewProps
-  extends Pick<WorldGenStream, 'nodes' | 'edges' | 'stages' | 'resumedMidGen'> {
+  extends Pick<WorldGenStream, 'nodes' | 'edges' | 'stages' | 'resumedMidGen' | 'lastErrorClass'> {
   /** Historical per-stage average durations (the route's `getStageTimings` fetch),
    *  or `null` before it resolves / on cold-start → the card shows no estimate. */
   readonly stageTimings?: readonly StageTiming[] | null
@@ -133,9 +133,25 @@ const ETA_HOLD_MS = 10_000
  *  Exhaustion bypasses the damper — the stalled line is honesty, not display.
  *  The damper state lives in a ref for the LIFE of this view (both acts — one
  *  clock); the render-time ref fold is idempotent at a fixed instant, so a
- *  StrictMode double render is safe (the useMonotonicEtaMs idiom). */
-function useDampedWaitLines(remainingMs: number | null, nowMs: number, t: TFunction): WaitLines {
+ *  StrictMode double render is safe (the useMonotonicEtaMs idiom).
+ *
+ *  PARKED (llm-outage-resilience §3.4): while `parkedHoldLabel` is set, the
+ *  hold copy OWNS the wait narrative — it rides the wait-language slot
+ *  (`stalledLabel`), the countdown is suppressed, and `shared.wait.stalled`
+ *  never shows ("Still working" and "the making was interrupted" must never
+ *  share a screen). The damper ref resets for the park's duration, so the
+ *  clear re-adopts a fresh estimate fully. */
+function useDampedWaitLines(
+  remainingMs: number | null,
+  nowMs: number,
+  t: TFunction,
+  parkedHoldLabel: string | null,
+): WaitLines {
   const dampRef = useRef<DampedEta | null>(null)
+  if (parkedHoldLabel !== null) {
+    dampRef.current = null
+    return { stalledLabel: parkedHoldLabel }
+  }
   const display = waitDisplay({
     remainingMs,
     elapsedMs: 0,
@@ -157,9 +173,19 @@ function useDampedWaitLines(remainingMs: number | null, nowMs: number, t: TFunct
  *  stays mounted across the act-one → act-two swap, so the countdown survives
  *  the calm-wait → live-map transition instead of resetting per view. The
  *  render-time ref write is an idempotent min-fold (safe under StrictMode
- *  double-invocation). */
-function useMonotonicEtaMs(rawMs: number | null): number | null {
+ *  double-invocation).
+ *
+ *  PARKED: the clamp ref resets while a park suspends the countdown — a
+ *  resumed generation may honestly need MORE time than the pre-park floor
+ *  (the outage cost real wall-clock), so on clear the view re-adopts the
+ *  fresh raw estimate instead of pinning the stale minimum (§3.4: "the ETA
+ *  damper/clamp refs reset and re-adopt a fresh estimate"). */
+function useMonotonicEtaMs(rawMs: number | null, suspended: boolean): number | null {
   const lastShownRef = useRef<number | null>(null)
+  if (suspended) {
+    lastShownRef.current = null
+    return null
+  }
   const shown = clampEtaMonotonic(rawMs, lastShownRef.current)
   lastShownRef.current = shown ?? lastShownRef.current
   return shown
@@ -279,6 +305,7 @@ export function GeneratingView({
   stageTimings = null,
   resumedMidGen,
   campaignId,
+  lastErrorClass,
 }: GeneratingViewProps): React.JSX.Element {
   const { t } = useTranslation()
   // The act state: 'loading' (act one — the generic loading screen) until the
@@ -318,8 +345,19 @@ export function GeneratingView({
     () => remainingWaitMs(stageTimings, stages, nowMs),
     [stageTimings, stages, nowMs],
   )
-  const remainingMs = useMonotonicEtaMs(rawRemainingMs)
-  const { countdownLabel, stalledLabel } = useDampedWaitLines(remainingMs, nowMs, t)
+  // The parked hold (llm-outage-resilience §3.4): while the stream's park
+  // stamp is set (a contained connectivity/rate-limit failure auto-resuming),
+  // the hold copy owns the wait narrative on BOTH acts — the countdown and
+  // the stalled reassurance stand down, and the ETA damper + monotonic clamp
+  // refs reset so the clear re-adopts a fresh estimate.
+  const parked = lastErrorClass !== undefined
+  const remainingMs = useMonotonicEtaMs(rawRemainingMs, parked)
+  const { countdownLabel, stalledLabel } = useDampedWaitLines(
+    remainingMs,
+    nowMs,
+    t,
+    parked ? t('worldGen.degradedHold') : null,
+  )
 
   // E1 (MYT-89 Phase E) — the SR announcer's PHASE signal: the running watched-entity
   // stage's friendly label (a change flushes the live region at once); before or between

@@ -1,5 +1,6 @@
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
+import type { LlmHealthTracker } from './llm/llm-health.js'
 import type { Repo } from './repo/index.js'
 import type { WorldGenQueueLike } from './routes/campaigns.js'
 import type { CharacterCreationQueueLike } from './routes/campaign-characters.js'
@@ -61,6 +62,15 @@ export interface AppDeps {
    *  closed at shutdown in server.ts. Required — the session transport is a
    *  boot invariant of the gated binary, mirroring sessionTurnQueue. */
   dmTriggerQueue: DmTriggerQueueLike
+  /** llm-outage-resilience §4.1: the Redis-shared LLM outage tracker
+   *  (llm/llm-health.ts), built in server.ts on redisRealtime (health state is
+   *  app state, not queue plumbing — the worker's reporter writes the same
+   *  keys there). GET /api/llm-health does one tracker.read() per request.
+   *  Optional because tests and the boot-gate-disabled fallback path don't
+   *  construct one — the route returns 503 'llm_health_unavailable' in that
+   *  state (the characterCreationQueue precedent), which the frontend's
+   *  positive-assertion-only hook reads as ok. */
+  llmHealthTracker?: LlmHealthTracker
   /** MYT-74a T11: BullMQ Queue handle for `session-reconcile` jobs (built on
    *  redisBatch in server.ts). Threaded into the WS session route so the
    *  `end_session` frame (and T12's budget auto-end) can `enqueueReconcile` —

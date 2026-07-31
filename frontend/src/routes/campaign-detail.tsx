@@ -195,7 +195,8 @@ export function CampaignDetailRoute({
   // The route only matches with an `:id`; `?? ''` keeps the hook calls
   // unconditional (hooks can't branch) without a non-null assertion.
   const { id = '' } = useParams<{ id: string }>()
-  const { nodes, edges, status, phase, stages, resumedMidGen, retry } = useWorldGenStream(ctx, id)
+  const { nodes, edges, status, phase, stages, resumedMidGen, lastErrorClass, retry } =
+    useWorldGenStream(ctx, id)
   // The reveal moment collapses to its ~300ms fade under reduced motion (§3.8).
   const prefersReducedMotion = usePrefersReducedMotion()
   // Only `world_ready` is reveal-vs-page ambiguous; gate the fetch to it.
@@ -241,6 +242,10 @@ export function CampaignDetailRoute({
           edges={edges}
           stages={stages}
           continueReady={status === 'complete'}
+          // llm-outage-resilience §3.4: a TAIL-stage park (six of twelve
+          // stages run behind the reveal boundary) swaps the settling line
+          // for the stamp-keyed hold variant.
+          degraded={lastErrorClass !== undefined}
           moment={moment}
         />
       )}
@@ -270,6 +275,10 @@ export function CampaignDetailRoute({
         stageTimings={stageTimings}
         resumedMidGen={resumedMidGen}
         campaignId={id}
+        // llm-outage-resilience §3.4: the park stamp keys the hold copy +
+        // ETA suppression inside the view. Spread-omit when absent
+        // (exactOptionalPropertyTypes).
+        {...(lastErrorClass !== undefined ? { lastErrorClass } : {})}
       />
     )
   }

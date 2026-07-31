@@ -186,13 +186,14 @@ interface RevealOverrides {
   onContinue?: () => void
   stages?: readonly StageProgress[]
   continueReady?: boolean
+  degraded?: boolean
 }
 
 interface RevealHandle {
   fetchSnapshot: () => Promise<WorldGenSnapshot>
-  /** Re-render the SAME mounted reveal with new stages/continueReady — the
-   *  route's live-stream updates, as the reveal experiences them. */
-  update: (next: Pick<RevealOverrides, 'stages' | 'continueReady'>) => void
+  /** Re-render the SAME mounted reveal with new stages/continueReady/degraded —
+   *  the route's live-stream updates, as the reveal experiences them. */
+  update: (next: Pick<RevealOverrides, 'stages' | 'continueReady' | 'degraded'>) => void
 }
 
 const stageAt = (id: string, status: StageProgress['status']): StageProgress => ({
@@ -206,7 +207,9 @@ const stageAt = (id: string, status: StageProgress['status']): StageProgress => 
 
 function renderReveal(overrides: RevealOverrides = {}): RevealHandle {
   const fetchSnapshot = overrides.fetchSnapshot ?? vi.fn().mockResolvedValue(SNAPSHOT)
-  const tree = (opts: Pick<RevealOverrides, 'stages' | 'continueReady'>): React.JSX.Element => (
+  const tree = (
+    opts: Pick<RevealOverrides, 'stages' | 'continueReady' | 'degraded'>,
+  ): React.JSX.Element => (
     <ThemeProvider>
       <ApiClientProvider value={testCtx}>
         <I18nextProvider i18n={i18n}>
@@ -218,6 +221,7 @@ function renderReveal(overrides: RevealOverrides = {}): RevealHandle {
               fetchSnapshot={fetchSnapshot}
               {...(opts.stages ? { stages: opts.stages } : {})}
               {...(opts.continueReady !== undefined ? { continueReady: opts.continueReady } : {})}
+              {...(opts.degraded !== undefined ? { degraded: opts.degraded } : {})}
               {...(overrides.onContinue ? { onContinue: overrides.onContinue } : {})}
             />
           </MemoryRouter>
@@ -231,6 +235,7 @@ function renderReveal(overrides: RevealOverrides = {}): RevealHandle {
       ...(overrides.continueReady !== undefined
         ? { continueReady: overrides.continueReady }
         : {}),
+      ...(overrides.degraded !== undefined ? { degraded: overrides.degraded } : {}),
     }),
   )
   return {
@@ -554,6 +559,30 @@ describe('WorldReveal — continue', () => {
     // A disabled press is inert — the gated intent never fires.
     fireEvent.click(button)
     expect(onContinue).not.toHaveBeenCalled()
+  })
+
+  it('swaps the settling line for the DEGRADED hold while a tail-stage park is in progress (llm-outage-resilience §3.4)', () => {
+    // Six of twelve world-gen stages run BEHIND the reveal boundary; a park in
+    // that tail must never leave an indefinite unexplained "the table is still
+    // being set" — the stamp-keyed hold variant explains the interruption.
+    renderReveal({ continueReady: false, degraded: true })
+    expect(screen.getByTestId('reveal-continue').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByText(i18n.t('worldReveal.degradedSettling'))).toBeDefined()
+    expect(screen.queryByText(i18n.t('worldReveal.settling'))).toBeNull()
+  })
+
+  it('returns to the plain settling line when the park clears (same mounted reveal)', () => {
+    const handle = renderReveal({ continueReady: false, degraded: true })
+    expect(screen.getByText(i18n.t('worldReveal.degradedSettling'))).toBeDefined()
+    handle.update({ continueReady: false, degraded: false })
+    expect(screen.getByText(i18n.t('worldReveal.settling'))).toBeDefined()
+    expect(screen.queryByText(i18n.t('worldReveal.degradedSettling'))).toBeNull()
+  })
+
+  it('shows NO hold line once ready, degraded or not — the settling slot is the only touchpoint', () => {
+    renderReveal({ continueReady: true, degraded: true })
+    expect(screen.queryByTestId('reveal-continue-pending')).toBeNull()
+    expect(screen.queryByText(i18n.t('worldReveal.degradedSettling'))).toBeNull()
   })
 
   it('ENABLES Continue IN PLACE when the pipeline completes — the settling indicator goes', async () => {
