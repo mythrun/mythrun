@@ -103,6 +103,7 @@ export const TABLE_CLUSTERS: Readonly<Record<string, ClusterName>> = {
   tripwire_verdicts: 'Campaigns & play',
   // Pipeline & ops
   pipeline_runs: 'Pipeline & ops',
+  llm_resume_stamps: 'Pipeline & ops',
   world_marketplace: 'Pipeline & ops',
   moderation_flags: 'Pipeline & ops',
   settings: 'Pipeline & ops',
