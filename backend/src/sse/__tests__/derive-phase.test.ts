@@ -636,6 +636,64 @@ describe('derivePhase × resume stamp (llm-outage-resilience §3)', () => {
     expect('lastErrorClass' in result).toBe(false)
     expect('resumeAttempt' in result).toBe(false)
   })
+
+  // The character-creation arm of the same rule: a parked cc member leaves a
+  // failed charcreation stage row (no pending/running siblings) — before the
+  // stamp gate that derived global 'failed' and POST /resume answered 409
+  // terminal_failure mid-outage on a solo-player campaign.
+  const ccParkedRuns = [
+    run({ stage: 'concept_intake', status: 'completed' }),
+    run({
+      stage: 'character_concept',
+      status: 'failed',
+      world_id: null,
+      campaign_id: 'cmp-1',
+      user_id: 'usr-1',
+      completed_at: null,
+    }),
+  ]
+
+  it('a live cc stamp keeps a failed charcreation row in-progress (character_creation, not failed)', () => {
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: { ...baseWorld, status: 'complete' },
+      runs: ccParkedRuns,
+      characterCreationStamps: [stamp({ nextResumeAt: new Date(NOW.getTime() + 60_000) })],
+      now: NOW,
+    })
+    expect(result.phase).toBe('character_creation')
+  })
+
+  it('a dead cc stamp (overdue past the grace) falls back to the failed surface', () => {
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: { ...baseWorld, status: 'complete' },
+      runs: ccParkedRuns,
+      characterCreationStamps: [stamp({ nextResumeAt: new Date(NOW.getTime() - 6 * 60_000) })],
+      now: NOW,
+    })
+    expect(result.phase).toBe('failed')
+  })
+
+  it('a failed post-creation row derives failed regardless of cc stamps (integration never parks)', () => {
+    const result = derivePhase({
+      campaign: baseCampaign,
+      world: { ...baseWorld, status: 'complete' },
+      runs: [
+        run({ stage: 'concept_intake', status: 'completed' }),
+        run({
+          stage: 'character_integration',
+          status: 'failed',
+          world_id: null,
+          campaign_id: 'cmp-1',
+          completed_at: null,
+        }),
+      ],
+      characterCreationStamps: [stamp({ nextResumeAt: new Date(NOW.getTime() + 60_000) })],
+      now: NOW,
+    })
+    expect(result.phase).toBe('failed')
+  })
 })
 
 describe('post-MYT-54 stage taxonomy', () => {

@@ -76,6 +76,7 @@ route(s) each panel id covers (the route-exhaustion invariant unions those). The
 |---|---|---|
 | GET /health | health-live | system |
 | GET /health/ready | health-ready | system |
+| GET /api/llm-health | (exempt — llm-outage-resilience §4.1 public outage readout the main web app's notice strip polls via client-core; no dev-tool panel — mirrors the api-cost/stage-timings exemptions) | — |
 | POST /api/users/register | (exempt — exercised by harness bootstrap + main.ts self-bootstrap) | — |
 | GET /api/users/check-username | (exempt — probe-helper embedded in register flow; backend tests exercise it) | — |
 | GET /api/users/me | users | users |

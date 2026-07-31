@@ -145,12 +145,20 @@ export function derivePhase(input: {
   /** llm-outage-resilience §3: the world_gen resume stamp, when one exists.
    *  Loaded by the caller's existing data path (no queue I/O here). */
   readonly resumeStamp?: ResumeStampView | null
+  /** The campaign's live character_creation stamps (one per parked member's
+   *  concept). A parked cc member leaves the same shape as a genuine failure —
+   *  a failed stage row (§3.1: the row fails so the wake can claim it; the
+   *  concept never flips) — so without these the global phase derives 'failed'
+   *  mid-outage and POST /resume answers 409 terminal_failure. */
+  readonly characterCreationStamps?: readonly ResumeStampView[]
   /** Clock injection for the overdue predicate; production omits it. */
   readonly now?: Date
 }): PhaseAndStages {
   const { campaign, world, runs } = input
+  const now = input.now ?? new Date()
   const resumeStamp = input.resumeStamp ?? null
-  const resuming = isResumingStamp(resumeStamp, input.now ?? new Date())
+  const resuming = isResumingStamp(resumeStamp, now)
+  const ccResuming = (input.characterCreationStamps ?? []).some((s) => isResumingStamp(s, now))
 
   // Bucket runs by scope.
   const worldgen = runs.filter((r) => stageScope(r.stage) === 'worldgen')
@@ -190,6 +198,7 @@ export function derivePhase(input: {
     charcreation,
     postcreation,
     resuming,
+    ccResuming,
   })
 
   return {
@@ -259,8 +268,9 @@ function computePhase(input: {
   readonly charcreation: readonly PipelineRunRow[]
   readonly postcreation: readonly PipelineRunRow[]
   readonly resuming: boolean
+  readonly ccResuming: boolean
 }): PipelinePhase {
-  const { campaign, world, worldgen, charcreation, postcreation, resuming } = input
+  const { campaign, world, worldgen, charcreation, postcreation, resuming, ccResuming } = input
 
   // Active campaign overrides everything.
   if (campaign.status === 'active') return 'complete'
@@ -335,12 +345,21 @@ function computePhase(input: {
     return 'character_creation'
   }
 
-  // Charcreation failure → failed (post-worldgen).
-  if (
-    charcreation.some((r) => r.status === 'failed') ||
-    postcreation.some((r) => r.status === 'failed')
-  ) {
+  // Post-creation failure → failed. Character-integration never parks, so no
+  // stamp gate here.
+  if (postcreation.some((r) => r.status === 'failed')) {
     return 'failed'
+  }
+
+  // Charcreation failure → failed (post-worldgen). A PARKED cc member is
+  // exactly this shape too (§3.1: the stage row fails so the wake can claim
+  // it; the concept row never flips) — while any member's cc stamp is live
+  // (unexhausted, not overdue) the phase stays 'character_creation', so
+  // POST /resume answers the in-progress shape instead of terminal_failure.
+  // Mirrors the world_gen arm above: the stamp, not the row, distinguishes
+  // parked from genuinely failed.
+  if (charcreation.some((r) => r.status === 'failed')) {
+    return ccResuming ? 'character_creation' : 'failed'
   }
 
   // World complete, no later activity → world_ready.

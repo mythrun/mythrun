@@ -917,6 +917,85 @@ describe('POST /api/campaigns/:campaignId/resume (MYT-51 T10)', () => {
       expect(res.json()).toEqual({ code: 'terminal_failure' })
       expect(queueSpy.add).not.toHaveBeenCalled()
     })
+
+    // llm-outage-resilience §3.1/§3.4: a PARKED cc member leaves exactly the
+    // failed-downstream shape above (the claimed stage row flips to failed so
+    // the wake can re-claim it; the concept row never flips; no pending/
+    // running rows remain) — but while the member's cc stamp is live the
+    // global phase must derive 'character_creation', NOT 'failed'. Before the
+    // fix a solo-player campaign answered 409 terminal_failure mid-outage.
+    it('a parked cc member (live stamp) → the in-progress shape, never terminal_failure', async () => {
+      const seed = await seedCampaign(pool, scope, { worldStatus: 'complete' })
+      await insertRun(pool, {
+        worldId: seed.worldId,
+        stage: 'concept_intake',
+        status: 'completed',
+        startedAt: new Date(Date.now() - 3000),
+        completedAt: new Date(Date.now() - 2000),
+      })
+      const conceptId = uuidv7()
+      await pool.query(
+        `INSERT INTO character_concepts (
+           id, campaign_id, user_id, concept_text, situation_grounding_text,
+           guided_choices, status
+         )
+         VALUES ($1, $2, $3, 'A road-weary cleric searching for an old companion',
+                 'arrived at the tavern as the storm broke', '{}'::jsonb, 'processing')`,
+        [conceptId, seed.campaignId, seed.userId],
+      )
+      await insertRun(pool, {
+        campaignId: seed.campaignId,
+        stage: 'character_concept',
+        status: 'failed',
+        userId: seed.userId,
+        error: '{"code":"llm_connection_failed","message":"ECONNRESET"}',
+        startedAt: new Date(Date.now() - 1000),
+        completedAt: new Date(),
+      })
+      // The live stamp (armed, unexhausted, not overdue) — stamp contract:
+      // pipeline 'character_creation', entity_id = character_concepts.id.
+      await pool.query(
+        `INSERT INTO llm_resume_stamps
+           (pipeline, entity_id, resume_attempt, next_resume_at, park_consumed_ms, last_error_class)
+         VALUES ('character_creation', $1, 1, now() + interval '60 seconds', 30000, 'connectivity')`,
+        [conceptId],
+      )
+      // A second member whose concept already COMPLETED — the snapshot's
+      // stamp read is bounded to 'processing' concepts (only those can be
+      // parked), so this row must be skipped, not probed.
+      const doneUserId = uuidv7()
+      await pool.query(
+        `INSERT INTO users (id, cognito_sub, display_name, username) VALUES ($1, $2, $3, $4)`,
+        [doneUserId, scope.userSub(8), scope.displayName(8), scope.username(8)],
+      )
+      await pool.query(
+        `INSERT INTO campaign_members (id, campaign_id, user_id, role, invite_accepted)
+         VALUES ($1, $2, $3, 'player', true)`,
+        [uuidv7(), seed.campaignId, doneUserId],
+      )
+      await pool.query(
+        `INSERT INTO character_concepts (
+           id, campaign_id, user_id, concept_text, situation_grounding_text,
+           guided_choices, status
+         )
+         VALUES ($1, $2, $3, 'A gruff dwarven smith', 'was already at the bar',
+                 '{}'::jsonb, 'completed')`,
+        [uuidv7(), seed.campaignId, doneUserId],
+      )
+      // The parked wake's delayed job is ALIVE on the queue (§3.1 self-delay),
+      // so the sweep skips the member and answers in-progress.
+      ccQueueSpy.setJob(`cc-${seed.campaignId}-${seed.userId}`, liveJob())
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/campaigns/${seed.campaignId}/resume`,
+        headers: { 'x-mythrun-dev-sub': seed.devSub },
+      })
+      expect(res.statusCode).toBe(409)
+      expect(res.json()).toEqual({ code: 'character_creation_in_progress' })
+      expect(res.headers['retry-after']).toBe('30')
+      expect(ccQueueSpy.add).not.toHaveBeenCalled()
+      expect(queueSpy.add).not.toHaveBeenCalled()
+    })
   })
 
   // -----------------------------------------------------------------------

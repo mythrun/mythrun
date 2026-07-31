@@ -30,7 +30,7 @@ import { WorldColorPairSchema } from '@mythrun/contract/rest'
 import { createRepo, type Repo } from '../repo/index.js'
 import type { HubCardRow } from '../repo/campaigns.js'
 import { createPipelineRunsRepo, type PipelineRunsRepo } from '../repo/pipeline-runs.js'
-import type { ResumeStampsRepo } from '../repo/resume-stamps.js'
+import type { ResumeStamp, ResumeStampsRepo } from '../repo/resume-stamps.js'
 import type { CharacterConceptsRepo } from '../repo/character-concepts.js'
 import { requireCampaignMember } from '../auth/access-control.js'
 import { requireDbUser } from '../auth/require-db-user.js'
@@ -291,11 +291,25 @@ export const campaignsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     // lastErrorClass surfaced for the hold copy) instead of world_gen_failed.
     // Stamp contract: world_gen entity_id = campaignId.
     const resumeStamp = await repo.resumeStamps.get('world_gen', campaignId)
+    // The character_creation stamps too — a parked cc member's failed stage
+    // row must not derive the campaign 'failed' mid-outage (POST /resume
+    // would answer 409 terminal_failure). Only a 'processing' concept can be
+    // parked (the processor never flips the row on a park), so the stamp read
+    // is bounded to those members — the character-roster route's exact
+    // pattern. Stamp contract: entity_id = character_concepts.id.
+    const conceptRows = await repo.characterConcepts.listForCampaign(campaignId)
+    const characterCreationStamps: ResumeStamp[] = []
+    for (const c of conceptRows) {
+      if (c.status !== 'processing') continue
+      const ccStamp = await repo.resumeStamps.get('character_creation', c.id)
+      if (ccStamp !== null) characterCreationStamps.push(ccStamp)
+    }
     return derivePhase({
       campaign: { id: campaign.id, status: campaign.status, world_id: campaign.worldId },
       world: { id: world.id, status: world.status },
       runs,
       resumeStamp,
+      characterCreationStamps,
     })
   }
 

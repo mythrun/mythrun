@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { Pool } from 'pg'
 import type { Redis } from 'ioredis'
+import type { LlmHealthTracker } from '../llm/llm-health.js'
 
 // Mocks must be declared before the dynamic import of server.ts inside tests.
 // vi.mock() is hoisted to the top of the file by Vitest's transformer.
@@ -188,6 +189,58 @@ describe('server boot gate', () => {
       expect(mockRtbPing).toHaveBeenCalled()
       expect(mockListen).toHaveBeenCalledWith({ port: 3000, host: '0.0.0.0' })
       expect(process.exitCode).not.toBe(1)
+    },
+    TEST_TIMEOUT_MS,
+  )
+
+  // llm-outage-resilience §1.4: the boot wiring that makes the outage tracker
+  // exist in production — the API server runs its own in-process prep workers,
+  // so main() must bind the ai.ts connectivity sink to tracker.report.
+  // Regression pin: the feature once shipped with setLlmHealthSink having
+  // ZERO production callers, leaving the sink a silent no-op.
+  it(
+    'binds the ai.ts llm-health sink to tracker.report at boot (§1.4)',
+    async () => {
+      mockPgQuery.mockResolvedValue({})
+      mockRtrPing.mockResolvedValue('PONG')
+      mockRtbPing.mockResolvedValue('PONG')
+
+      // vi.resetModules() ran in beforeEach, so import the FRESH instances the
+      // upcoming server.js import will bind against, then spy on them.
+      const aiModule = await import('../llm/ai.js')
+      const llmHealthModule = await import('../llm/llm-health.js')
+      const report = vi.fn((): Promise<void> => Promise.resolve())
+      const fakeTracker: LlmHealthTracker = {
+        report,
+        read: () => Promise.resolve({ state: 'ok', since: null }),
+        readModels: () => Promise.resolve([]),
+        probeSuccess: () => Promise.resolve('counting' as const),
+        probeFailure: () => Promise.resolve(),
+        markPromotePending: () => Promise.resolve(),
+        clearPromotePending: () => Promise.resolve(),
+        hasPromotePending: () => Promise.resolve(false),
+      }
+      vi.spyOn(llmHealthModule, 'createLlmHealthTracker').mockReturnValue(fakeTracker)
+      const setSinkSpy = vi.spyOn(aiModule, 'setLlmHealthSink')
+
+      await import('../server.js')
+
+      expect(mockListen).toHaveBeenCalled()
+      expect(setSinkSpy).toHaveBeenCalledTimes(1)
+      const sink = setSinkSpy.mock.calls[0]?.[0]
+      expect(sink).toBeTypeOf('function')
+      // Drive the captured sink with a connectivity report and assert it
+      // lands on tracker.report — the binding, not just "a function was
+      // registered".
+      const connectivityReport = {
+        callsite: 'world_and_factions',
+        jobId: 'job-1',
+        modelId: 'test-model',
+        mode: 'streaming',
+        failureClass: 'connectivity',
+      } as const
+      await sink?.(connectivityReport)
+      expect(report).toHaveBeenCalledWith(connectivityReport)
     },
     TEST_TIMEOUT_MS,
   )

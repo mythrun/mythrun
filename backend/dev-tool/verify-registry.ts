@@ -175,6 +175,12 @@ export interface PageRegistration {
  * a panel can't / shouldn't exist — the default is to author a panel.
  */
 export const EXEMPT_ROUTES: readonly BackendRoute[] = [
+  // GET /api/llm-health (llm-outage-resilience §4.1): the public two-field
+  // {state, since} outage readout the MAIN WEB APP's notice strip polls on a
+  // 60s cadence (client-core api/llm-health.ts). Not a dev-tool inspector
+  // surface — the api-cost / stage-timings precedent; route + tracker
+  // behavior is covered by the backend route tests.
+  { method: 'GET', path: '/api/llm-health' },
   // POST /api/auth/refresh (MYT-102): under AUTH_MODE=bypass this is a 200-null
   // session-probe STUB (the real cookie/refresh route is authMode=real-only) —
   // it exists only so the SPA's on-load probe never paints a console 404. No

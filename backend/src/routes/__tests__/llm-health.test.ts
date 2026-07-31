@@ -14,17 +14,26 @@ import { makeStubDeps } from '../../__tests__/helpers/stub-deps.js'
 
 /** Shape-only tracker whose read() resolves the given state. The probe-side
  *  methods are never reached by the route — plain resolved stubs satisfy the
- *  interface. */
-function stubTracker(state: LlmHealthState): LlmHealthTracker {
+ *  interface. The read spy is returned ALONGSIDE the tracker (never plucked
+ *  off it — @typescript-eslint/unbound-method) so tests can assert call
+ *  counts. */
+function stubTracker(state: LlmHealthState): {
+  tracker: LlmHealthTracker
+  read: ReturnType<typeof vi.fn<() => Promise<LlmHealthState>>>
+} {
+  const read = vi.fn(() => Promise.resolve(state))
   return {
-    report: () => Promise.resolve(),
-    read: vi.fn(() => Promise.resolve(state)),
-    readModels: () => Promise.resolve([]),
-    probeSuccess: () => Promise.resolve('counting' as const),
-    probeFailure: () => Promise.resolve(),
-    markPromotePending: () => Promise.resolve(),
-    clearPromotePending: () => Promise.resolve(),
-    hasPromotePending: () => Promise.resolve(false),
+    tracker: {
+      report: () => Promise.resolve(),
+      read,
+      readModels: () => Promise.resolve([]),
+      probeSuccess: () => Promise.resolve('counting' as const),
+      probeFailure: () => Promise.resolve(),
+      markPromotePending: () => Promise.resolve(),
+      clearPromotePending: () => Promise.resolve(),
+      hasPromotePending: () => Promise.resolve(false),
+    },
+    read,
   }
 }
 
@@ -46,7 +55,7 @@ afterEach(async () => {
 
 describe('GET /api/llm-health', () => {
   it('returns 200 {state: "ok", since: null} while healthy — exactly the two-field shape', async () => {
-    const tracker = stubTracker({ state: 'ok', since: null })
+    const { tracker, read } = stubTracker({ state: 'ok', since: null })
     app = await buildApp(tracker)
 
     const res = await app.inject({ method: 'GET', url: '/api/llm-health' })
@@ -54,11 +63,11 @@ describe('GET /api/llm-health', () => {
     // toEqual pins the WHOLE payload (no extra fields): the frontend schema
     // parse is strict about the two keys it validates.
     expect(res.json()).toEqual({ state: 'ok', since: null })
-    expect(vi.mocked(tracker.read)).toHaveBeenCalledTimes(1)
+    expect(read).toHaveBeenCalledTimes(1)
   })
 
   it('returns 200 {state: "degraded", since: <ms>} while degraded', async () => {
-    app = await buildApp(stubTracker({ state: 'degraded', since: 1_722_300_000_000 }))
+    app = await buildApp(stubTracker({ state: 'degraded', since: 1_722_300_000_000 }).tracker)
 
     const res = await app.inject({ method: 'GET', url: '/api/llm-health' })
     expect(res.statusCode).toBe(200)
@@ -77,7 +86,7 @@ describe('GET /api/llm-health', () => {
       }
     })
     const deps = makeStubDeps()
-    deps.llmHealthTracker = stubTracker({ state: 'ok', since: null })
+    deps.llmHealthTracker = stubTracker({ state: 'ok', since: null }).tracker
     registerLlmHealthRoute(fastify, deps)
     await fastify.ready()
     app = fastify

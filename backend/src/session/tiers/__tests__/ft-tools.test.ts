@@ -2887,8 +2887,11 @@ describe('initiate_combat tool', () => {
     expect(result.ok).toBe(true)
     // The adapter forwarded the fail-soft warn (object bindings narrowed via
     // asLogObject), proving line 1031 + asLogObject's object arm.
+    // objectContaining on the err: T4's classify-once mutation stamps
+    // `llmFailureClass` onto the error object by design, so a deep-equality
+    // match against a fresh Error would fail on the extra field.
     expect(warn).toHaveBeenCalledWith(
-      { err: new Error('haiku 529 overloaded') },
+      { err: expect.objectContaining({ message: 'haiku 529 overloaded' }) as unknown },
       'combat-outcome: DC table failed; using fallback',
     )
     expect(recordCombat).toHaveBeenCalledTimes(1)

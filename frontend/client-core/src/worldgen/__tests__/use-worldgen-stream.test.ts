@@ -1047,6 +1047,35 @@ describe('useWorldGenStream', () => {
       expect(result.current.lastErrorClass).toBeUndefined()
     })
 
+    it('a live re-park keeps the snapshot rung (the live event updates the class, never the ladder)', () => {
+      // The in-window optimization arms on the event's class but the rung
+      // stays whatever the last snapshot said — only the authoritative
+      // snapshot SET moves resumeAttempt.
+      const mock = makeMockClient()
+      const { result } = renderStream(mock)
+      act(() => {
+        mock.emitSnapshot({
+          phase: 'world_gen',
+          stages: [],
+          cumulativeCostUsd: 0,
+          lastErrorClass: 'connectivity',
+          resumeAttempt: 2,
+        })
+      })
+      act(() => {
+        mock.emit({
+          type: 'stage-failed',
+          stage: 'coherence_pass',
+          userId: null,
+          errorCode: 'llm_rate_limited',
+          willRetry: true,
+          failureClass: 'rate-limit',
+        })
+      })
+      expect(result.current.lastErrorClass).toBe('rate-limit')
+      expect(result.current.resumeAttempt).toBe(2)
+    })
+
     it('clears the hold on ANY stage-completed (a completed stage ends the park episode, §3.1)', () => {
       const mock = makeMockClient()
       const { result } = renderStream(mock)

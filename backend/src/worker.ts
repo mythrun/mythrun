@@ -55,6 +55,7 @@ import {
   buildSessionPrepQueue,
   buildCharacterCreationQueue,
 } from './server-queues.js'
+import { setLlmHealthSink } from './llm/ai.js'
 import { createLlmHealthTracker } from './llm/llm-health.js'
 import {
   createArmedStampPromoter,
@@ -537,6 +538,11 @@ async function bootWorker(partials: BootPartials): Promise<void> {
   // shutdown. The tracker rides redisRealtime — health state is app state, not
   // queue plumbing, and GET /api/llm-health reads the same keys there.
   const llmHealthTracker = createLlmHealthTracker(redisRealtime, env.redisKeyPrefix, logger)
+  // §1.4: bind the ai.ts connectivity sink to the tracker — every
+  // connectivity-class attempt failure in this worker's processors reports
+  // into the fleet-shared Redis state. Without this call the sink stays the
+  // no-op default and the outage tracker never arms from this process.
+  setLlmHealthSink((r) => llmHealthTracker.report(r))
   const { bullmqQueue: llmHealthProbeQueue } = buildLlmHealthProbeQueue(redisBatch)
   const { bullmqQueue: worldGenScanQueue } = buildWorldGenQueue(redisBatch)
   const { bullmqQueue: sessionPrepScanQueue } = buildSessionPrepQueue(redisBatch)

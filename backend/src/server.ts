@@ -18,6 +18,7 @@ import { probeMigrationsCurrent } from './boot/migrations-current.js'
 import { waitFor } from './boot/wait-for.js'
 import { probeVoyageAtBoot } from './boot/voyage-probe.js'
 import { createVoyageEmbedder } from './llm/embed.js'
+import { setLlmHealthSink } from './llm/ai.js'
 import { createLlmHealthTracker } from './llm/llm-health.js'
 import { createPgPool } from './db/postgres.js'
 import { createRedisClient } from './redis/client.js'
@@ -522,6 +523,12 @@ export async function main(): Promise<void> {
     // above — the tracker's report/probe arms log through it; the route's read
     // path never logs.
     const llmHealthTracker = createLlmHealthTracker(rTRRef, env.redisKeyPrefix, llmLogger)
+    // §1.4: bind the ai.ts connectivity sink to the tracker. The API server is
+    // a REPORTER, not just the /api/llm-health reader — it runs its own
+    // in-process prep workers (below), and their connectivity-class failures
+    // must reach the fleet-shared Redis state. Without this call the sink
+    // stays the no-op default and this process never arms the outage tracker.
+    setLlmHealthSink((r) => llmHealthTracker.report(r))
 
     // MYT-51 T12 + myth-epo4 T22 / MYT-53: BullMQ queues for world-gen +
     // character-creation. Queue connections share redisBatch (non-blocking

@@ -3,6 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // the myth-jykft ordering assertions read its invocationCallOrder.
 import { Worker as BullmqWorkerCtor } from 'bullmq'
 import * as queueEventsModule from '../session/session-turn-queue-events.js'
+// Real modules, spied per-test: the §1.4 boot-wiring test intercepts
+// createLlmHealthTracker (fake tracker) + setLlmHealthSink (capture the bound
+// sink) to pin that boot binds the ai.ts sink to tracker.report.
+import * as aiModule from '../llm/ai.js'
+import * as llmHealthModule from '../llm/llm-health.js'
+import type { LlmHealthTracker } from '../llm/llm-health.js'
 // Resolves to the mocked `probeVoyageAtBoot` from the factory below — the
 // myth-ha6qr boot-failure test drives it to reject.
 import { probeVoyageAtBoot } from '../boot/voyage-probe.js'
@@ -89,6 +95,7 @@ interface FakeWorker {
 const workerInstances: FakeWorker[] = []
 
 interface FakeQueueEvents {
+  name: string
   close: ReturnType<typeof vi.fn>
   on: ReturnType<typeof vi.fn>
 }
@@ -138,8 +145,9 @@ vi.mock('bullmq', () => ({
     queueInstances.push(instance)
     return instance
   }),
-  QueueEvents: vi.fn(() => {
+  QueueEvents: vi.fn((name: string) => {
     const instance: FakeQueueEvents = {
+      name,
       close: vi.fn(() => Promise.resolve()),
       on: vi.fn(),
     }
@@ -245,10 +253,18 @@ describe('worker.main()', () => {
     const campaignSetup = workerInstances.find((w) => w.name === 'campaign-setup')
     expect(campaignSetup).toBeDefined()
     expect(campaignSetup?.on).toHaveBeenCalledWith('failed', expect.any(Function))
-    // T16 also wires the session-turn QueueEvents subscriber (MYT-67 T12) — one
-    // QueueEvents on a duplicate()d blocking connection.
-    expect(queueEventsInstances).toHaveLength(1)
-    expect(batchDuplicateMock).toHaveBeenCalledTimes(1)
+    // T16 also wires the session-turn QueueEvents subscriber (MYT-67 T12), and
+    // llm-outage-resilience Task 9 adds the three prep-queue subscribers
+    // (world-gen, session-prep, campaign-setup) — four QueueEvents total, each
+    // on its own duplicate()d blocking connection.
+    expect(queueEventsInstances).toHaveLength(4)
+    expect(queueEventsInstances.map((qe) => qe.name).sort()).toEqual([
+      'campaign-setup',
+      'session-prep',
+      'session-turn',
+      'world-gen',
+    ])
+    expect(batchDuplicateMock).toHaveBeenCalledTimes(4)
     // MYT-74b T14: the QueueEvents subscriber is built with a 5th `finalize` arg
     // (the backstop closure that runs finalizeEndedSession from the broker side).
     expect(buildQueueEventsSpy).toHaveBeenCalledTimes(1)
@@ -281,11 +297,14 @@ describe('worker.main()', () => {
     for (const w of workerInstances) {
       expect(w.close).toHaveBeenCalled()
     }
-    // The QueueEvents subscriber's dedicated blocking connection MUST be torn
-    // down on SIGTERM (sessionTurnEvents.close() → queueEvents.close() + its
-    // duplicate().quit()), else a connection leaks per deploy (§4.8).
-    expect(queueEventsInstances[0]?.close).toHaveBeenCalledTimes(1)
-    expect(batchDuplicateQuitMock).toHaveBeenCalledTimes(1)
+    // Every QueueEvents subscriber's dedicated blocking connection MUST be
+    // torn down on SIGTERM (sessionTurnEvents.close() + prepQueueEvents.close()
+    // → each queueEvents.close() + its duplicate().quit()), else a connection
+    // leaks per deploy (§4.8).
+    for (const qe of queueEventsInstances) {
+      expect(qe.close, `queue-events ${qe.name} close`).toHaveBeenCalledTimes(1)
+    }
+    expect(batchDuplicateQuitMock).toHaveBeenCalledTimes(4)
     // llm-outage-resilience T7: the probe queue + the three promote-scan
     // producer handles are distinct Queue clients on redisBatch — each MUST be
     // closed on SIGTERM or a connection leaks per deploy (the finalize-producer
@@ -301,6 +320,54 @@ describe('worker.main()', () => {
     // process returns to its pre-boot listener baseline (no per-reload leak).
     expect(process.listenerCount('unhandledRejection')).toBe(baseUnhandled)
     expect(process.listenerCount('uncaughtException')).toBe(baseUncaught)
+  })
+
+  // llm-outage-resilience §1.4: the boot wiring that makes the outage tracker
+  // exist in production — main() must bind the ai.ts connectivity sink to the
+  // tracker's report(). Regression pin: the feature once shipped with
+  // setLlmHealthSink having ZERO production callers, leaving the sink a
+  // silent no-op; this test fails if the binding ever drops out of boot.
+  it('binds the ai.ts llm-health sink to tracker.report at boot (§1.4)', async () => {
+    const { main } = await import('../worker.js')
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+    const report = vi.fn((): Promise<void> => Promise.resolve())
+    const fakeTracker: LlmHealthTracker = {
+      report,
+      read: () => Promise.resolve({ state: 'ok', since: null }),
+      readModels: () => Promise.resolve([]),
+      probeSuccess: () => Promise.resolve('counting' as const),
+      probeFailure: () => Promise.resolve(),
+      markPromotePending: () => Promise.resolve(),
+      clearPromotePending: () => Promise.resolve(),
+      hasPromotePending: () => Promise.resolve(false),
+    }
+    vi.spyOn(llmHealthModule, 'createLlmHealthTracker').mockReturnValue(fakeTracker)
+    const setSinkSpy = vi.spyOn(aiModule, 'setLlmHealthSink')
+
+    void main() // never awaited — main blocks forever on Promise<never>
+    await vi.waitFor(() => {
+      expect(healthArmMock).toHaveBeenCalled()
+    })
+
+    expect(setSinkSpy).toHaveBeenCalledTimes(1)
+    const sink = setSinkSpy.mock.calls[0]?.[0]
+    expect(sink).toBeTypeOf('function')
+    // Drive the captured sink with a connectivity report and assert it lands
+    // on tracker.report — the binding, not just "a function was registered".
+    const connectivityReport = {
+      callsite: 'world_and_factions',
+      jobId: 'job-1',
+      modelId: 'test-model',
+      mode: 'streaming',
+      failureClass: 'connectivity',
+    } as const
+    await sink?.(connectivityReport)
+    expect(report).toHaveBeenCalledWith(connectivityReport)
+
+    process.emit('SIGTERM', 'SIGTERM' as NodeJS.Signals)
+    await vi.waitFor(() => {
+      expect(exitSpy).toHaveBeenCalledWith(0)
+    })
   })
 
   it('honors WORKER_HEALTH_PORT (local-dev escape hatch for a :3001 collision)', async () => {

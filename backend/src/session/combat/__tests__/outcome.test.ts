@@ -196,8 +196,11 @@ describe('resolveCombat', () => {
       ENEMIES,
       [{ level: 3, hp: 30, maxHp: 30 }],
     )
+    // objectContaining on the err: T4's classify-once mutation stamps
+    // `llmFailureClass` onto the error object by design, so a deep-equality
+    // match against a fresh Error would fail on the extra field.
     expect(warn).toHaveBeenCalledWith(
-      { err: new Error('haiku down') },
+      { err: expect.objectContaining({ message: 'haiku down' }) as unknown },
       'combat-outcome: DC table failed; using fallback',
     )
   })
