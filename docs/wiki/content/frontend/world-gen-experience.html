@@ -11,7 +11,7 @@
 <!-- source: frontend/ui/src/components/FullBleedStage/ -->
 <!-- source: frontend/ui/src/components/Drawer/ -->
 <!-- source: frontend/ui/src/components/RevealTransition/ -->
-<!-- source-hash: sha256:cf284c94d24f95714d145a1efad617bb957efb0a99ebf4b19b993b5bfd2d1946 -->
+<!-- source-hash: sha256:a9d94582630bb052a313a0ecf760e35b838d92acdb28a1711cca82ba3eb5516c -->
 <!-- last-ticket: MYT-102 -->
 
 <h1>World-gen experience</h1>
@@ -564,6 +564,41 @@
   different inputs, so the three multi-minute waits in the product speak with one voice and a fix to
   how a wait degrades lands everywhere at once.
 </aside>
+
+<h3>The parked hold</h3>
+
+<p>
+  One state overrides the whole wait vocabulary: a <strong>park</strong>. When the world-gen job
+  contains a connectivity or rate-limit failure and
+  <a href="../runtime/llm-outage-resilience.html">parks itself to auto-resume</a>,
+  <code>useWorldGenStream</code> surfaces <code>lastErrorClass</code> (+
+  <code>resumeAttempt</code>), and while it is set the hold copy —
+  <code>worldgen.degradedHold</code>, "The making was interrupted. Your world is safe. It keeps
+  trying on its own." — owns the wait narrative on both acts. The countdown suppresses, and the
+  <code>shared.wait.stalled</code> line never shows: "Still working" and "the making was
+  interrupted" must never share a screen. When the park clears, the ETA damper and monotonic-clamp
+  refs reset and re-adopt a fresh estimate — a resumed generation may honestly need
+  <em>more</em> time than the pre-park floor, and pinning the stale minimum would show the stalled
+  line for the healthy remainder.
+</p>
+
+<p>
+  The park state arrives two ways, deliberately asymmetric. The <em>authoritative</em> delivery is
+  the (re)connect snapshot — <code>derivePhase</code> surfaces the persisted stamp's class and
+  rung, and the hook <em>sets</em> its park state from every snapshot frame, including back to
+  null when the payload omits the stamp — because CloudFront buffers SSE and the generating view
+  invites leave-and-return, so the class must re-derive on every reconnect. The live events are
+  only an in-window optimization: a park-eligible <code>stage-failed.failureClass</code> arms the
+  hold immediately, and any <code>stage-completed</code> clears it (a completed stage ends the
+  park episode). The reveal surface is a touchpoint too — six of twelve stages run
+  <em>behind</em> the reveal boundary, so a tail-stage park swaps the quiet
+  <code>worldReveal.settling</code> line for the stamp-keyed
+  <code>worldReveal.degradedSettling</code> variant rather than leaving an indefinite unexplained
+  "the table is still being set". The sibling hold keys for the other two prep waits —
+  <code>characterCreate.degradedHold</code>, <code>sessionPrep.degradedHold</code> — landed with
+  the same copy discipline, but their consuming surfaces are not wired yet; today the world-gen
+  views are the only park-aware waits.
+</p>
 
 <h3>Reduced motion</h3>
 

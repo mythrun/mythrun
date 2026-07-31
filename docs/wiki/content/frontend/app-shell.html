@@ -19,7 +19,7 @@
 <!-- source: frontend/src/platform/web/oauth-state-store.ts -->
 <!-- source: frontend/src/platform/web/navigation.ts -->
 <!-- source: frontend/src/platform/web/use-scroll-elevation.ts -->
-<!-- source-hash: sha256:046cbf8f980ed115a3b3e555e3c7e4a012f0d4226b79a2dd0c373bab9e72ad45 -->
+<!-- source-hash: sha256:45ffed50792271055346d32f8ff464f3f9e411a7f292eec28e2fe07ac6a4ca0b -->
 <!-- last-ticket: MYT-102 -->
 
 <h1>App shell &amp; data layer</h1>
@@ -208,7 +208,11 @@
   the <a href="./invites-party.html">invite</a> create/list/revoke/preview/accept slices, and the
   <a href="./billing-credits.html">billing</a> balance/skus/history reads plus the
   checkout/upgrade-tier/portal mutations (the mutations follow the imperative
-  <code>(ctx, body)</code> shape, not the suspense-hook shape).
+  <code>(ctx, body)</code> shape, not the suspense-hook shape). The outage-notice work added
+  <code>getLlmHealth</code> the same way — a <code>{ state, since }</code> read of the public
+  <code>GET /api/llm-health</code>, consumed by the frame's non-suspense
+  <code>useLlmHealth</code> poll rather than a suspense hook (ambient chrome must never block a
+  route or throw into a boundary).
 </p>
 
 <aside class="wiki-rationale">
@@ -565,6 +569,31 @@
   lockup and the credit readout hold their width, and its typography is the design system's new
   <code>chrome</code>/<code>chrome-strong</code> roles, the credit number being the bar's only
   accent.
+</aside>
+
+<p>
+  Directly beneath the bar sits the <strong>sitewide outage notice</strong> — the design system's
+  <code>NoticeStrip</code>, fed by <code>useLlmHealth</code>: a non-suspense react-query poll of
+  the public <code>GET /api/llm-health</code> readout (60-second interval,
+  <code>refetchOnWindowFocus</code> pinned on so a returning background tab updates immediately).
+  The hook treats "degraded" as a <em>positive assertion only</em> — <code>degraded</code> is true
+  iff the last completed poll succeeded and said so, so a network blip or a dead backend reads as
+  ok rather than raising the strip off local noise; it relays the backend's Redis verdict (see
+  <a href="../runtime/llm-outage-resilience.html">LLM outage resilience</a>), it does not detect
+  outages itself. The strip renders on every authed surface including the full-bleed play stage;
+  public surfaces (signin, join funnel, landing) sit outside <code>AppFrame</code> and
+  intentionally never show it.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The strip's live region is permanently mounted</strong> — a <code>role="status"</code>
+  node inserted into the DOM already populated is unreliably announced by screen readers, so
+  <code>AppFrame</code> always renders the strip host and the degraded state toggles only its
+  <em>content</em> (and with it the visible height — the hairline and inset classes ride with the
+  message so the collapsed host holds zero height). It is in-flow on purpose: an accepted layout
+  shift for an exceptional state, leaving StickyBar's zero-CLS contract untouched, and on
+  scrolling surfaces the strip scrolls away with the page top — the mid-flow surfaces carry their
+  own hold copy.
 </aside>
 
 <aside class="wiki-rationale">

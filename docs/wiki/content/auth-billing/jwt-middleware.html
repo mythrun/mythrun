@@ -13,7 +13,7 @@
 <!-- source: infra/modules/serving/main.tf -->
 <!-- source: .github/workflows/deploy.yml -->
 <!-- source: .github/workflows/lint-auth.yml -->
-<!-- source-hash: sha256:a44a992a954e94d55fcc93d5a92b6e428feb1130abb6679f0ba0dfe74e648a09 -->
+<!-- source-hash: sha256:3a11291e24cce231be51dbd278b73627d21f9a070105fadcfe819bb4ce14059f -->
 <!-- last-ticket: MYT-84 -->
 
 <h1>JWT middleware</h1>
@@ -157,14 +157,17 @@
   every <code>config: { auth: 'public' }</code> introduction is fragile: a public route that ships
   by mistake is a security incident, and code review fatigue makes the omission plausible. A
   boot-time hook fails the deploy on the first run; the deploy can't ship a public route that wasn't
-  authored alongside the allowlist entry. The nine entries today cover the two health probes, the
-  invite preview, the SKU listing, the Stripe webhook, the WebSocket session-transport upgrade
-  (<code>GET /ws/session/:sessionId</code>, authenticated by its ws-ticket preHandler rather than
-  the JWT chain), and the three
+  authored alongside the allowlist entry. The ten entries today cover the two health probes, the
+  sitewide LLM-outage readout (<code>GET /api/llm-health</code> — a binary
+  <code>{state, since}</code> with no tenant data, public so the
+  <a href="../runtime/llm-outage-resilience.html">notice strip</a>'s per-tab 60s poll doesn't burn a
+  JWT verify per minute), the invite preview, the SKU listing, the Stripe webhook, the WebSocket
+  session-transport upgrade (<code>GET /ws/session/:sessionId</code>, authenticated by its ws-ticket
+  preHandler rather than the JWT chain), and the three
   <a href="./identity.html#the-bff-token-exchange">BFF session routes</a> (<code
     >POST /api/auth/{session,refresh,logout}</code
   >, which carry the further reviewer note that any change to those three is security-sensitive) —
-  adding a tenth is two file edits in the same PR, both visible in the diff.
+  adding an eleventh is two file edits in the same PR, both visible in the diff.
 </aside>
 
 <aside class="wiki-rationale">

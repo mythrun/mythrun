@@ -12,7 +12,7 @@
 <!-- source: docs/superpowers/specs/2026-05-12-myt-50-pipeline-status-surface-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
-<!-- source-hash: sha256:d9343a172371615f98a5407760349821ebe6e7cbc7aa8b0922dccf3457aad39e -->
+<!-- source-hash: sha256:2f9140d6a8cb2b2ab150c2b1a65e87e6bc58958a9be35fdcee753d89af7d32c9 -->
 <!-- last-ticket: MYT-102 -->
 
 <h1>Pipeline status</h1>
@@ -185,12 +185,18 @@
   plugin, added for the player-facing "the DM is preparing tonight's session…" loading screen. It
   reuses the exact wiring of <code>status/stream</code> — <code>requireCampaignMember</code>, the
   shared subscriber, the connection counter, per-user rate limit, <code>pipelineRoute: true</code> —
-  with one difference in the first frame. Instead of <code>derivePhase</code>, its snapshot is a
-  single bit: <code>repo.sessionPreps.existsFor(campaignId, sessionNumber)</code> →
-  <code>event: snapshot\ndata: { "status": "ready" | "generating" }\n\n</code>. After the snapshot
-  it attaches to the <strong>same</strong> <code>pipeline:campaign:</code> channel the status stream
-  uses, where the <a href="./session-prep.html">session-prep processor</a> publishes its
-  <code>prep-started</code> / <code>prep-ready</code> / <code>prep-failed</code> phase events.
+  with one difference in the first frame. Instead of <code>derivePhase</code>, its snapshot derives
+  from <code>repo.sessionPreps.existsFor(campaignId, sessionNumber)</code> plus the session-prep
+  resume stamp:
+  <code>event: snapshot\ndata: { "status": "ready" | "generating" | "failed" }\n\n</code>. A
+  persisted prep row wins (<code>ready</code>); no row with no stamp, or a stamp still
+  <a href="./llm-outage-resilience.html">resuming</a> (unexhausted, not overdue), reads
+  <code>generating</code> — the snapshot then also carries the stamp's <code>lastErrorClass</code> +
+  <code>resumeAttempt</code> for the parked hold copy; an overdue or exhausted stamp reads
+  <code>failed</code> (the retryable surface). After the snapshot it attaches to the
+  <strong>same</strong> <code>pipeline:campaign:</code> channel the status stream uses, where the
+  <a href="./session-prep.html">session-prep processor</a> publishes its <code>prep-started</code> /
+  <code>prep-ready</code> / <code>prep-failed</code> phase events.
 </p>
 
 <aside class="wiki-rationale">
@@ -285,10 +291,27 @@
 
 <p>
   <code>derivePhase</code> is a pure function in <code>backend/src/sse/derive-phase.ts</code>. It
-  takes <code>{ campaign, world, runs }</code> and returns one of eight phase strings plus the
-  ordered stages list and the cumulative cost. The route handler and (eventually) the worker's
-  on-transition <code>phase</code> event share this one function as the source of truth for what
-  state a campaign is in.
+  takes <code>{ campaign, world, runs }</code> — plus, since the
+  <a href="./llm-outage-resilience.html">outage-resilience</a> feature, the world-gen resume stamp
+  and the campaign's live character-creation stamps when any exist — and returns one of nine phase
+  strings plus the ordered stages list and the cumulative cost. The route handler and (eventually)
+  the worker's on-transition <code>phase</code> event share this one function as the source of truth
+  for what state a campaign is in.
+</p>
+
+<p>
+  The stamp inputs exist because a <em>parked</em> run is byte-identical to a failed one in
+  <code>pipeline_runs</code> — the park deliberately leaves the stage row failed so the wake can
+  claim it. <code>isResumingStamp</code> is the discriminator: a stamp that exists, has park budget
+  remaining, and is not overdue (its <code>nextResumeAt</code> plus a 5-minute grace has not passed
+  without a stage start — an in-flight stamp with <code>nextResumeAt</code> cleared by a claim can
+  never be overdue) keeps the phase generating-shaped: <code>world_gen</code> instead of
+  <code>world_gen_failed</code>, <code>character_creation</code> instead of <code>failed</code>.
+  Whenever a world-gen stamp exists at all — armed, in-flight, overdue, or exhausted — the
+  derivation additionally surfaces <code>lastErrorClass</code> and <code>resumeAttempt</code> as
+  additive snapshot fields; the frontend hold copy keys off them, and re-derives them on every
+  (re)connect (the live <code>stage-failed.failureClass</code> event is only an in-window
+  optimization — CloudFront buffers SSE).
 </p>
 
 <table>
@@ -315,7 +338,10 @@
       <td><code>world_gen_failed</code></td>
       <td>
         <code>worlds.status = 'failed'</code>, or any worldgen stage has a
-        <code>failed</code> latest attempt with no later-stage progress.
+        <code>failed</code> latest attempt with no later-stage progress — unless a live world-gen
+        resume stamp says the failure is a park, in which case the phase stays
+        <code>world_gen</code>. (The <code>worlds.status = 'failed'</code> arm is deliberately
+        <em>not</em> stamp-gated: only genuine terminal paths flip that column.)
       </td>
     </tr>
     <tr>
@@ -358,7 +384,10 @@
         <em>character-creation</em> failure is recoverable since MYT-102 — the owner's
         <a href="./character-creation.html#recovering-a-stuck-character">resume</a> re-drives stuck
         or failed per-player concepts; the <code>post_creation</code> (integration) arm remains
-        manual for now.
+        manual for now. A parked cc member (a live stamp on their concept) keeps the phase at
+        <code>character_creation</code> instead — without that gate, one parked member mid-outage
+        would derive the campaign <code>failed</code> and the resume route would answer
+        <code>409 terminal_failure</code>.
       </td>
     </tr>
     <tr>

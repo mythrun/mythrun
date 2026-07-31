@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html" class="active">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html" class="active">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/llm-outage-resilience.html">LLM outage resilience</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime</div>
         <article>
@@ -347,11 +347,19 @@
 </aside>
 
 <p>
-  The <code>backend/</code> workspace is <code>@mythrun/backend</code>. Production dependencies are
-  <code>fastify</code>, <code>pg</code>, and <code>ioredis</code>; dev dependencies are
-  <code>tsx</code>, <code>typescript</code>, <code>vitest</code>, and the <code>stripe</code> SDK
-  (used at boot for the <a href="../auth-billing/stripe-contract.html">Stripe contract probe</a>).
-  The source tree is shallow but no longer flat: <code>app.ts</code> / <code>server.ts</code> /
+  The <code>backend/</code> workspace is <code>@mythrun/backend</code>. The production-dependency
+  core is <code>fastify</code> (+ its cookie/cors/rate-limit/websocket plugins), <code>pg</code>,
+  <code>ioredis</code>, <code>bullmq</code>, <code>pino</code>, <code>zod</code>, and
+  <code>uuidv7</code>, joined by the vertical-specific SDKs each surface's page covers: the Vercel
+  AI SDK + <code>@ai-sdk/anthropic</code> (the <a href="./llm.html">LLM client</a>),
+  <code>undici</code> (the
+  <a href="./llm-outage-resilience.html">outage-resilience transport dispatchers</a>),
+  <code>stripe</code> (the <a href="../auth-billing/stripe-contract.html">Stripe contract</a>),
+  <code>aws-jwt-verify</code> + the Cognito/Secrets-Manager AWS clients (<a
+    href="../auth-billing/jwt-middleware.html"
+    >auth</a
+  >). Dev dependencies are <code>typescript</code>, <code>vitest</code>, and friends. The source
+  tree is shallow but no longer flat: <code>app.ts</code> / <code>server.ts</code> /
   <code>app-deps.ts</code> / <code>worker.ts</code> at the root, with subdirectories for
   <code>auth/</code>, <code>billing/</code>, <code>boot/</code>, <code>config/</code>,
   <code>contract/</code>, <code>db/</code>, <code>dev-tool-check/</code>, <code>llm/</code>,

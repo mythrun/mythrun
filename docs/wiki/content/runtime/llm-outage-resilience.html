@@ -1,0 +1,567 @@
+<!-- source: backend/src/llm/llm-fetch.ts -->
+<!-- source: backend/src/llm/classify-llm-error.ts -->
+<!-- source: backend/src/llm/ai.ts -->
+<!-- source: backend/src/llm/llm-health.ts -->
+<!-- source: backend/src/llm/llm-health-probe.ts -->
+<!-- source: backend/src/llm/prep/prep-queue-events.ts -->
+<!-- source: backend/src/repo/resume-stamps.ts -->
+<!-- source: backend/migrations/038_llm_resume_stamps.sql -->
+<!-- source: backend/src/routes/llm-health.ts -->
+<!-- source: docs/superpowers/specs/2026-07-30-llm-outage-resilience-design.md -->
+<!-- source-hash: sha256:aee892153fa40dd45ac8f5de0b26feb21ee94893d1fb7560d56708fa4cd39e44 -->
+
+<h1>LLM outage resilience</h1>
+
+<p class="lead">
+  How Mythrun survives an Anthropic API outage: every failed LLM call is classified at one boundary,
+  connectivity failures feed a Redis-shared sitewide verdict, a 60-second probe cycle discovers
+  recovery and clears it, prep pipelines park themselves and resume on their own, and the app frame
+  shows one quiet prose strip while it lasts.
+</p>
+
+<!-- @diagram: runtime/llm-outage-resilience -->
+
+<h2>The incident that shaped it</h2>
+
+<p>
+  On 2026-07-30 a single hung HTTPS connection during a world build sat silent for undici's default
+  five-minute headers timeout, its retry was doomed by the stage's already-spent call budget, and
+  the player saw "The world stalled" on the first transient failure. Three user-stated goals fell
+  out of the post-mortem: discover an API outage fast, show a sitewide indicator while it lasts, and
+  clear it automatically on recovery. The design (v5, four blind review rounds) added a fourth
+  behavior that does most of the actual work: prep pipelines that hit a transient failure should
+  ride it out on their own instead of surfacing a dead end.
+</p>
+
+<p>
+  The system splits into a passive detector (real traffic reports its own failures), an active
+  recovery probe (the only synthetic traffic, and only while degraded), a parking mechanism for prep
+  jobs, and a notice surface. Each piece is useful alone; together they close the loop the diagram
+  shows.
+</p>
+
+<h2>Failing fast: two transport dispatchers</h2>
+
+<p>
+  <code>llm-fetch.ts</code> builds a custom fetch that every Anthropic request now flows through
+  (<code>models.ts</code> hands it to <code>createAnthropic({ fetch })</code>, so all three tier
+  constants carry it). It holds two undici <code>Agent</code>s with different timeout profiles and
+  picks one per request, mechanically: the provider body is a JSON string, so a body containing
+  <code>"stream":true</code> routes to the streaming dispatcher and anything else — including a
+  non-string body — routes non-streaming. Streaming requests get a tight leash (10s connect / 60s
+  headers / 120s body idle); non-streaming requests keep a 300s backstop.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why headers-timeout only works for streams</strong> — on a non-streaming Anthropic call,
+  response headers arrive together with the finished completion, so a hung connection and a healthy
+  still-thinking Opus call are the same wire state and no tight timeout can tell them apart. A
+  streaming response returns headers within seconds, which makes headers-arrival a valid hang
+  detector — but only on that dispatcher. This asymmetry runs through the whole design: it is why
+  prep calls migrated to streaming transport, and why the abort-classification rule below is
+  dispatcher-aware.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>npm undici, matched by <code>code</code>, never <code>instanceof</code></strong> — the
+  <code>Agent</code> and <code>fetch</code> both come from the npm <code>undici</code> package
+  (mixing an npm-undici Agent into Node's global fetch is unsupported), and the lockfile carries a
+  transitive undici@5 beside the npm undici@7 — two realms of the same error classes exist at
+  runtime, so the classifier matches undici errors by their <code>UND_ERR_*</code> code strings. The
+  one pre-authorized type assertion in the feature lives at this boundary: npm-undici's fetch types
+  are structurally incompatible with global fetch's in both directions, while the runtime is fully
+  compatible for everything the AI SDK sends.
+</aside>
+
+<p>
+  The fetch also records an observation per request — <code>{mode, headersArrived}</code> — and
+  exposes it to the classification boundary through a per-attempt exchange keyed on the attempt's
+  <code>AbortSignal</code> identity, last-invocation-wins. That last part matters: SDK-internal
+  retries share one signal, and without it a first invocation's late headers arrival would pollute
+  the classification of the attempt that actually failed.
+</p>
+
+<h2>Two axes, one walk: the failure taxonomy</h2>
+
+<p>
+  <code>classify-llm-error.ts</code> is a pure, import-free module that classifies every failed call
+  along two independent axes: <em>retry-worthy</em> (should the attempt loop try again?) and
+  <em>outage-signal</em> (should this failure count toward the sitewide window?), plus a failure
+  class (<code>connectivity | rate-limit | abort | other</code>) that the parking predicate reads
+  downstream. The two axes deliberately disagree in places: a 429 is retry-worthy but never outage
+  signal (rate limiting is our traffic shape, not their outage); a non-streaming wall-clock abort is
+  retry-worthy but never outage signal (no headers at abort is the <em>healthy</em> state on that
+  dispatcher); a schema-validation failure is neither.
+</p>
+
+<p>
+  Classification is an unwrap walk, bounded at depth 5, over whatever shape surfaced: the SDK's
+  <code>AI_RetryError</code> takes its retry verdict from the <em>last</em> member but its outage
+  verdict from <em>any</em> member (the incident's own shape was
+  <code>[headers-timeout, abort]</code> — last-member-only would discard the genuine signal);
+  <code>APICallError</code> status codes count only at ≥400, because mid-body connection deaths
+  arrive as "Failed to process successful response" with <code>statusCode: 200</code> and the real
+  undici error in <code>cause</code>; anything with a <code>cause</code> recurses. Base cases match
+  by string: the <code>UND_ERR_*</code> family, connect/DNS/socket errnos, TLS-layer codes, and HTTP
+  5xx/529. The dispatcher-aware abort rule closes the walk: an abort that never saw headers is
+  connectivity on the streaming dispatcher and a plain retryable abort on the non-streaming one —
+  the transport observation exists to carry exactly that bit.
+</p>
+
+<p>
+  One mapping addition rides in the middleware rather than the classifier: mid-stream Anthropic
+  error <em>events</em> on an open stream (<code>overloaded_error</code>, <code>api_error</code>)
+  arrive as raw JSON payloads, not Error instances. The middleware's in-stream arm maps them to
+  <code>LlmOverloadedError</code> and the new <code>LlmUpstreamError</code>, carrying the raw
+  payload as <code>cause</code> so the walk still sees it. Without that arm the generic fallback
+  mints <code>Error("[object Object]")</code> and a partial overload on the streaming path dies
+  unclassified.
+</p>
+
+<h2>Wrapper-owned attempts</h2>
+
+<p>
+  Before this feature there was no application-level retry loop — "Failed after 2 attempts" in old
+  logs was the AI SDK's internal <code>maxRetries</code>. The contract now lives in
+  <code>ai.ts</code>: a prep call site passes <code>stageBudgetMs</code> and the wrapper owns the
+  attempts (SDK retries forced to 0). Internally the loop drives the SDK's
+  <em>streaming</em> transport (<code>streamText</code> + <code>Output.object</code>) and assembles
+  the final validated object, so the tight streaming dispatcher watches every attempt; the external
+  contract — schema in, validated object plus usage out, same repair chain — is unchanged.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Every attempt gets the FULL remaining budget</strong> — the loop never divides remaining
+  time across attempts. Hang detection rides the transport timeouts (a hung attempt costs at most
+  ~60–120s), so a healthy long attempt is never killed by arithmetic. The design review established
+  that any division re-creates the incident's doomed retry: attempt two inherits a sliver of budget,
+  cannot finish healthily, and dies as a misclassified abort. The companion rule is the retry
+  <em>gate</em>: a retry starts only if the remaining budget still fits
+  <code>expectedHealthyDurationMs</code> (60s default for fast calls; slow stages pass their
+  observed healthy duration) — starting a retry that cannot healthily finish wastes spend and ends
+  in the same misclassified abort.
+</aside>
+
+<p>
+  Retry-worthy failures retry up to three total attempts with a fresh
+  <code>AbortController</code> and jittered backoff ≤2s; a 429 waits
+  <code>max(jitter, retry-after)</code> and the gate accounts the wait against the budget. External
+  aborts win — after any failed attempt, if the caller's own signal is aborted the loop bails with
+  no retry and no report. Schema failures run the existing haiku-then-sonnet repair chain
+  <em>inside</em> the attempt, bounded by the attempt's remaining budget, and — new — a
+  connectivity-classed repair failure surfaces to the loop as a retryable transport failure instead
+  of silently converting to a terminal schema error. The loop's scope is deliberate: only calls
+  whose output <code>ai.ts</code> assembles internally. Externally-consumed streams (the world-gen
+  stages that feed partials to SSE mid-flight) get classification and reporting only — a consumed
+  stream cannot be transparently re-driven, and a naive retry would double-publish partials. Their
+  retry unit is the whole stage, via parking.
+</p>
+
+<h2>The sitewide verdict: a Redis state machine</h2>
+
+<p>
+  <code>llm-health.ts</code> holds the fleet-shared outage state under
+  <code>llm-health:*</code> keys (behind the usual <code>redisKeyPrefix</code>, so worktree / test /
+  staging isolation holds). Every connectivity-class attempt failure reports into a 30-minute
+  rolling ZSET window through a boot-injected sink (<code>setLlmHealthSink</code> — the API server
+  and the worker both bind it to <code>tracker.report</code> at boot; <code>ai.ts</code> itself
+  stays dependency-free, and a sink failure is logged and eaten, never surfaced to the calling
+  stage). The state machine:
+</p>
+
+<pre><code>healthy  --(≥3 connectivity failures within 10 min spanning
+            ≥2 distinct call sites OR ≥2 distinct jobs)-->  degraded
+degraded --(3 consecutive probe cycles all-succeed; counter reset by
+            any probe failure OR any new connectivity report)--> healthy</code></pre>
+
+<aside class="wiki-rationale">
+  <strong>The distinctness rule</strong> — one world failing one stage repeatedly never trips the
+  sitewide strip (that player is covered by the parked hold copy on their own surfaces); one world
+  failing two consecutive stages trips it; two worlds failing the same stage trips it. The 10-minute
+  arming window matches failure-manifestation latency — hang events arrive minutes apart per
+  pipeline, and a tight window could never assemble three at launch concurrency. The clear side
+  carries its own hysteresis, so the wide window cannot flap.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Both transitions are Lua scripts</strong> — arm is evaluate-window + <code>SET NX</code>
+  + seed the models SET in one atomic unit; clear is verify-counter + DEL of all four keys in one.
+  The design review showed every check-then-act variant leaks a race (a concurrent reporter's
+  counter reset lost to a clear that already decided, or a double-arm). The implicated model ids
+  live in a separate Redis SET rather than a JSON array inside the state blob for the same reason:
+  <code>SADD</code> is atomic and commutative; a read-modify-write JSON array is a lost-update race
+  across concurrent reporters. Window scores come from Redis <code>TIME</code>, never local clocks.
+</aside>
+
+<p>
+  Every key carries a 30-minute TTL that only still-down probe cycles refresh — so if the probe
+  worker dies mid-outage, the degraded state expires on its own rather than pinning the strip up
+  forever. Transitions emit <code>llm_health.degraded</code> / <code>llm_health.recovered</code>
+  structured logs carrying the model set and a window summary, so triage works from CloudWatch
+  without Redis access.
+</p>
+
+<h2>The recovery probe</h2>
+
+<p>
+  <code>llm-health-probe.ts</code> runs as a BullMQ repeatable job on its own queue, one cycle every
+  60 seconds, registered idempotently via <code>upsertJobScheduler</code> on every worker boot. A
+  healthy cycle is one Redis GET plus a cheap armed-stamp scan. A degraded cycle probes every
+  implicated model in parallel — <code>SMEMBERS llm-health:models</code>, falling back to all three
+  tier constants when the set is empty (an empty set must never be a vacuous success). Each probe is
+  one minimal single-attempt call: SDK retries 0, outside the attempt loop, 30s wall clock, cost
+  attributed to a reserved system label. All targets succeeding increments the clear counter; any
+  failure resets it and refreshes the state TTL. Single-flight is a timing invariant — a full cycle
+  always finishes inside the 60s interval — not a concurrency setting.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The probe suppresses thinking and its own health reports</strong> — Claude 5 models think
+  adaptively by default, and an unsuppressed probe that thinks past its 30s wall clock reads as a
+  probe <em>failure</em> against a healthy API, fail-closing the strip indefinitely; the probe
+  passes <code>thinking: disabled</code> and counts success as "the call resolved," regardless of
+  finish reason. It also passes <code>skipHealthReport</code>: a probe failure must feed the clear
+  counter only — reported into the arming window it would supply exactly the call-site diversity the
+  arm threshold needs, letting the probe manufacture a sitewide outage from one struggling model.
+</aside>
+
+<p>
+  When the counter reaches three, the Lua clear fires and the cycle runs the recovery fast-path:
+  scan runs with armed resume stamps and <code>promote()</code> their delayed jobs so parked worlds
+  wake immediately instead of waiting out a 15-minute ladder rung. The scan is guarded by a
+  fire-once net — a <code>promote-pending</code> flag set <em>before</em> the scan and cleared only
+  after it completes — so a probe-worker death (or a Postgres blip) between clear and scan leaves
+  the flag up and the next healthy cycle re-runs the full scan rather than stranding tail-rung
+  worlds. Healthy cycles without the flag promote past-due stamps only: a future-dated stamp is a
+  ladder delay in progress, and hot-promoting it every 60s would burn the park budget. Job identity
+  recovery parses ids at fixed UUID widths (<code>sp-</code>/<code>cc-</code> ids embed hyphens —
+  never <code>split('-')</code>), and every promote is catch-and-continue because the natural wake
+  may have raced. Known hysteresis, accepted: three probe cycles plus the poll interval ≈ up to four
+  minutes of stale "down" copy after true recovery, and a stale in-flight non-streaming call can
+  reset the counter once more.
+</p>
+
+<h2>Parking: the job delays itself</h2>
+
+<p>
+  When a prep processor (world-gen, session-prep, character-creation) contains a non-terminal
+  failure whose class is park-eligible — <code>connectivity</code> or <code>rate-limit</code>; a
+  sustained 429 window is exactly what a backoff ladder rides out, though rate-limit still never
+  feeds the strip — and park budget remains, it does three things: mark the stage row failed exactly
+  as today, persist a resume stamp, and re-arm its <em>own</em> BullMQ job with
+  <code>job.moveToDelayed(now + delay)</code> followed by a <code>DelayedError</code> throw (the
+  control signal BullMQ expects for a sanctioned self-delay — the containment wrapper recognizes it
+  and logs at info, not error). The same job wakes itself later: no <code>add</code>, no dedup
+  interaction, single-flight by construction.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The stage row stays <code>failed</code>; the STAMP is what means "parked"</strong> — the
+  wake claims the stage through the normal claim path, and a claim only succeeds against a failed
+  (or stuck) row. Leaving the row <code>running</code> would make the wake's claim return lost-race
+  and skip the parked stage — silent world corruption. So parked and genuinely-failed runs are
+  byte-identical in <code>pipeline_runs</code>; the <code>llm_resume_stamps</code> row (migration
+  038, keyed <code>(pipeline, entity_id)</code>) is the single discriminator, and every status
+  derivation reads it.
+</aside>
+
+<p>
+  The stamp's fields split by consumer. <code>next_resume_at</code> arms the wake and clears on
+  stage claim — the overdue predicate needs "armed and past due" to go false the moment the stage
+  starts. <code>resume_attempt</code> (the ladder rung), <code>park_consumed_ms</code> (the spent
+  budget), and <code>last_error_class</code> (the hold copy's key) all <em>survive</em> claims and
+  clear only on stage completion — clearing them on claim would reset the ladder to the 30-second
+  rung on every wake, hot-cycling a solo-world outage with unbounded spend. The ladder runs 30s → 2m
+  → 5m → 15m and holds at 15m; the budget is total parked wall-clock,
+  <code>park_consumed_ms ≥ 6h</code>, not a rung count.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A wall-clock budget, decoupled from the sitewide state</strong> — a solo-world outage can
+  never trip the sitewide threshold (the distinctness rule), so its parks must self-fund; a rung
+  <em>count</em> would burn a solo world out in ~40 minutes, while 6 hours of parked wall-clock
+  rides out a realistic provider incident. The coupling runs the other way too: while the site is
+  known-degraded, waking attempts re-park <em>without</em> consuming budget — each processor reads
+  the health state before claiming (check, then claim, then attempt, pinned in that order), so a
+  world parked through a long sitewide outage still has its full ladder when the API returns.
+  Exhaustion lands on today's failed path — the retryable surface, never the terminal "start fresh"
+  view — and a manual retry after exhaustion starts a fresh episode (fresh 6-hour budget, rung 1):
+  mid-outage, the retry button must arm a new ride, not instantly re-exhaust.
+</aside>
+
+<h2>Safety nets</h2>
+
+<p>
+  Three nets close the gaps parking opens (and one it merely inherited). First, the stage claim in
+  <code>pipeline_runs</code> gained a distinct <code>in-flight</code> result for running-not-stuck
+  rows, and every processor loop now <em>stops</em> on it with a retryable throw instead of skipping
+  past the stage. That fixes a pre-existing defect the wake path would have amplified: BullMQ's
+  stall handling re-drives a dead worker's job once, the dead attempt's row sits
+  <code>running</code> under the stuck-reset threshold, and the old lost-race branch silently
+  completed worlds with missing stages.
+</p>
+
+<p>
+  Second, terminal broker failures. A parked run's wake that dies terminally (stall-count
+  exhaustion) leaves an entity in-progress forever with no job — the overdue predicate cannot see it
+  because the claim already disarmed the stamp. <code>prep-queue-events.ts</code> subscribes
+  QueueEvents on the three prep queues (the MYT-67 session-turn precedent, each on its own dedicated
+  blocking connection) and recovers identity from the broker event's jobId alone, parsed at fixed
+  UUID widths — the prep queues keep <code>removeOnFail: {count: 0}</code> (age-retention would
+  reintroduce the held-jobId dedup landmine), so the job object is already gone. The handler
+  cross-checks the resume stamp, drives the pipeline's existing terminal path, and clears the stamp
+  last.
+</p>
+
+<p>
+  Third, the overdue arm: a stamp whose <code>next_resume_at</code> passed more than five minutes
+  ago without a stage start derives as failed/retryable — a pure row predicate, no queue I/O. The
+  manual-retry routes, which <em>can</em> reach the queue, additionally check for a live job holding
+  the base id before re-adding (a held id makes the add a silent no-op), so a backlogged-but-alive
+  wake answers the in-progress shape instead of being offered a duplicate retry.
+</p>
+
+<h2>The player-facing surface</h2>
+
+<p>
+  <code>GET /api/llm-health</code> is a public route (mirroring <code>/health/ready</code> — it
+  serves a binary <code>{state, since}</code> with no tenant data, and the poll must not burn a JWT
+  verify per tab per minute) doing one Redis read through the tracker. The frame polls it every 60
+  seconds and renders the <a href="../frontend/app-shell.html">NoticeStrip</a> — a slim quiet prose
+  strip under the sticky bar, no icons, no dismiss — while degraded. The frontend hook treats
+  "degraded" as a positive assertion only: a failed poll reads as ok, because the strip relays the
+  backend's Redis verdict rather than detecting outages itself. The strip's copy stays true during a
+  partial-model outage (an Opus-only outage arms it while Sonnet answers every live turn), which is
+  why it says "unsteady," not "down."
+</p>
+
+<p>
+  Parked prep runs get their own hold copy on the surfaces that watch them — the worldgen generating
+  and reveal views, session-prep waits, and character-creation loading. The class is keyed off the
+  <em>snapshot/status derivation</em> (the persisted stamp), never only the live SSE event:
+  CloudFront buffers SSE, and the generating view invites leave-and-return, so the hold must
+  re-derive on every reconnect. While parked, the hold copy owns the wait narrative — the ETA
+  countdown and the "still working" stalled line are suppressed, because "Still working" and "the
+  making was interrupted" must never share a screen. The
+  <a href="../frontend/world-gen-experience.html">world-gen experience</a> page covers the view
+  mechanics.
+</p>
+
+<h2>Operating this piece</h2>
+
+<h3>Check, arm, or clear the outage state (local / staging)</h3>
+<ol>
+  <li>
+    <code>pnpm --filter @mythrun/backend exec tsx scripts/smoke/llm-health-smoke.ts status</code> —
+    prints the tracker's state and implicated models. The script loads config through
+    <code>loadEnv()</code>, so it writes under the REAL derived key prefix
+    (<code>${env}:${region}:</code>) — a hand-read <code>REDIS_KEY_PREFIX</code> writes keys the
+    server never sees.
+  </li>
+  <li>
+    <code>… llm-health-smoke.ts arm</code> — fires three connectivity reports across two call sites
+    through the production Lua arm path. The strip rises within one poll interval.
+  </li>
+  <li><code>… llm-health-smoke.ts clear</code> — DELs state, counter, window, and models.</li>
+</ol>
+
+<h3>Manually clear a stuck degraded state (production)</h3>
+<ol>
+  <li>
+    Production Redis is in-VPC: use the ECS run-task / exec path to reach it (see
+    <a href="../infra/smoke-testing.html">smoke testing</a> for the pattern).
+  </li>
+  <li>
+    <code>DEL</code> the four keys under the environment's prefix: <code>llm-health:state</code>,
+    <code>llm-health:probe-successes</code>, <code>llm-health:window</code>,
+    <code>llm-health:models</code>.
+  </li>
+  <li>
+    The strip clears on the next poll. Parked jobs keep their ladders; the next healthy probe cycle
+    promotes past-due stamps.
+  </li>
+</ol>
+
+<h3>Pre-emptively arm during a known incident</h3>
+<ol>
+  <li>
+    <code>SET &lt;prefix&gt;llm-health:state '{"since":&lt;epoch-ms&gt;}'</code> and
+    <code>SADD &lt;prefix&gt;llm-health:models &lt;model-id…&gt;</code>.
+  </li>
+  <li>
+    This raises the strip and — because processors read the health state before claiming — stops
+    parked runs from consuming their ladders while the incident lasts.
+  </li>
+</ol>
+
+<h3>Diagnose a degradation from CloudWatch</h3>
+<ol>
+  <li>
+    Filter on <code>event: 'llm_health.degraded'</code> — the log line carries the implicated model
+    set and a window summary (call sites, job ids), so triage needs no Redis access.
+  </li>
+  <li>
+    <code>llm_health.probe_cycle_failed</code> lines show which models are still failing while
+    degraded; <code>llm_health.recovered</code> carries the outage duration.
+  </li>
+  <li>
+    Park activity logs as <code>world_gen.stage_parked</code> (and the session-prep /
+    character-creation equivalents) plus <code>job.parked</code> at the containment boundary, and
+    wake promotions as <code>llm_health.resume_promoted</code>.
+  </li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The <a href="./llm.html">LLM client</a> page documents the wrapper this feature instrumented — the
+  transport fetch rides under <code>models.ts</code>'s provider, and the attempt loop is a seam of
+  <code>ai.ts</code>'s <code>generateObject</code>. The <a href="./worker.html">worker</a> registers
+  the probe queue, the QueueEvents subscribers, and the health sink at boot. The three prep
+  pipelines — <a href="./world-gen.html">world gen</a>,
+  <a href="./session-prep.html">session prep</a>, and
+  <a href="./character-creation.html">character creation</a> — own their park sites and wake claims;
+  <a href="./character-integration.html">character integration</a> never parks but shares the
+  stop-on-in-flight claim discipline. <a href="./pipeline-status.html">Pipeline status</a>
+  explains how the stamp reaches phase derivations and SSE snapshots. On the frontend, the
+  <a href="../frontend/app-shell.html">app shell</a> owns the strip and the poll, and the
+  <a href="../frontend/world-gen-experience.html">world-gen experience</a> owns the parked hold
+  views.
+</p>
+
+<h2>Appendix: constants &amp; keys</h2>
+
+<h3>Transport timeouts</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Dispatcher</th>
+      <th>connect</th>
+      <th>headers</th>
+      <th>body idle</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>streaming</td>
+      <td>10s</td>
+      <td>60s</td>
+      <td>120s</td>
+    </tr>
+    <tr>
+      <td>non-streaming</td>
+      <td>10s</td>
+      <td>300s</td>
+      <td>300s</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Redis keys (prefix <code>llm-health:</code>, under <code>redisKeyPrefix</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Key</th>
+      <th>Type</th>
+      <th>Semantics</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>window</code></td>
+      <td>ZSET</td>
+      <td>Failure events, scored by Redis TIME; 30-min rolling prune + TTL.</td>
+    </tr>
+    <tr>
+      <td><code>state</code></td>
+      <td>string (JSON)</td>
+      <td>Present ⇔ degraded: <code>{"since": ms}</code>. TTL 30 min, probe-refreshed.</td>
+    </tr>
+    <tr>
+      <td><code>models</code></td>
+      <td>SET</td>
+      <td>Implicated model ids — the probe's target list.</td>
+    </tr>
+    <tr>
+      <td><code>probe-successes</code></td>
+      <td>counter</td>
+      <td>Consecutive clean cycles; at 3 the Lua clear fires.</td>
+    </tr>
+    <tr>
+      <td><code>promote-pending</code></td>
+      <td>flag</td>
+      <td>Fire-once recovery net: set before the promote scan, cleared after it completes.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Attempt loop &amp; park constants</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Constant</th>
+      <th>Value</th>
+      <th>Where</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Max loop attempts</td>
+      <td>3</td>
+      <td><code>ai.ts</code></td>
+    </tr>
+    <tr>
+      <td>Retry jitter</td>
+      <td>≤2s</td>
+      <td><code>ai.ts</code></td>
+    </tr>
+    <tr>
+      <td>Default expected healthy duration</td>
+      <td>60s</td>
+      <td><code>ai.ts</code> (slow stages override per call site)</td>
+    </tr>
+    <tr>
+      <td>Arm threshold / window</td>
+      <td>3 events / 10 min / ≥2 sites or jobs</td>
+      <td><code>llm-health.ts</code></td>
+    </tr>
+    <tr>
+      <td>Clear threshold</td>
+      <td>3 consecutive probe cycles</td>
+      <td><code>llm-health.ts</code></td>
+    </tr>
+    <tr>
+      <td>Probe cadence / wall clock</td>
+      <td>60s / 30s</td>
+      <td><code>llm-health-probe.ts</code></td>
+    </tr>
+    <tr>
+      <td>Park ladder</td>
+      <td>30s → 2m → 5m → 15m (hold)</td>
+      <td><code>repo/resume-stamps.ts</code></td>
+    </tr>
+    <tr>
+      <td>Park budget</td>
+      <td>6h parked wall-clock</td>
+      <td><code>repo/resume-stamps.ts</code></td>
+    </tr>
+    <tr>
+      <td>Overdue grace</td>
+      <td>5 min</td>
+      <td><code>sse/derive-phase.ts</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p>
+  <code>backend/src/llm/llm-fetch.ts</code>, <code>backend/src/llm/classify-llm-error.ts</code>,
+  <code>backend/src/llm/ai.ts</code> (the §1.3 attempt loop + §1.4 sink),
+  <code>backend/src/llm/llm-health.ts</code>, <code>backend/src/llm/llm-health-probe.ts</code>,
+  <code>backend/src/llm/prep/prep-queue-events.ts</code>,
+  <code>backend/src/repo/resume-stamps.ts</code> +
+  <code>backend/migrations/038_llm_resume_stamps.sql</code>,
+  <code>backend/src/routes/llm-health.ts</code>, and the design spec at
+  <code>docs/superpowers/specs/2026-07-30-llm-outage-resilience-design.md</code>.
+</p>

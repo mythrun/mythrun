@@ -1,0 +1,851 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LLM outage resilience · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="runtime" data-page="llm-outage-resilience">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/llm-outage-resilience.html" class="active">LLM outage resilience</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › LLM outage resilience</div>
+        <article>
+<h1>LLM outage resilience</h1>
+
+<p class="lead">
+  How Mythrun survives an Anthropic API outage: every failed LLM call is classified at one boundary,
+  connectivity failures feed a Redis-shared sitewide verdict, a 60-second probe cycle discovers
+  recovery and clears it, prep pipelines park themselves and resume on their own, and the app frame
+  shows one quiet prose strip while it lasts.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="2481pt" height="497pt"
+ viewBox="14.00 14.00 2467.00 482.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 478.44)">
+<title>llm_outage_resilience</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-464.04 2448.14,-464.04 2448.14,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_call</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-318 8,-423 907.95,-423 907.95,-318 8,-318"/>
+<text xml:space="preserve" text-anchor="middle" x="457.98" y="-409.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">every LLM call &#160;(API server + workers)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_redis</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="1471.4,-269 1471.4,-403 2170.03,-403 2170.03,-269 1471.4,-269"/>
+<text xml:space="preserve" text-anchor="middle" x="1820.72" y="-389.1" font-family="Courier,monospace" font-size="11.00">Redis &#160;(llm&#45;health:* under redisKeyPrefix)</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_park</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="1042.57,-8 1042.57,-181 1658.21,-181 1658.21,-8 1042.57,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="1350.39" y="-167.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">prep pipelines &#160;(world&#45;gen / session&#45;prep / character&#45;creation)</text>
+</g>
+<!-- fetch -->
+<g id="node1" class="node">
+<title>fetch</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="224.51,-401.64 8,-401.64 8,-318.36 224.51,-318.36 224.51,-401.64"/>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-383.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">llm&#45;fetch.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-369.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">two undici dispatchers</text>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-356.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">streaming: 10s/60s/120s</text>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-343.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">non&#45;streaming: 10s/300s/300s</text>
+<text xml:space="preserve" text-anchor="middle" x="116.26" y="-330.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ {mode, headersArrived}</text>
+</g>
+<!-- classify -->
+<g id="node2" class="node">
+<title>classify</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="607.44,-401.64 364.52,-401.64 364.52,-318.36 607.44,-318.36 607.44,-401.64"/>
+<text xml:space="preserve" text-anchor="middle" x="485.98" y="-383.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">classify&#45;llm&#45;error.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="485.98" y="-369.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">unwrap walk (depth 5)</text>
+<text xml:space="preserve" text-anchor="middle" x="485.98" y="-356.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">retry axis + outage axis</text>
+<text xml:space="preserve" text-anchor="middle" x="485.98" y="-343.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">class: connectivity | rate&#45;limit</text>
+<text xml:space="preserve" text-anchor="middle" x="485.98" y="-330.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">| abort | other</text>
+</g>
+<!-- fetch&#45;&gt;classify -->
+<g id="edge1" class="edge">
+<title>fetch&#45;&gt;classify</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M225.1,-360C265.84,-360 312.63,-360 355.18,-360"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="355.1,-362.45 362.1,-360 355.09,-357.55 355.1,-362.45"/>
+<text xml:space="preserve" text-anchor="middle" x="294.52" y="-375" font-family="Courier,monospace" font-size="10.00">failure +</text>
+<text xml:space="preserve" text-anchor="middle" x="294.52" y="-363" font-family="Courier,monospace" font-size="10.00">{mode, headers}</text>
+</g>
+<!-- loop -->
+<g id="node3" class="node">
+<title>loop</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="907.95,-401.64 658.44,-401.64 658.44,-318.36 907.95,-318.36 907.95,-401.64"/>
+<text xml:space="preserve" text-anchor="middle" x="783.2" y="-383.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">ai.ts attempt loop</text>
+<text xml:space="preserve" text-anchor="middle" x="783.2" y="-369.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(stageBudgetMs calls)</text>
+<text xml:space="preserve" text-anchor="middle" x="783.2" y="-356.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">full remaining budget per attempt</text>
+<text xml:space="preserve" text-anchor="middle" x="783.2" y="-343.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">retry gate: fits a healthy run?</text>
+<text xml:space="preserve" text-anchor="middle" x="783.2" y="-330.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">≤3 attempts, SDK maxRetries: 0</text>
+</g>
+<!-- classify&#45;&gt;loop -->
+<g id="edge2" class="edge">
+<title>classify&#45;&gt;loop</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M607.91,-360C621.62,-360 635.65,-360 649.51,-360"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="649.29,-362.45 656.29,-360 649.29,-357.55 649.29,-362.45"/>
+</g>
+<!-- sink -->
+<g id="node4" class="node">
+<title>sink</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1229.37,-395.04 1065.67,-395.04 1065.67,-324.96 1229.37,-324.96 1229.37,-395.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1147.52" y="-376.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">boot&#45;injected sink</text>
+<text xml:space="preserve" text-anchor="middle" x="1147.52" y="-363.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">setLlmHealthSink →</text>
+<text xml:space="preserve" text-anchor="middle" x="1147.52" y="-350.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">tracker.report()</text>
+<text xml:space="preserve" text-anchor="middle" x="1147.52" y="-336.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(fire&#45;and&#45;forget)</text>
+</g>
+<!-- loop&#45;&gt;sink -->
+<g id="edge3" class="edge">
+<title>loop&#45;&gt;sink</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M908.64,-360C957.11,-360 1011.61,-360 1056.21,-360"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1056.17,-362.45 1063.17,-360 1056.17,-357.55 1056.17,-362.45"/>
+<text xml:space="preserve" text-anchor="middle" x="971.96" y="-375" font-family="Courier,monospace" font-size="10.00">outage&#45;signal</text>
+<text xml:space="preserve" text-anchor="middle" x="971.96" y="-363" font-family="Courier,monospace" font-size="10.00">failures only</text>
+</g>
+<!-- window -->
+<g id="node5" class="node">
+<title>window</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1608.7,-381.84 1484.61,-381.84 1484.61,-338.16 1608.7,-338.16 1608.7,-381.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1546.65" y="-363.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">window &#160;ZSET</text>
+<text xml:space="preserve" text-anchor="middle" x="1546.65" y="-350.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">30&#45;min rolling</text>
+</g>
+<!-- sink&#45;&gt;window -->
+<g id="edge4" class="edge">
+<title>sink&#45;&gt;window</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1229.85,-360C1302.1,-360 1406.61,-360 1475.32,-360"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1475.12,-362.45 1482.12,-360 1475.12,-357.55 1475.12,-362.45"/>
+<text xml:space="preserve" text-anchor="middle" x="1347.09" y="-399" font-family="Courier,monospace" font-size="10.00">Lua arm script:</text>
+<text xml:space="preserve" text-anchor="middle" x="1347.09" y="-387" font-family="Courier,monospace" font-size="10.00">ZADD + evaluate</text>
+<text xml:space="preserve" text-anchor="middle" x="1347.09" y="-375" font-family="Courier,monospace" font-size="10.00">≥3 / 10 min /</text>
+<text xml:space="preserve" text-anchor="middle" x="1347.09" y="-363" font-family="Courier,monospace" font-size="10.00">≥2 sites or jobs</text>
+</g>
+<!-- state -->
+<g id="node6" class="node">
+<title>state</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1961.93,-353.44 1798.22,-353.44 1798.22,-296.56 1961.93,-296.56 1961.93,-353.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1880.08" y="-334.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">state</text>
+<text xml:space="preserve" text-anchor="middle" x="1880.08" y="-321.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">present ⇔ degraded</text>
+<text xml:space="preserve" text-anchor="middle" x="1880.08" y="-308.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">TTL 30 min</text>
+</g>
+<!-- window&#45;&gt;state -->
+<g id="edge5" class="edge">
+<title>window&#45;&gt;state</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1609.22,-353.5C1659.69,-348.17 1731.86,-340.55 1788.86,-334.53"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1789,-336.98 1795.71,-333.8 1788.49,-332.1 1789,-336.98"/>
+<text xml:space="preserve" text-anchor="middle" x="1728.22" y="-348.63" font-family="Courier,monospace" font-size="10.00">arms</text>
+</g>
+<!-- models -->
+<g id="node7" class="node">
+<title>models</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2170.03,-315.84 2045.93,-315.84 2045.93,-272.16 2170.03,-272.16 2170.03,-315.84"/>
+<text xml:space="preserve" text-anchor="middle" x="2107.98" y="-297.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">models &#160;SET</text>
+<text xml:space="preserve" text-anchor="middle" x="2107.98" y="-284.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">implicated ids</text>
+</g>
+<!-- state&#45;&gt;models -->
+<g id="edge6" class="edge">
+<title>state&#45;&gt;models</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1962.63,-313.81C1989.93,-310.06 2019.89,-305.95 2045.4,-302.45"/>
+</g>
+<!-- route -->
+<g id="node13" class="node">
+<title>route</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2203.03,-446.84 2012.93,-446.84 2012.93,-403.16 2203.03,-403.16 2203.03,-446.84"/>
+<text xml:space="preserve" text-anchor="middle" x="2107.98" y="-428.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">GET /api/llm&#45;health</text>
+<text xml:space="preserve" text-anchor="middle" x="2107.98" y="-415.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(public, one Redis read)</text>
+</g>
+<!-- state&#45;&gt;route -->
+<g id="edge14" class="edge">
+<title>state&#45;&gt;route</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1926.38,-354.03C1951.21,-369 1982.95,-386.66 2012.93,-399 2013.3,-399.15 2013.67,-399.31 2014.05,-399.46"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2012.95,-401.66 2020.36,-401.9 2014.72,-397.09 2012.95,-401.66"/>
+</g>
+<!-- counter -->
+<g id="node8" class="node">
+<title>counter</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1621.9,-312.84 1471.4,-312.84 1471.4,-269.16 1621.9,-269.16 1621.9,-312.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1546.65" y="-294.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">probe&#45;successes</text>
+<text xml:space="preserve" text-anchor="middle" x="1546.65" y="-281.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">at 3 → Lua clear</text>
+</g>
+<!-- counter&#45;&gt;state -->
+<g id="edge9" class="edge">
+<title>counter&#45;&gt;state</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1622.41,-289.81C1666.49,-290.07 1723.25,-292.05 1773.22,-299 1778.45,-299.73 1783.8,-300.6 1789.17,-301.59"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1788.51,-303.96 1795.85,-302.88 1789.44,-299.15 1788.51,-303.96"/>
+<text xml:space="preserve" text-anchor="middle" x="1728.22" y="-314" font-family="Courier,monospace" font-size="10.00">Lua clear</text>
+<text xml:space="preserve" text-anchor="middle" x="1728.22" y="-302" font-family="Courier,monospace" font-size="10.00">(DELs all four)</text>
+</g>
+<!-- probe -->
+<g id="node9" class="node">
+<title>probe</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1259.08,-272.64 1035.97,-272.64 1035.97,-189.36 1259.08,-189.36 1259.08,-272.64"/>
+<text xml:space="preserve" text-anchor="middle" x="1147.52" y="-254.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">llm&#45;health&#45;probe worker</text>
+<text xml:space="preserve" text-anchor="middle" x="1147.52" y="-240.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">60s repeatable cycle</text>
+<text xml:space="preserve" text-anchor="middle" x="1147.52" y="-227.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">healthy: one GET + scan</text>
+<text xml:space="preserve" text-anchor="middle" x="1147.52" y="-214.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">degraded: probe each model</text>
+<text xml:space="preserve" text-anchor="middle" x="1147.52" y="-201.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(single attempt, no thinking)</text>
+</g>
+<!-- probe&#45;&gt;models -->
+<g id="edge7" class="edge">
+<title>probe&#45;&gt;models</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1259.78,-234.64C1384.79,-239.13 1593.74,-247.83 1773.22,-261 1864.41,-267.69 1969.31,-278.59 2036.79,-286.02"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2036.21,-288.42 2043.43,-286.75 2036.75,-283.55 2036.21,-288.42"/>
+<text xml:space="preserve" text-anchor="middle" x="1728.22" y="-276" font-family="Courier,monospace" font-size="10.00">SMEMBERS</text>
+<text xml:space="preserve" text-anchor="middle" x="1728.22" y="-264" font-family="Courier,monospace" font-size="10.00">(targets)</text>
+</g>
+<!-- probe&#45;&gt;counter -->
+<g id="edge8" class="edge">
+<title>probe&#45;&gt;counter</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1259.67,-247.79C1323.86,-257.49 1403.28,-269.49 1462.13,-278.38"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1461.57,-280.77 1468.86,-279.4 1462.3,-275.93 1461.57,-280.77"/>
+<text xml:space="preserve" text-anchor="middle" x="1347.09" y="-284.88" font-family="Courier,monospace" font-size="10.00">all succeed → INCR;</text>
+<text xml:space="preserve" text-anchor="middle" x="1347.09" y="-272.88" font-family="Courier,monospace" font-size="10.00">any failure → reset</text>
+</g>
+<!-- delayed -->
+<g id="node12" class="node">
+<title>delayed</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1658.21,-159.44 1435.1,-159.44 1435.1,-102.56 1658.21,-102.56 1658.21,-159.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1546.65" y="-140.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">the SAME BullMQ job,</text>
+<text xml:space="preserve" text-anchor="middle" x="1546.65" y="-127.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">delayed — wakes itself;</text>
+<text xml:space="preserve" text-anchor="middle" x="1546.65" y="-114.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">probe promotes it on recovery</text>
+</g>
+<!-- probe&#45;&gt;delayed -->
+<g id="edge10" class="edge">
+<title>probe&#45;&gt;delayed</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1250.8,-188.68C1266.86,-182.22 1279.65,-177.26 1284.08,-176 1329.66,-163 1380.85,-153.18 1425.77,-146.08"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1426.04,-148.52 1432.59,-145.02 1425.29,-143.68 1426.04,-148.52"/>
+<text xml:space="preserve" text-anchor="middle" x="1347.09" y="-203" font-family="Courier,monospace" font-size="10.00">promote() armed</text>
+<text xml:space="preserve" text-anchor="middle" x="1347.09" y="-191" font-family="Courier,monospace" font-size="10.00">stamps on recovery</text>
+<text xml:space="preserve" text-anchor="middle" x="1347.09" y="-179" font-family="Courier,monospace" font-size="10.00">(fire&#45;once net)</text>
+</g>
+<!-- processor -->
+<g id="node10" class="node">
+<title>processor</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1252.48,-127.04 1042.57,-127.04 1042.57,-56.96 1252.48,-56.96 1252.48,-127.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1147.52" y="-108.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stage fails, class is</text>
+<text xml:space="preserve" text-anchor="middle" x="1147.52" y="-95.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">connectivity | rate&#45;limit</text>
+<text xml:space="preserve" text-anchor="middle" x="1147.52" y="-82.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">→ markStageFailed +</text>
+<text xml:space="preserve" text-anchor="middle" x="1147.52" y="-68.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">stamp + moveToDelayed(self)</text>
+</g>
+<!-- stamp -->
+<g id="node11" class="node">
+<title>stamp</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1658.21,-78.04 1435.1,-78.04 1435.1,-7.96 1658.21,-7.96 1658.21,-78.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1546.65" y="-59.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">llm_resume_stamps &#160;(pg)</text>
+<text xml:space="preserve" text-anchor="middle" x="1546.65" y="-46.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">resumeAttempt · nextResumeAt</text>
+<text xml:space="preserve" text-anchor="middle" x="1546.65" y="-33.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">parkConsumedMs (6h cap)</text>
+<text xml:space="preserve" text-anchor="middle" x="1546.65" y="-19.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ladder 30s→2m→5m→15m</text>
+</g>
+<!-- processor&#45;&gt;stamp -->
+<g id="edge11" class="edge">
+<title>processor&#45;&gt;stamp</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1253.12,-79.09C1306.13,-72.55 1370.75,-64.58 1425.76,-57.79"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1426.05,-60.23 1432.7,-56.94 1425.45,-55.36 1426.05,-60.23"/>
+</g>
+<!-- processor&#45;&gt;delayed -->
+<g id="edge12" class="edge">
+<title>processor&#45;&gt;delayed</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1252.99,-88.6C1301.04,-88.42 1358.66,-90.15 1410.1,-97 1416.69,-97.88 1423.43,-98.96 1430.21,-100.19"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1429.68,-102.58 1437.01,-101.48 1430.59,-97.77 1429.68,-102.58"/>
+</g>
+<!-- delayed&#45;&gt;processor -->
+<g id="edge13" class="edge">
+<title>delayed&#45;&gt;processor</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1434.5,-120.08C1380.58,-114.79 1315.92,-108.44 1261.73,-103.12"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1262.14,-100.7 1254.93,-102.45 1261.66,-105.57 1262.14,-100.7"/>
+<text xml:space="preserve" text-anchor="middle" x="1347.09" y="-132.27" font-family="Courier,monospace" font-size="10.00">wake: claim the</text>
+<text xml:space="preserve" text-anchor="middle" x="1347.09" y="-120.27" font-family="Courier,monospace" font-size="10.00">failed row, re&#45;run</text>
+</g>
+<!-- strip -->
+<g id="node14" class="node">
+<title>strip</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="2444.14,-460.04 2254.03,-460.04 2254.03,-389.96 2444.14,-389.96 2444.14,-460.04"/>
+<text xml:space="preserve" text-anchor="middle" x="2349.08" y="-441.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">AppFrame NoticeStrip</text>
+<text xml:space="preserve" text-anchor="middle" x="2349.08" y="-428.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">60s poll, prose strip</text>
+<text xml:space="preserve" text-anchor="middle" x="2349.08" y="-415.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(+ parked hold copy on</text>
+<text xml:space="preserve" text-anchor="middle" x="2349.08" y="-401.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">the generating surfaces)</text>
+</g>
+<!-- route&#45;&gt;strip -->
+<g id="edge15" class="edge">
+<title>route&#45;&gt;strip</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M2203.48,-425C2217.1,-425 2231.18,-425 2244.95,-425"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="2244.67,-427.45 2251.67,-425 2244.67,-422.55 2244.67,-427.45"/>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="the-incident-that-shaped-it">The incident that shaped it</h2>
+
+<p>
+  On 2026-07-30 a single hung HTTPS connection during a world build sat silent for undici's default
+  five-minute headers timeout, its retry was doomed by the stage's already-spent call budget, and
+  the player saw "The world stalled" on the first transient failure. Three user-stated goals fell
+  out of the post-mortem: discover an API outage fast, show a sitewide indicator while it lasts, and
+  clear it automatically on recovery. The design (v5, four blind review rounds) added a fourth
+  behavior that does most of the actual work: prep pipelines that hit a transient failure should
+  ride it out on their own instead of surfacing a dead end.
+</p>
+
+<p>
+  The system splits into a passive detector (real traffic reports its own failures), an active
+  recovery probe (the only synthetic traffic, and only while degraded), a parking mechanism for prep
+  jobs, and a notice surface. Each piece is useful alone; together they close the loop the diagram
+  shows.
+</p>
+
+<h2 id="failing-fast-two-transport-dispatchers">Failing fast: two transport dispatchers</h2>
+
+<p>
+  <code>llm-fetch.ts</code> builds a custom fetch that every Anthropic request now flows through
+  (<code>models.ts</code> hands it to <code>createAnthropic({ fetch })</code>, so all three tier
+  constants carry it). It holds two undici <code>Agent</code>s with different timeout profiles and
+  picks one per request, mechanically: the provider body is a JSON string, so a body containing
+  <code>"stream":true</code> routes to the streaming dispatcher and anything else — including a
+  non-string body — routes non-streaming. Streaming requests get a tight leash (10s connect / 60s
+  headers / 120s body idle); non-streaming requests keep a 300s backstop.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why headers-timeout only works for streams</strong> — on a non-streaming Anthropic call,
+  response headers arrive together with the finished completion, so a hung connection and a healthy
+  still-thinking Opus call are the same wire state and no tight timeout can tell them apart. A
+  streaming response returns headers within seconds, which makes headers-arrival a valid hang
+  detector — but only on that dispatcher. This asymmetry runs through the whole design: it is why
+  prep calls migrated to streaming transport, and why the abort-classification rule below is
+  dispatcher-aware.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>npm undici, matched by <code>code</code>, never <code>instanceof</code></strong> — the
+  <code>Agent</code> and <code>fetch</code> both come from the npm <code>undici</code> package
+  (mixing an npm-undici Agent into Node's global fetch is unsupported), and the lockfile carries a
+  transitive undici@5 beside the npm undici@7 — two realms of the same error classes exist at
+  runtime, so the classifier matches undici errors by their <code>UND_ERR_*</code> code strings. The
+  one pre-authorized type assertion in the feature lives at this boundary: npm-undici's fetch types
+  are structurally incompatible with global fetch's in both directions, while the runtime is fully
+  compatible for everything the AI SDK sends.
+</aside>
+
+<p>
+  The fetch also records an observation per request — <code>{mode, headersArrived}</code> — and
+  exposes it to the classification boundary through a per-attempt exchange keyed on the attempt's
+  <code>AbortSignal</code> identity, last-invocation-wins. That last part matters: SDK-internal
+  retries share one signal, and without it a first invocation's late headers arrival would pollute
+  the classification of the attempt that actually failed.
+</p>
+
+<h2 id="two-axes-one-walk-the-failure-taxonomy">Two axes, one walk: the failure taxonomy</h2>
+
+<p>
+  <code>classify-llm-error.ts</code> is a pure, import-free module that classifies every failed call
+  along two independent axes: <em>retry-worthy</em> (should the attempt loop try again?) and
+  <em>outage-signal</em> (should this failure count toward the sitewide window?), plus a failure
+  class (<code>connectivity | rate-limit | abort | other</code>) that the parking predicate reads
+  downstream. The two axes deliberately disagree in places: a 429 is retry-worthy but never outage
+  signal (rate limiting is our traffic shape, not their outage); a non-streaming wall-clock abort is
+  retry-worthy but never outage signal (no headers at abort is the <em>healthy</em> state on that
+  dispatcher); a schema-validation failure is neither.
+</p>
+
+<p>
+  Classification is an unwrap walk, bounded at depth 5, over whatever shape surfaced: the SDK's
+  <code>AI_RetryError</code> takes its retry verdict from the <em>last</em> member but its outage
+  verdict from <em>any</em> member (the incident's own shape was
+  <code>[headers-timeout, abort]</code> — last-member-only would discard the genuine signal);
+  <code>APICallError</code> status codes count only at ≥400, because mid-body connection deaths
+  arrive as "Failed to process successful response" with <code>statusCode: 200</code> and the real
+  undici error in <code>cause</code>; anything with a <code>cause</code> recurses. Base cases match
+  by string: the <code>UND_ERR_*</code> family, connect/DNS/socket errnos, TLS-layer codes, and HTTP
+  5xx/529. The dispatcher-aware abort rule closes the walk: an abort that never saw headers is
+  connectivity on the streaming dispatcher and a plain retryable abort on the non-streaming one —
+  the transport observation exists to carry exactly that bit.
+</p>
+
+<p>
+  One mapping addition rides in the middleware rather than the classifier: mid-stream Anthropic
+  error <em>events</em> on an open stream (<code>overloaded_error</code>, <code>api_error</code>)
+  arrive as raw JSON payloads, not Error instances. The middleware's in-stream arm maps them to
+  <code>LlmOverloadedError</code> and the new <code>LlmUpstreamError</code>, carrying the raw
+  payload as <code>cause</code> so the walk still sees it. Without that arm the generic fallback
+  mints <code>Error("[object Object]")</code> and a partial overload on the streaming path dies
+  unclassified.
+</p>
+
+<h2 id="wrapper-owned-attempts">Wrapper-owned attempts</h2>
+
+<p>
+  Before this feature there was no application-level retry loop — "Failed after 2 attempts" in old
+  logs was the AI SDK's internal <code>maxRetries</code>. The contract now lives in
+  <code>ai.ts</code>: a prep call site passes <code>stageBudgetMs</code> and the wrapper owns the
+  attempts (SDK retries forced to 0). Internally the loop drives the SDK's
+  <em>streaming</em> transport (<code>streamText</code> + <code>Output.object</code>) and assembles
+  the final validated object, so the tight streaming dispatcher watches every attempt; the external
+  contract — schema in, validated object plus usage out, same repair chain — is unchanged.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Every attempt gets the FULL remaining budget</strong> — the loop never divides remaining
+  time across attempts. Hang detection rides the transport timeouts (a hung attempt costs at most
+  ~60–120s), so a healthy long attempt is never killed by arithmetic. The design review established
+  that any division re-creates the incident's doomed retry: attempt two inherits a sliver of budget,
+  cannot finish healthily, and dies as a misclassified abort. The companion rule is the retry
+  <em>gate</em>: a retry starts only if the remaining budget still fits
+  <code>expectedHealthyDurationMs</code> (60s default for fast calls; slow stages pass their
+  observed healthy duration) — starting a retry that cannot healthily finish wastes spend and ends
+  in the same misclassified abort.
+</aside>
+
+<p>
+  Retry-worthy failures retry up to three total attempts with a fresh
+  <code>AbortController</code> and jittered backoff ≤2s; a 429 waits
+  <code>max(jitter, retry-after)</code> and the gate accounts the wait against the budget. External
+  aborts win — after any failed attempt, if the caller's own signal is aborted the loop bails with
+  no retry and no report. Schema failures run the existing haiku-then-sonnet repair chain
+  <em>inside</em> the attempt, bounded by the attempt's remaining budget, and — new — a
+  connectivity-classed repair failure surfaces to the loop as a retryable transport failure instead
+  of silently converting to a terminal schema error. The loop's scope is deliberate: only calls
+  whose output <code>ai.ts</code> assembles internally. Externally-consumed streams (the world-gen
+  stages that feed partials to SSE mid-flight) get classification and reporting only — a consumed
+  stream cannot be transparently re-driven, and a naive retry would double-publish partials. Their
+  retry unit is the whole stage, via parking.
+</p>
+
+<h2 id="the-sitewide-verdict-a-redis-state-machine">The sitewide verdict: a Redis state machine</h2>
+
+<p>
+  <code>llm-health.ts</code> holds the fleet-shared outage state under
+  <code>llm-health:*</code> keys (behind the usual <code>redisKeyPrefix</code>, so worktree / test /
+  staging isolation holds). Every connectivity-class attempt failure reports into a 30-minute
+  rolling ZSET window through a boot-injected sink (<code>setLlmHealthSink</code> — the API server
+  and the worker both bind it to <code>tracker.report</code> at boot; <code>ai.ts</code> itself
+  stays dependency-free, and a sink failure is logged and eaten, never surfaced to the calling
+  stage). The state machine:
+</p>
+
+<pre><code>healthy  --(≥3 connectivity failures within 10 min spanning
+            ≥2 distinct call sites OR ≥2 distinct jobs)-->  degraded
+degraded --(3 consecutive probe cycles all-succeed; counter reset by
+            any probe failure OR any new connectivity report)--> healthy</code></pre>
+
+<aside class="wiki-rationale">
+  <strong>The distinctness rule</strong> — one world failing one stage repeatedly never trips the
+  sitewide strip (that player is covered by the parked hold copy on their own surfaces); one world
+  failing two consecutive stages trips it; two worlds failing the same stage trips it. The 10-minute
+  arming window matches failure-manifestation latency — hang events arrive minutes apart per
+  pipeline, and a tight window could never assemble three at launch concurrency. The clear side
+  carries its own hysteresis, so the wide window cannot flap.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Both transitions are Lua scripts</strong> — arm is evaluate-window + <code>SET NX</code>
+  + seed the models SET in one atomic unit; clear is verify-counter + DEL of all four keys in one.
+  The design review showed every check-then-act variant leaks a race (a concurrent reporter's
+  counter reset lost to a clear that already decided, or a double-arm). The implicated model ids
+  live in a separate Redis SET rather than a JSON array inside the state blob for the same reason:
+  <code>SADD</code> is atomic and commutative; a read-modify-write JSON array is a lost-update race
+  across concurrent reporters. Window scores come from Redis <code>TIME</code>, never local clocks.
+</aside>
+
+<p>
+  Every key carries a 30-minute TTL that only still-down probe cycles refresh — so if the probe
+  worker dies mid-outage, the degraded state expires on its own rather than pinning the strip up
+  forever. Transitions emit <code>llm_health.degraded</code> / <code>llm_health.recovered</code>
+  structured logs carrying the model set and a window summary, so triage works from CloudWatch
+  without Redis access.
+</p>
+
+<h2 id="the-recovery-probe">The recovery probe</h2>
+
+<p>
+  <code>llm-health-probe.ts</code> runs as a BullMQ repeatable job on its own queue, one cycle every
+  60 seconds, registered idempotently via <code>upsertJobScheduler</code> on every worker boot. A
+  healthy cycle is one Redis GET plus a cheap armed-stamp scan. A degraded cycle probes every
+  implicated model in parallel — <code>SMEMBERS llm-health:models</code>, falling back to all three
+  tier constants when the set is empty (an empty set must never be a vacuous success). Each probe is
+  one minimal single-attempt call: SDK retries 0, outside the attempt loop, 30s wall clock, cost
+  attributed to a reserved system label. All targets succeeding increments the clear counter; any
+  failure resets it and refreshes the state TTL. Single-flight is a timing invariant — a full cycle
+  always finishes inside the 60s interval — not a concurrency setting.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The probe suppresses thinking and its own health reports</strong> — Claude 5 models think
+  adaptively by default, and an unsuppressed probe that thinks past its 30s wall clock reads as a
+  probe <em>failure</em> against a healthy API, fail-closing the strip indefinitely; the probe
+  passes <code>thinking: disabled</code> and counts success as "the call resolved," regardless of
+  finish reason. It also passes <code>skipHealthReport</code>: a probe failure must feed the clear
+  counter only — reported into the arming window it would supply exactly the call-site diversity the
+  arm threshold needs, letting the probe manufacture a sitewide outage from one struggling model.
+</aside>
+
+<p>
+  When the counter reaches three, the Lua clear fires and the cycle runs the recovery fast-path:
+  scan runs with armed resume stamps and <code>promote()</code> their delayed jobs so parked worlds
+  wake immediately instead of waiting out a 15-minute ladder rung. The scan is guarded by a
+  fire-once net — a <code>promote-pending</code> flag set <em>before</em> the scan and cleared only
+  after it completes — so a probe-worker death (or a Postgres blip) between clear and scan leaves
+  the flag up and the next healthy cycle re-runs the full scan rather than stranding tail-rung
+  worlds. Healthy cycles without the flag promote past-due stamps only: a future-dated stamp is a
+  ladder delay in progress, and hot-promoting it every 60s would burn the park budget. Job identity
+  recovery parses ids at fixed UUID widths (<code>sp-</code>/<code>cc-</code> ids embed hyphens —
+  never <code>split('-')</code>), and every promote is catch-and-continue because the natural wake
+  may have raced. Known hysteresis, accepted: three probe cycles plus the poll interval ≈ up to four
+  minutes of stale "down" copy after true recovery, and a stale in-flight non-streaming call can
+  reset the counter once more.
+</p>
+
+<h2 id="parking-the-job-delays-itself">Parking: the job delays itself</h2>
+
+<p>
+  When a prep processor (world-gen, session-prep, character-creation) contains a non-terminal
+  failure whose class is park-eligible — <code>connectivity</code> or <code>rate-limit</code>; a
+  sustained 429 window is exactly what a backoff ladder rides out, though rate-limit still never
+  feeds the strip — and park budget remains, it does three things: mark the stage row failed exactly
+  as today, persist a resume stamp, and re-arm its <em>own</em> BullMQ job with
+  <code>job.moveToDelayed(now + delay)</code> followed by a <code>DelayedError</code> throw (the
+  control signal BullMQ expects for a sanctioned self-delay — the containment wrapper recognizes it
+  and logs at info, not error). The same job wakes itself later: no <code>add</code>, no dedup
+  interaction, single-flight by construction.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>The stage row stays <code>failed</code>; the STAMP is what means "parked"</strong> — the
+  wake claims the stage through the normal claim path, and a claim only succeeds against a failed
+  (or stuck) row. Leaving the row <code>running</code> would make the wake's claim return lost-race
+  and skip the parked stage — silent world corruption. So parked and genuinely-failed runs are
+  byte-identical in <code>pipeline_runs</code>; the <code>llm_resume_stamps</code> row (migration
+  038, keyed <code>(pipeline, entity_id)</code>) is the single discriminator, and every status
+  derivation reads it.
+</aside>
+
+<p>
+  The stamp's fields split by consumer. <code>next_resume_at</code> arms the wake and clears on
+  stage claim — the overdue predicate needs "armed and past due" to go false the moment the stage
+  starts. <code>resume_attempt</code> (the ladder rung), <code>park_consumed_ms</code> (the spent
+  budget), and <code>last_error_class</code> (the hold copy's key) all <em>survive</em> claims and
+  clear only on stage completion — clearing them on claim would reset the ladder to the 30-second
+  rung on every wake, hot-cycling a solo-world outage with unbounded spend. The ladder runs 30s → 2m
+  → 5m → 15m and holds at 15m; the budget is total parked wall-clock,
+  <code>park_consumed_ms ≥ 6h</code>, not a rung count.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>A wall-clock budget, decoupled from the sitewide state</strong> — a solo-world outage can
+  never trip the sitewide threshold (the distinctness rule), so its parks must self-fund; a rung
+  <em>count</em> would burn a solo world out in ~40 minutes, while 6 hours of parked wall-clock
+  rides out a realistic provider incident. The coupling runs the other way too: while the site is
+  known-degraded, waking attempts re-park <em>without</em> consuming budget — each processor reads
+  the health state before claiming (check, then claim, then attempt, pinned in that order), so a
+  world parked through a long sitewide outage still has its full ladder when the API returns.
+  Exhaustion lands on today's failed path — the retryable surface, never the terminal "start fresh"
+  view — and a manual retry after exhaustion starts a fresh episode (fresh 6-hour budget, rung 1):
+  mid-outage, the retry button must arm a new ride, not instantly re-exhaust.
+</aside>
+
+<h2 id="safety-nets">Safety nets</h2>
+
+<p>
+  Three nets close the gaps parking opens (and one it merely inherited). First, the stage claim in
+  <code>pipeline_runs</code> gained a distinct <code>in-flight</code> result for running-not-stuck
+  rows, and every processor loop now <em>stops</em> on it with a retryable throw instead of skipping
+  past the stage. That fixes a pre-existing defect the wake path would have amplified: BullMQ's
+  stall handling re-drives a dead worker's job once, the dead attempt's row sits
+  <code>running</code> under the stuck-reset threshold, and the old lost-race branch silently
+  completed worlds with missing stages.
+</p>
+
+<p>
+  Second, terminal broker failures. A parked run's wake that dies terminally (stall-count
+  exhaustion) leaves an entity in-progress forever with no job — the overdue predicate cannot see it
+  because the claim already disarmed the stamp. <code>prep-queue-events.ts</code> subscribes
+  QueueEvents on the three prep queues (the MYT-67 session-turn precedent, each on its own dedicated
+  blocking connection) and recovers identity from the broker event's jobId alone, parsed at fixed
+  UUID widths — the prep queues keep <code>removeOnFail: {count: 0}</code> (age-retention would
+  reintroduce the held-jobId dedup landmine), so the job object is already gone. The handler
+  cross-checks the resume stamp, drives the pipeline's existing terminal path, and clears the stamp
+  last.
+</p>
+
+<p>
+  Third, the overdue arm: a stamp whose <code>next_resume_at</code> passed more than five minutes
+  ago without a stage start derives as failed/retryable — a pure row predicate, no queue I/O. The
+  manual-retry routes, which <em>can</em> reach the queue, additionally check for a live job holding
+  the base id before re-adding (a held id makes the add a silent no-op), so a backlogged-but-alive
+  wake answers the in-progress shape instead of being offered a duplicate retry.
+</p>
+
+<h2 id="the-player-facing-surface">The player-facing surface</h2>
+
+<p>
+  <code>GET /api/llm-health</code> is a public route (mirroring <code>/health/ready</code> — it
+  serves a binary <code>{state, since}</code> with no tenant data, and the poll must not burn a JWT
+  verify per tab per minute) doing one Redis read through the tracker. The frame polls it every 60
+  seconds and renders the <a href="../frontend/app-shell.html">NoticeStrip</a> — a slim quiet prose
+  strip under the sticky bar, no icons, no dismiss — while degraded. The frontend hook treats
+  "degraded" as a positive assertion only: a failed poll reads as ok, because the strip relays the
+  backend's Redis verdict rather than detecting outages itself. The strip's copy stays true during a
+  partial-model outage (an Opus-only outage arms it while Sonnet answers every live turn), which is
+  why it says "unsteady," not "down."
+</p>
+
+<p>
+  Parked prep runs get their own hold copy on the surfaces that watch them — the worldgen generating
+  and reveal views, session-prep waits, and character-creation loading. The class is keyed off the
+  <em>snapshot/status derivation</em> (the persisted stamp), never only the live SSE event:
+  CloudFront buffers SSE, and the generating view invites leave-and-return, so the hold must
+  re-derive on every reconnect. While parked, the hold copy owns the wait narrative — the ETA
+  countdown and the "still working" stalled line are suppressed, because "Still working" and "the
+  making was interrupted" must never share a screen. The
+  <a href="../frontend/world-gen-experience.html">world-gen experience</a> page covers the view
+  mechanics.
+</p>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="check-arm-or-clear-the-outage-state-local-staging">Check, arm, or clear the outage state (local / staging)</h3>
+<ol>
+  <li>
+    <code>pnpm --filter @mythrun/backend exec tsx scripts/smoke/llm-health-smoke.ts status</code> —
+    prints the tracker's state and implicated models. The script loads config through
+    <code>loadEnv()</code>, so it writes under the REAL derived key prefix
+    (<code>${env}:${region}:</code>) — a hand-read <code>REDIS_KEY_PREFIX</code> writes keys the
+    server never sees.
+  </li>
+  <li>
+    <code>… llm-health-smoke.ts arm</code> — fires three connectivity reports across two call sites
+    through the production Lua arm path. The strip rises within one poll interval.
+  </li>
+  <li><code>… llm-health-smoke.ts clear</code> — DELs state, counter, window, and models.</li>
+</ol>
+
+<h3 id="manually-clear-a-stuck-degraded-state-production">Manually clear a stuck degraded state (production)</h3>
+<ol>
+  <li>
+    Production Redis is in-VPC: use the ECS run-task / exec path to reach it (see
+    <a href="../infra/smoke-testing.html">smoke testing</a> for the pattern).
+  </li>
+  <li>
+    <code>DEL</code> the four keys under the environment's prefix: <code>llm-health:state</code>,
+    <code>llm-health:probe-successes</code>, <code>llm-health:window</code>,
+    <code>llm-health:models</code>.
+  </li>
+  <li>
+    The strip clears on the next poll. Parked jobs keep their ladders; the next healthy probe cycle
+    promotes past-due stamps.
+  </li>
+</ol>
+
+<h3 id="pre-emptively-arm-during-a-known-incident">Pre-emptively arm during a known incident</h3>
+<ol>
+  <li>
+    <code>SET &lt;prefix&gt;llm-health:state '{"since":&lt;epoch-ms&gt;}'</code> and
+    <code>SADD &lt;prefix&gt;llm-health:models &lt;model-id…&gt;</code>.
+  </li>
+  <li>
+    This raises the strip and — because processors read the health state before claiming — stops
+    parked runs from consuming their ladders while the incident lasts.
+  </li>
+</ol>
+
+<h3 id="diagnose-a-degradation-from-cloudwatch">Diagnose a degradation from CloudWatch</h3>
+<ol>
+  <li>
+    Filter on <code>event: 'llm_health.degraded'</code> — the log line carries the implicated model
+    set and a window summary (call sites, job ids), so triage needs no Redis access.
+  </li>
+  <li>
+    <code>llm_health.probe_cycle_failed</code> lines show which models are still failing while
+    degraded; <code>llm_health.recovered</code> carries the outage duration.
+  </li>
+  <li>
+    Park activity logs as <code>world_gen.stage_parked</code> (and the session-prep /
+    character-creation equivalents) plus <code>job.parked</code> at the containment boundary, and
+    wake promotions as <code>llm_health.resume_promoted</code>.
+  </li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The <a href="./llm.html">LLM client</a> page documents the wrapper this feature instrumented — the
+  transport fetch rides under <code>models.ts</code>'s provider, and the attempt loop is a seam of
+  <code>ai.ts</code>'s <code>generateObject</code>. The <a href="./worker.html">worker</a> registers
+  the probe queue, the QueueEvents subscribers, and the health sink at boot. The three prep
+  pipelines — <a href="./world-gen.html">world gen</a>,
+  <a href="./session-prep.html">session prep</a>, and
+  <a href="./character-creation.html">character creation</a> — own their park sites and wake claims;
+  <a href="./character-integration.html">character integration</a> never parks but shares the
+  stop-on-in-flight claim discipline. <a href="./pipeline-status.html">Pipeline status</a>
+  explains how the stamp reaches phase derivations and SSE snapshots. On the frontend, the
+  <a href="../frontend/app-shell.html">app shell</a> owns the strip and the poll, and the
+  <a href="../frontend/world-gen-experience.html">world-gen experience</a> owns the parked hold
+  views.
+</p>
+
+<h2 id="appendix-constants-amp-keys">Appendix: constants &amp; keys</h2>
+
+<h3 id="transport-timeouts">Transport timeouts</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Dispatcher</th>
+      <th>connect</th>
+      <th>headers</th>
+      <th>body idle</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>streaming</td>
+      <td>10s</td>
+      <td>60s</td>
+      <td>120s</td>
+    </tr>
+    <tr>
+      <td>non-streaming</td>
+      <td>10s</td>
+      <td>300s</td>
+      <td>300s</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="redis-keys-prefix-llm-health-under-rediskeyprefix">Redis keys (prefix <code>llm-health:</code>, under <code>redisKeyPrefix</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Key</th>
+      <th>Type</th>
+      <th>Semantics</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>window</code></td>
+      <td>ZSET</td>
+      <td>Failure events, scored by Redis TIME; 30-min rolling prune + TTL.</td>
+    </tr>
+    <tr>
+      <td><code>state</code></td>
+      <td>string (JSON)</td>
+      <td>Present ⇔ degraded: <code>{"since": ms}</code>. TTL 30 min, probe-refreshed.</td>
+    </tr>
+    <tr>
+      <td><code>models</code></td>
+      <td>SET</td>
+      <td>Implicated model ids — the probe's target list.</td>
+    </tr>
+    <tr>
+      <td><code>probe-successes</code></td>
+      <td>counter</td>
+      <td>Consecutive clean cycles; at 3 the Lua clear fires.</td>
+    </tr>
+    <tr>
+      <td><code>promote-pending</code></td>
+      <td>flag</td>
+      <td>Fire-once recovery net: set before the promote scan, cleared after it completes.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="attempt-loop-amp-park-constants">Attempt loop &amp; park constants</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Constant</th>
+      <th>Value</th>
+      <th>Where</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Max loop attempts</td>
+      <td>3</td>
+      <td><code>ai.ts</code></td>
+    </tr>
+    <tr>
+      <td>Retry jitter</td>
+      <td>≤2s</td>
+      <td><code>ai.ts</code></td>
+    </tr>
+    <tr>
+      <td>Default expected healthy duration</td>
+      <td>60s</td>
+      <td><code>ai.ts</code> (slow stages override per call site)</td>
+    </tr>
+    <tr>
+      <td>Arm threshold / window</td>
+      <td>3 events / 10 min / ≥2 sites or jobs</td>
+      <td><code>llm-health.ts</code></td>
+    </tr>
+    <tr>
+      <td>Clear threshold</td>
+      <td>3 consecutive probe cycles</td>
+      <td><code>llm-health.ts</code></td>
+    </tr>
+    <tr>
+      <td>Probe cadence / wall clock</td>
+      <td>60s / 30s</td>
+      <td><code>llm-health-probe.ts</code></td>
+    </tr>
+    <tr>
+      <td>Park ladder</td>
+      <td>30s → 2m → 5m → 15m (hold)</td>
+      <td><code>repo/resume-stamps.ts</code></td>
+    </tr>
+    <tr>
+      <td>Park budget</td>
+      <td>6h parked wall-clock</td>
+      <td><code>repo/resume-stamps.ts</code></td>
+    </tr>
+    <tr>
+      <td>Overdue grace</td>
+      <td>5 min</td>
+      <td><code>sse/derive-phase.ts</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p>
+  <code>backend/src/llm/llm-fetch.ts</code>, <code>backend/src/llm/classify-llm-error.ts</code>,
+  <code>backend/src/llm/ai.ts</code> (the §1.3 attempt loop + §1.4 sink),
+  <code>backend/src/llm/llm-health.ts</code>, <code>backend/src/llm/llm-health-probe.ts</code>,
+  <code>backend/src/llm/prep/prep-queue-events.ts</code>,
+  <code>backend/src/repo/resume-stamps.ts</code> +
+  <code>backend/migrations/038_llm_resume_stamps.sql</code>,
+  <code>backend/src/routes/llm-health.ts</code>, and the design spec at
+  <code>docs/superpowers/specs/2026-07-30-llm-outage-resilience-design.md</code>.
+</p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#the-incident-that-shaped-it">The incident that shaped it</a></li><li style="padding-left:0"><a href="#failing-fast-two-transport-dispatchers">Failing fast: two transport dispatchers</a></li><li style="padding-left:0"><a href="#two-axes-one-walk-the-failure-taxonomy">Two axes, one walk: the failure taxonomy</a></li><li style="padding-left:0"><a href="#wrapper-owned-attempts">Wrapper-owned attempts</a></li><li style="padding-left:0"><a href="#the-sitewide-verdict-a-redis-state-machine">The sitewide verdict: a Redis state machine</a></li><li style="padding-left:0"><a href="#the-recovery-probe">The recovery probe</a></li><li style="padding-left:0"><a href="#parking-the-job-delays-itself">Parking: the job delays itself</a></li><li style="padding-left:0"><a href="#safety-nets">Safety nets</a></li><li style="padding-left:0"><a href="#the-player-facing-surface">The player-facing surface</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#check-arm-or-clear-the-outage-state-local-staging">Check, arm, or clear the outage state (local / staging)</a></li><li style="padding-left:12px"><a href="#manually-clear-a-stuck-degraded-state-production">Manually clear a stuck degraded state (production)</a></li><li style="padding-left:12px"><a href="#pre-emptively-arm-during-a-known-incident">Pre-emptively arm during a known incident</a></li><li style="padding-left:12px"><a href="#diagnose-a-degradation-from-cloudwatch">Diagnose a degradation from CloudWatch</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-constants-amp-keys">Appendix: constants &amp; keys</a></li><li style="padding-left:12px"><a href="#transport-timeouts">Transport timeouts</a></li><li style="padding-left:12px"><a href="#redis-keys-prefix-llm-health-under-rediskeyprefix">Redis keys (prefix llm-health:, under redisKeyPrefix)</a></li><li style="padding-left:12px"><a href="#attempt-loop-amp-park-constants">Attempt loop &amp; park constants</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

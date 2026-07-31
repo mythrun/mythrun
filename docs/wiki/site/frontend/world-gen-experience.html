@@ -864,6 +864,41 @@
   how a wait degrades lands everywhere at once.
 </aside>
 
+<h3 id="the-parked-hold">The parked hold</h3>
+
+<p>
+  One state overrides the whole wait vocabulary: a <strong>park</strong>. When the world-gen job
+  contains a connectivity or rate-limit failure and
+  <a href="../runtime/llm-outage-resilience.html">parks itself to auto-resume</a>,
+  <code>useWorldGenStream</code> surfaces <code>lastErrorClass</code> (+
+  <code>resumeAttempt</code>), and while it is set the hold copy —
+  <code>worldgen.degradedHold</code>, "The making was interrupted. Your world is safe. It keeps
+  trying on its own." — owns the wait narrative on both acts. The countdown suppresses, and the
+  <code>shared.wait.stalled</code> line never shows: "Still working" and "the making was
+  interrupted" must never share a screen. When the park clears, the ETA damper and monotonic-clamp
+  refs reset and re-adopt a fresh estimate — a resumed generation may honestly need
+  <em>more</em> time than the pre-park floor, and pinning the stale minimum would show the stalled
+  line for the healthy remainder.
+</p>
+
+<p>
+  The park state arrives two ways, deliberately asymmetric. The <em>authoritative</em> delivery is
+  the (re)connect snapshot — <code>derivePhase</code> surfaces the persisted stamp's class and
+  rung, and the hook <em>sets</em> its park state from every snapshot frame, including back to
+  null when the payload omits the stamp — because CloudFront buffers SSE and the generating view
+  invites leave-and-return, so the class must re-derive on every reconnect. The live events are
+  only an in-window optimization: a park-eligible <code>stage-failed.failureClass</code> arms the
+  hold immediately, and any <code>stage-completed</code> clears it (a completed stage ends the
+  park episode). The reveal surface is a touchpoint too — six of twelve stages run
+  <em>behind</em> the reveal boundary, so a tail-stage park swaps the quiet
+  <code>worldReveal.settling</code> line for the stamp-keyed
+  <code>worldReveal.degradedSettling</code> variant rather than leaving an indefinite unexplained
+  "the table is still being set". The sibling hold keys for the other two prep waits —
+  <code>characterCreate.degradedHold</code>, <code>sessionPrep.degradedHold</code> — landed with
+  the same copy discipline, but their consuming surfaces are not wired yet; today the world-gen
+  views are the only park-aware waits.
+</p>
+
 <h3 id="reduced-motion">Reduced motion</h3>
 
 <p>
@@ -1211,7 +1246,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-phase-aware-route">The phase-aware route</a></li><li style="padding-left:12px"><a href="#act-one-the-loading-screen">Act one — the loading screen</a></li><li style="padding-left:12px"><a href="#act-two-the-fog-and-the-graph">Act two — the fog and the graph</a></li><li style="padding-left:12px"><a href="#the-reveal-the-graph-beside-the-introduction">The reveal — the graph beside the introduction</a></li><li style="padding-left:12px"><a href="#the-reveal-moment">The reveal moment</a></li><li style="padding-left:12px"><a href="#waiting-feedback">Waiting feedback</a></li><li style="padding-left:12px"><a href="#reduced-motion">Reduced motion</a></li><li style="padding-left:12px"><a href="#the-accessible-model">The accessible model</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#watch-a-world-generate-locally">Watch a world generate locally</a></li><li style="padding-left:12px"><a href="#re-tune-the-graph-spread">Re-tune the graph spread</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-modules">Appendix: the modules</a></li><li style="padding-left:12px"><a href="#the-brain-client-core-worldgen">The brain — client-core/worldgen</a></li><li style="padding-left:12px"><a href="#the-render-mythrun-ui">The render — @mythrun/ui</a></li><li style="padding-left:12px"><a href="#the-routes-mythrun-web">The routes — @mythrun/web</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-phase-aware-route">The phase-aware route</a></li><li style="padding-left:12px"><a href="#act-one-the-loading-screen">Act one — the loading screen</a></li><li style="padding-left:12px"><a href="#act-two-the-fog-and-the-graph">Act two — the fog and the graph</a></li><li style="padding-left:12px"><a href="#the-reveal-the-graph-beside-the-introduction">The reveal — the graph beside the introduction</a></li><li style="padding-left:12px"><a href="#the-reveal-moment">The reveal moment</a></li><li style="padding-left:12px"><a href="#waiting-feedback">Waiting feedback</a></li><li style="padding-left:12px"><a href="#the-parked-hold">The parked hold</a></li><li style="padding-left:12px"><a href="#reduced-motion">Reduced motion</a></li><li style="padding-left:12px"><a href="#the-accessible-model">The accessible model</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#watch-a-world-generate-locally">Watch a world generate locally</a></li><li style="padding-left:12px"><a href="#re-tune-the-graph-spread">Re-tune the graph spread</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-the-modules">Appendix: the modules</a></li><li style="padding-left:12px"><a href="#the-brain-client-core-worldgen">The brain — client-core/worldgen</a></li><li style="padding-left:12px"><a href="#the-render-mythrun-ui">The render — @mythrun/ui</a></li><li style="padding-left:12px"><a href="#the-routes-mythrun-web">The routes — @mythrun/web</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

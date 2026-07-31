@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html" class="active">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html" class="active">LLM client</a></li><li><a href="../runtime/llm-outage-resilience.html">LLM outage resilience</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › LLM client</div>
         <article>
@@ -32,7 +32,7 @@
   The thin shell every Mythrun LLM call sits on top of. Three tier-named model constants
   (<code>HAIKU</code>, <code>SONNET</code>, <code>OPUS</code>), a logging + error-normalization
   middleware that handles both <code>generateText</code> and <code>streamObject</code> /
-  <code>streamText</code> call shapes, a typed error taxonomy (eight classes including the terminal
+  <code>streamText</code> call shapes, a typed error taxonomy (nine classes including the terminal
   <code>LlmContentFilteredError</code>), and a file-based prompt loader. The
   <code>streamObject</code> / <code>generateObject</code> wrappers also accept an optional
   <code>maxOutputTokens</code> ceiling so a long-prose call can lift the SDK default before it
@@ -55,185 +55,206 @@
   <code>redactRawText</code>), and the Haiku <a href="./session-turn.html">turn-audit gate</a> that
   classifies each Fast-Thinker render for behavioral violations (authored PC speech, an inline
   correction, a faked session end) before it reaches the table. Everything heavier (provider
-  mechanics, retries, structured-output validation) is delegated to Vercel AI SDK v6.
+  mechanics, structured-output validation) is delegated to Vercel AI SDK v6 — with one deliberate
+  exception: retries for budget-shaped prep calls are now wrapper-owned, part of the
+  <a href="./llm-outage-resilience.html">LLM outage resilience</a> layer that also gives every
+  Anthropic request a per-mode transport timeout and classifies every failure at this boundary.
 </p>
 
 <figure class="wiki-diagram">
   
-<svg width="1752pt" height="403pt"
- viewBox="14.00 14.00 1738.00 388.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 384.4)">
+<svg width="1576pt" height="430pt"
+ viewBox="14.00 14.00 1562.00 415.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 411.4)">
 <title>llm</title>
-<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-370 1719.42,-370 1719.42,4 -4,4"/>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-397 1543.12,-397 1543.12,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_owned</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="359.72,-108 359.72,-358 1490.11,-358 1490.11,-108 359.72,-108"/>
-<text xml:space="preserve" text-anchor="middle" x="924.92" y="-344.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend/src/llm/ &#160;(Mythrun&#45;owned)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="400.73,-109 400.73,-385 1531.12,-385 1531.12,-109 400.73,-109"/>
+<text xml:space="preserve" text-anchor="middle" x="965.92" y="-371.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">backend/src/llm/ &#160;(Mythrun&#45;owned)</text>
 </g>
 <g id="clust2" class="cluster">
 <title>cluster_sdk</title>
-<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="860.47,-8 860.47,-86 1483.51,-86 1483.51,-8 860.47,-8"/>
-<text xml:space="preserve" text-anchor="middle" x="1171.99" y="-72.1" font-family="Courier,monospace" font-size="11.00">Vercel AI SDK v6 &#160;(vendored)</text>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="1,5" points="8,-8 8,-86 600.74,-86 600.74,-8 8,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="304.37" y="-72.1" font-family="Courier,monospace" font-size="11.00">Vercel AI SDK v6 &#160;(vendored)</text>
 </g>
 <!-- caller -->
 <g id="node1" class="node">
 <title>caller</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="163.7,-250.44 0,-250.44 0,-193.56 163.7,-193.56 163.7,-250.44"/>
-<text xml:space="preserve" text-anchor="middle" x="81.85" y="-231.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">caller</text>
-<text xml:space="preserve" text-anchor="middle" x="81.85" y="-218.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(routes/users.ts,</text>
-<text xml:space="preserve" text-anchor="middle" x="81.85" y="-205.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">future FT/ST/Scribe)</text>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="188.2,-363.44 24.5,-363.44 24.5,-306.56 188.2,-306.56 188.2,-363.44"/>
+<text xml:space="preserve" text-anchor="middle" x="106.35" y="-344.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">caller</text>
+<text xml:space="preserve" text-anchor="middle" x="106.35" y="-331.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">(routes/users.ts,</text>
+<text xml:space="preserve" text-anchor="middle" x="106.35" y="-318.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">future FT/ST/Scribe)</text>
 </g>
 <!-- profanity -->
 <g id="node2" class="node">
 <title>profanity</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="576.23,-250.44 359.72,-250.44 359.72,-193.56 576.23,-193.56 576.23,-250.44"/>
-<text xml:space="preserve" text-anchor="middle" x="467.98" y="-231.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">profanity.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="467.98" y="-218.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">classifyProfanity(text)</text>
-<text xml:space="preserve" text-anchor="middle" x="467.98" y="-205.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">generateText + Output.object</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="617.24,-363.44 400.73,-363.44 400.73,-306.56 617.24,-306.56 617.24,-363.44"/>
+<text xml:space="preserve" text-anchor="middle" x="508.98" y="-344.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">profanity.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="508.98" y="-331.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">classifyProfanity(text)</text>
+<text xml:space="preserve" text-anchor="middle" x="508.98" y="-318.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">generateText + Output.object</text>
 </g>
 <!-- caller&#45;&gt;profanity -->
 <g id="edge1" class="edge">
 <title>caller&#45;&gt;profanity</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M164.31,-222C218.37,-222 290.14,-222 350.23,-222"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="350.2,-224.45 357.2,-222 350.2,-219.55 350.2,-224.45"/>
-<text xml:space="preserve" text-anchor="middle" x="261.71" y="-225" font-family="Courier,monospace" font-size="10.00">classifyProfanity(text)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M188.91,-335C247.26,-335 326.66,-335 391.65,-335"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="391.5,-337.45 398.5,-335 391.5,-332.55 391.5,-337.45"/>
+<text xml:space="preserve" text-anchor="middle" x="302.72" y="-338" font-family="Courier,monospace" font-size="10.00">classifyProfanity(text)</text>
 </g>
 <!-- schema -->
 <g id="node3" class="node">
 <title>schema</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1043.98,-336.44 873.67,-336.44 873.67,-279.56 1043.98,-279.56 1043.98,-336.44"/>
-<text xml:space="preserve" text-anchor="middle" x="958.82" y="-317.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">schemas/profanity.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="958.82" y="-304.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ProfanitySchema (Zod)</text>
-<text xml:space="preserve" text-anchor="middle" x="958.82" y="-291.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">{ profane, reason? }</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1084.98,-363.44 914.68,-363.44 914.68,-306.56 1084.98,-306.56 1084.98,-363.44"/>
+<text xml:space="preserve" text-anchor="middle" x="999.83" y="-344.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">schemas/profanity.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="999.83" y="-331.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">ProfanitySchema (Zod)</text>
+<text xml:space="preserve" text-anchor="middle" x="999.83" y="-318.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">{ profane, reason? }</text>
 </g>
 <!-- profanity&#45;&gt;schema -->
 <g id="edge2" class="edge">
 <title>profanity&#45;&gt;schema</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M576.86,-240.98C663.04,-256.14 782.54,-277.16 864.6,-291.6"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="863.82,-293.95 871.13,-292.75 864.67,-289.12 863.82,-293.95"/>
-<text xml:space="preserve" text-anchor="middle" x="695.25" y="-278.23" font-family="Courier,monospace" font-size="10.00">ProfanitySchema</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M617.87,-335C704.04,-335 823.55,-335 905.61,-335"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="905.11,-337.45 912.11,-335 905.11,-332.55 905.11,-337.45"/>
+<text xml:space="preserve" text-anchor="middle" x="736.25" y="-338" font-family="Courier,monospace" font-size="10.00">ProfanitySchema</text>
 </g>
 <!-- prompts -->
 <g id="node4" class="node">
 <title>prompts</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1103.39,-250.44 814.26,-250.44 814.26,-193.56 1103.39,-193.56 1103.39,-250.44"/>
-<text xml:space="preserve" text-anchor="middle" x="958.82" y="-231.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">prompts.ts + prompts/auth/profanity.txt</text>
-<text xml:space="preserve" text-anchor="middle" x="958.82" y="-218.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">loadPrompt(area, name, vars)</text>
-<text xml:space="preserve" text-anchor="middle" x="958.82" y="-205.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cached at first read</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1144.39,-277.44 855.27,-277.44 855.27,-220.56 1144.39,-220.56 1144.39,-277.44"/>
+<text xml:space="preserve" text-anchor="middle" x="999.83" y="-258.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">prompts.ts + prompts/auth/profanity.txt</text>
+<text xml:space="preserve" text-anchor="middle" x="999.83" y="-245.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">loadPrompt(area, name, vars)</text>
+<text xml:space="preserve" text-anchor="middle" x="999.83" y="-232.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cached at first read</text>
 </g>
 <!-- profanity&#45;&gt;prompts -->
 <g id="edge3" class="edge">
 <title>profanity&#45;&gt;prompts</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M576.86,-222C643.87,-222 731.04,-222 805.08,-222"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="804.76,-224.45 811.76,-222 804.76,-219.55 804.76,-224.45"/>
-<text xml:space="preserve" text-anchor="middle" x="695.25" y="-225" font-family="Courier,monospace" font-size="10.00">loadPrompt(&#39;auth&#39;,&#39;profanity&#39;)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M617.87,-316.02C684.88,-304.23 772.04,-288.9 846.08,-275.87"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="846.32,-278.32 852.79,-274.69 845.47,-273.49 846.32,-278.32"/>
+<text xml:space="preserve" text-anchor="middle" x="736.25" y="-312.59" font-family="Courier,monospace" font-size="10.00">loadPrompt(&#39;auth&#39;,&#39;profanity&#39;)</text>
 </g>
 <!-- sdk_text -->
-<g id="node9" class="node">
+<g id="node10" class="node">
 <title>sdk_text</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1057.18,-64.44 860.47,-64.44 860.47,-7.56 1057.18,-7.56 1057.18,-64.44"/>
-<text xml:space="preserve" text-anchor="middle" x="958.82" y="-45.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">generateText</text>
-<text xml:space="preserve" text-anchor="middle" x="958.82" y="-32.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ Output.object({schema})</text>
-<text xml:space="preserve" text-anchor="middle" x="958.82" y="-19.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">retries, validation</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="204.71,-64.44 8,-64.44 8,-7.56 204.71,-7.56 204.71,-64.44"/>
+<text xml:space="preserve" text-anchor="middle" x="106.35" y="-45.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">generateText</text>
+<text xml:space="preserve" text-anchor="middle" x="106.35" y="-32.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">+ Output.object({schema})</text>
+<text xml:space="preserve" text-anchor="middle" x="106.35" y="-19.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">retries, validation</text>
 </g>
 <!-- profanity&#45;&gt;sdk_text -->
 <g id="edge4" class="edge">
 <title>profanity&#45;&gt;sdk_text</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M559.47,-192.94C565.59,-188.87 571.27,-184.25 576.23,-179 603.95,-149.69 574.46,-119.08 605.23,-93 641.61,-62.18 761.53,-47.82 851.48,-41.26"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="851.47,-43.72 858.28,-40.78 851.13,-38.83 851.47,-43.72"/>
-<text xml:space="preserve" text-anchor="middle" x="695.25" y="-120" font-family="Courier,monospace" font-size="10.00">model: HAIKU</text>
-<text xml:space="preserve" text-anchor="middle" x="695.25" y="-108" font-family="Courier,monospace" font-size="10.00">output: Output.object</text>
-<text xml:space="preserve" text-anchor="middle" x="695.25" y="-96" font-family="Courier,monospace" font-size="10.00">system + prompt</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M425.14,-305.89C367.14,-282.67 290.23,-245.93 233.71,-197 191.07,-160.09 152.74,-107.07 129.76,-72.09"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="131.95,-70.97 126.08,-66.44 127.84,-73.64 131.95,-70.97"/>
+<text xml:space="preserve" text-anchor="middle" x="302.72" y="-307.78" font-family="Courier,monospace" font-size="10.00">model: HAIKU</text>
+<text xml:space="preserve" text-anchor="middle" x="302.72" y="-295.78" font-family="Courier,monospace" font-size="10.00">output: Output.object</text>
+<text xml:space="preserve" text-anchor="middle" x="302.72" y="-283.78" font-family="Courier,monospace" font-size="10.00">system + prompt</text>
 </g>
 <!-- models -->
 <g id="node5" class="node">
 <title>models</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="556.43,-164.44 379.53,-164.44 379.53,-107.56 556.43,-107.56 556.43,-164.44"/>
-<text xml:space="preserve" text-anchor="middle" x="467.98" y="-145.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">models.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="467.98" y="-132.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">HAIKU / SONNET / OPUS</text>
-<text xml:space="preserve" text-anchor="middle" x="467.98" y="-119.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">wrapLanguageModel(...)</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="610.64,-278.04 407.33,-278.04 407.33,-207.96 610.64,-207.96 610.64,-278.04"/>
+<text xml:space="preserve" text-anchor="middle" x="508.98" y="-259.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">models.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="508.98" y="-246.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">HAIKU / SONNET / OPUS</text>
+<text xml:space="preserve" text-anchor="middle" x="508.98" y="-233.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">wrapLanguageModel(...)</text>
+<text xml:space="preserve" text-anchor="middle" x="508.98" y="-219.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">createAnthropic({ fetch })</text>
 </g>
 <!-- middleware -->
 <g id="node6" class="node">
 <title>middleware</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1057.18,-164.44 860.47,-164.44 860.47,-107.56 1057.18,-107.56 1057.18,-164.44"/>
-<text xml:space="preserve" text-anchor="middle" x="958.82" y="-145.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">middleware.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="958.82" y="-132.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">logAndNormalizeMiddleware</text>
-<text xml:space="preserve" text-anchor="middle" x="958.82" y="-119.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">wraps doGenerate</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1098.18,-191.44 901.48,-191.44 901.48,-134.56 1098.18,-134.56 1098.18,-191.44"/>
+<text xml:space="preserve" text-anchor="middle" x="999.83" y="-172.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">middleware.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="999.83" y="-159.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">logAndNormalizeMiddleware</text>
+<text xml:space="preserve" text-anchor="middle" x="999.83" y="-146.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">wraps doGenerate</text>
 </g>
 <!-- models&#45;&gt;middleware -->
 <g id="edge6" class="edge">
 <title>models&#45;&gt;middleware</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M556.94,-136C639.54,-136 763.27,-136 851.4,-136"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="851.27,-138.45 858.27,-136 851.27,-133.55 851.27,-138.45"/>
-<text xml:space="preserve" text-anchor="middle" x="695.25" y="-139" font-family="Courier,monospace" font-size="10.00">wraps doGenerate</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M611.27,-226.42C693.47,-212.97 809,-194.07 892.52,-180.4"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="892.7,-182.85 899.21,-179.3 891.91,-178.02 892.7,-182.85"/>
+<text xml:space="preserve" text-anchor="middle" x="736.25" y="-222.36" font-family="Courier,monospace" font-size="10.00">wraps doGenerate</text>
 </g>
 <!-- logger -->
 <g id="node7" class="node">
 <title>logger</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1490.11,-154.84 1293.41,-154.84 1293.41,-111.16 1490.11,-111.16 1490.11,-154.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1391.76" y="-136.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">logger.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="1391.76" y="-123.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pino { component: &#39;llm&#39; }</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1531.12,-166.84 1334.41,-166.84 1334.41,-123.16 1531.12,-123.16 1531.12,-166.84"/>
+<text xml:space="preserve" text-anchor="middle" x="1432.77" y="-148.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">logger.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1432.77" y="-135.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pino { component: &#39;llm&#39; }</text>
 </g>
 <!-- middleware&#45;&gt;logger -->
 <g id="edge7" class="edge">
 <title>middleware&#45;&gt;logger</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1057.88,-135.32C1125.29,-134.85 1214.76,-134.23 1283.97,-133.74"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1283.94,-136.19 1290.92,-133.7 1283.9,-131.29 1283.94,-136.19"/>
-<text xml:space="preserve" text-anchor="middle" x="1198.4" y="-149.77" font-family="Courier,monospace" font-size="10.00">event: &#39;llm.call&#39; /</text>
-<text xml:space="preserve" text-anchor="middle" x="1198.4" y="-137.77" font-family="Courier,monospace" font-size="10.00">&#39;llm.error&#39;</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1098.92,-157.59C1123.25,-156.33 1149.26,-155.05 1173.39,-154 1223.31,-151.83 1278.67,-149.84 1325.3,-148.29"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1325.17,-150.75 1332.09,-148.07 1325.01,-145.85 1325.17,-150.75"/>
+<text xml:space="preserve" text-anchor="middle" x="1239.4" y="-169" font-family="Courier,monospace" font-size="10.00">event: &#39;llm.call&#39; /</text>
+<text xml:space="preserve" text-anchor="middle" x="1239.4" y="-157" font-family="Courier,monospace" font-size="10.00">&#39;llm.error&#39;</text>
 </g>
 <!-- errors -->
 <g id="node8" class="node">
 <title>errors</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1463.71,-240.44 1319.81,-240.44 1319.81,-183.56 1463.71,-183.56 1463.71,-240.44"/>
-<text xml:space="preserve" text-anchor="middle" x="1391.76" y="-221.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">errors.ts</text>
-<text xml:space="preserve" text-anchor="middle" x="1391.76" y="-208.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">7 typed classes +</text>
-<text xml:space="preserve" text-anchor="middle" x="1391.76" y="-195.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mapToMythrunError</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1504.71,-252.44 1360.82,-252.44 1360.82,-195.56 1504.71,-195.56 1504.71,-252.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1432.77" y="-233.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">errors.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1432.77" y="-220.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">9 typed classes +</text>
+<text xml:space="preserve" text-anchor="middle" x="1432.77" y="-207.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">mapToMythrunError</text>
 </g>
 <!-- middleware&#45;&gt;errors -->
 <g id="edge8" class="edge">
 <title>middleware&#45;&gt;errors</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1057.88,-153.29C1134.37,-166.78 1239.29,-185.29 1310.75,-197.89"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1310.19,-200.28 1317.51,-199.08 1311.04,-195.45 1310.19,-200.28"/>
-<text xml:space="preserve" text-anchor="middle" x="1198.4" y="-192.54" font-family="Courier,monospace" font-size="10.00">mapToMythrunError(err)</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M1098.89,-176.88C1175.38,-187.71 1280.29,-202.56 1351.76,-212.67"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1351.23,-215.07 1358.51,-213.63 1351.92,-210.22 1351.23,-215.07"/>
+<text xml:space="preserve" text-anchor="middle" x="1239.4" y="-208.98" font-family="Courier,monospace" font-size="10.00">mapToMythrunError(err)</text>
+</g>
+<!-- llmfetch -->
+<g id="node9" class="node">
+<title>llmfetch</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="613.94,-179.04 404.03,-179.04 404.03,-108.96 613.94,-108.96 613.94,-179.04"/>
+<text xml:space="preserve" text-anchor="middle" x="508.98" y="-160.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">llm&#45;fetch.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="508.98" y="-147.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">two undici dispatchers</text>
+<text xml:space="preserve" text-anchor="middle" x="508.98" y="-134.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">(streaming / non&#45;streaming)</text>
+<text xml:space="preserve" text-anchor="middle" x="508.98" y="-120.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">see: LLM outage resilience</text>
+</g>
+<!-- anthropic -->
+<g id="node12" class="node">
+<title>anthropic</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1068.48,-106.04 931.18,-106.04 931.18,-35.96 1068.48,-35.96 1068.48,-106.04"/>
+<text xml:space="preserve" text-anchor="middle" x="999.83" y="-87.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Anthropic API</text>
+<text xml:space="preserve" text-anchor="middle" x="999.83" y="-74.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">claude&#45;haiku&#45;4&#45;5</text>
+<text xml:space="preserve" text-anchor="middle" x="999.83" y="-61.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">claude&#45;sonnet&#45;5</text>
+<text xml:space="preserve" text-anchor="middle" x="999.83" y="-47.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">claude&#45;opus&#45;5</text>
+</g>
+<!-- llmfetch&#45;&gt;anthropic -->
+<g id="edge11" class="edge">
+<title>llmfetch&#45;&gt;anthropic</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M614.55,-128.38C706.79,-114.61 839.08,-94.86 921.91,-82.49"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="922.16,-84.93 928.72,-81.47 921.43,-80.08 922.16,-84.93"/>
+<text xml:space="preserve" text-anchor="middle" x="736.25" y="-137.43" font-family="Courier,monospace" font-size="10.00">HTTPS,</text>
+<text xml:space="preserve" text-anchor="middle" x="736.25" y="-125.43" font-family="Courier,monospace" font-size="10.00">per&#45;mode timeouts</text>
 </g>
 <!-- sdk_text&#45;&gt;models -->
 <g id="edge5" class="edge">
 <title>sdk_text&#45;&gt;models</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M859.88,-14.7C787.44,-3.32 687.51,3.07 605.23,-26 563.3,-40.81 524.81,-74.61 499.51,-100.86"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="497.96,-98.93 494.93,-105.7 501.52,-102.3 497.96,-98.93"/>
-<text xml:space="preserve" text-anchor="middle" x="695.25" y="-29" font-family="Courier,monospace" font-size="10.00">model resolution</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M159.02,-65.15C217.2,-97.67 314.86,-151.32 400.73,-194 407.12,-197.18 413.76,-200.4 420.46,-203.59"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="419.33,-205.76 426.7,-206.54 421.42,-201.33 419.33,-205.76"/>
+<text xml:space="preserve" text-anchor="middle" x="302.72" y="-180.74" font-family="Courier,monospace" font-size="10.00">model resolution</text>
 </g>
 <!-- sdk_anth -->
-<g id="node10" class="node">
+<g id="node11" class="node">
 <title>sdk_anth</title>
-<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1483.51,-58.84 1300.01,-58.84 1300.01,-15.16 1483.51,-15.16 1483.51,-58.84"/>
-<text xml:space="preserve" text-anchor="middle" x="1391.76" y="-40.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">@ai&#45;sdk/anthropic</text>
-<text xml:space="preserve" text-anchor="middle" x="1391.76" y="-27.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reads ANTHROPIC_API_KEY</text>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="600.74,-51.84 417.23,-51.84 417.23,-8.16 600.74,-8.16 600.74,-51.84"/>
+<text xml:space="preserve" text-anchor="middle" x="508.98" y="-33.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">@ai&#45;sdk/anthropic</text>
+<text xml:space="preserve" text-anchor="middle" x="508.98" y="-20.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">reads ANTHROPIC_API_KEY</text>
 </g>
 <!-- sdk_text&#45;&gt;sdk_anth -->
 <g id="edge9" class="edge">
 <title>sdk_text&#45;&gt;sdk_anth</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1057.88,-36.23C1127.57,-36.39 1220.85,-36.61 1290.94,-36.77"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1290.55,-39.22 1297.55,-36.78 1290.56,-34.32 1290.55,-39.22"/>
-<text xml:space="preserve" text-anchor="middle" x="1198.4" y="-39.7" font-family="Courier,monospace" font-size="10.00">provider call</text>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M205.36,-34.53C266.87,-33.61 345.96,-32.43 407.87,-31.5"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="407.7,-33.95 414.67,-31.4 407.63,-29.05 407.7,-33.95"/>
+<text xml:space="preserve" text-anchor="middle" x="302.72" y="-37.06" font-family="Courier,monospace" font-size="10.00">provider call</text>
 </g>
-<!-- anthropic -->
-<g id="node11" class="node">
-<title>anthropic</title>
-<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1715.42,-72.04 1578.12,-72.04 1578.12,-1.96 1715.42,-1.96 1715.42,-72.04"/>
-<text xml:space="preserve" text-anchor="middle" x="1646.77" y="-53.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">Anthropic API</text>
-<text xml:space="preserve" text-anchor="middle" x="1646.77" y="-40.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">claude&#45;haiku&#45;4&#45;5</text>
-<text xml:space="preserve" text-anchor="middle" x="1646.77" y="-27.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">claude&#45;sonnet&#45;5</text>
-<text xml:space="preserve" text-anchor="middle" x="1646.77" y="-13.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">claude&#45;opus&#45;5</text>
-</g>
-<!-- sdk_anth&#45;&gt;anthropic -->
+<!-- sdk_anth&#45;&gt;llmfetch -->
 <g id="edge10" class="edge">
-<title>sdk_anth&#45;&gt;anthropic</title>
-<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1484.1,-37C1511.94,-37 1542.26,-37 1569.03,-37"/>
-<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1568.78,-39.45 1575.78,-37 1568.78,-34.55 1568.78,-39.45"/>
-<text xml:space="preserve" text-anchor="middle" x="1534.12" y="-40" font-family="Courier,monospace" font-size="10.00">HTTPS</text>
+<title>sdk_anth&#45;&gt;llmfetch</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M508.98,-52.52C508.98,-65.99 508.98,-83.57 508.98,-99.72"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="506.53,-99.69 508.98,-106.69 511.43,-99.69 506.53,-99.69"/>
+<text xml:space="preserve" text-anchor="middle" x="499.98" y="-77.4" font-family="Courier,monospace" font-size="10.00">custom fetch</text>
 </g>
 </g>
 </svg>
@@ -282,12 +303,16 @@
 </aside>
 
 <p>
-  Five files of Mythrun-owned code sit under <code>backend/src/llm/</code>:
+  The core Mythrun-owned files sit under <code>backend/src/llm/</code>:
   <code>models.ts</code> defines the three tier constants, <code>middleware.ts</code> wraps each
   with logging + error normalization, <code>errors.ts</code> defines the typed error taxonomy and
-  the Vercel-to-Mythrun mapper, <code>prompts.ts</code> is the file-based template loader, and
-  <code>profanity.ts</code> is the first call site. Two more directories hold the data shapes:
-  <code>schemas/</code> for Zod schemas describing structured-output responses, and
+  the Vercel-to-Mythrun mapper, <code>prompts.ts</code> is the file-based template loader,
+  <code>ai.ts</code> is the canonical wrapper for schema-validated calls (repair chain, diagnostics,
+  and the outage-layer attempt loop), and <code>profanity.ts</code> is the original call site. The
+  outage-resilience siblings — <code>llm-fetch.ts</code>, <code>classify-llm-error.ts</code>,
+  <code>llm-health.ts</code>, <code>llm-health-probe.ts</code> — have
+  <a href="./llm-outage-resilience.html">their own page</a>. Two more directories hold the data
+  shapes: <code>schemas/</code> for Zod schemas describing structured-output responses, and
   <code>prompts/</code> for the <code>.txt</code> system-prompt templates the loader reads.
 </p>
 
@@ -295,8 +320,12 @@
 
 <p>
   <code>models.ts</code> exports three constants — <code>HAIKU</code>, <code>SONNET</code>,
-  <code>OPUS</code> — each constructed from <code>anthropic(modelId)</code> wrapped by
-  <code>wrapLanguageModel</code> with the logging middleware. The IDs are pinned in this file and
+  <code>OPUS</code> — each constructed from a shared
+  <code>createAnthropic({ fetch })</code> provider and wrapped by
+  <code>wrapLanguageModel</code> with the logging middleware. The custom fetch is the
+  <a href="./llm-outage-resilience.html">outage-resilience transport</a>: every Anthropic request
+  routes through per-mode undici dispatchers so a hung connection fails with a classifiable
+  <code>UND_ERR_*</code> code instead of hanging indefinitely. The IDs are pinned in this file and
   this file alone: <code>claude-haiku-4-5-20251001</code>, <code>claude-sonnet-5</code>,
   <code>claude-opus-5</code>. Every other call site in the codebase imports a tier constant by name;
   no file outside <code>models.ts</code> mentions a model ID string.
@@ -519,7 +548,9 @@
   throw on its own. The <a href="./fast-thinker.html">consumer</a> owns converting both to thrown
   Mythrun errors, so a truncated turn never ends "normally." The usage promises are pre-handled
   (no-op catches) so an FT that throws out of its consume loop never leaves an unhandled rejection
-  to kill the worker.
+  to kill the worker. Because the wrapper never throws, it also carries an error/abort-part observer
+  for the <a href="./llm-outage-resilience.html">outage detector</a>: each in-band error part is
+  classified and reported before it yields through to the consumer.
 </aside>
 
 <h2 id="concurrency-and-rate-limits">Concurrency and rate-limit ceilings</h2>
@@ -638,9 +669,11 @@
 <h2 id="the-error-taxonomy">The error taxonomy</h2>
 
 <p>
-  <code>errors.ts</code> defines eight typed classes and a single mapper:
+  <code>errors.ts</code> defines nine typed classes and a single mapper:
   <code>LlmRateLimitedError</code> (429), <code>LlmOverloadedError</code> (529 — Anthropic-specific
-  upstream-busy), <code>LlmAuthError</code> (401 / 403), <code>LlmContextTooLongError</code> (400 +
+  upstream-busy), <code>LlmUpstreamError</code> (a provider-side 500-class failure surfaced as an
+  in-band <code>api_error</code> event on an open stream — transient, same retry posture as its 529
+  sibling), <code>LlmAuthError</code> (401 / 403), <code>LlmContextTooLongError</code> (400 +
   context-window message match), <code>LlmInvalidRequestError</code> (other 4xx),
   <code>LlmTimeoutError</code> (<code>AbortError</code>),
   <code>LlmStructuredOutputError</code> (<code>AI_NoObjectGeneratedError</code> — the SDK exhausted
@@ -659,7 +692,13 @@
   <code>wrapGenerate</code> also detects <code>finishReason.unified === 'content-filter'</code> on
   otherwise-successful calls and raises <code>LlmContentFilteredError</code> from there — the call
   doesn't reject from the SDK, but the response is unusable, so the middleware shapes it into the
-  taxonomy at call-frame edge.
+  taxonomy at call-frame edge. The stream side carries one more deliberate mapping: mid-stream
+  Anthropic error <em>events</em> on an open stream arrive as raw JSON payloads, not Error
+  instances, and the in-stream arm maps <code>overloaded_error</code> →
+  <code>LlmOverloadedError</code> and <code>api_error</code> → <code>LlmUpstreamError</code> with
+  the raw payload preserved as <code>cause</code> — without it the generic fallback mints
+  <code>Error("[object Object]")</code> and a partial overload on the streaming path dies
+  unclassified by the <a href="./llm-outage-resilience.html">outage taxonomy</a>.
 </p>
 
 <p>
@@ -794,8 +833,9 @@
   validated result directly via <code>await result.object</code> — the array-keyed
   <code>runStreamingStage</code> would emit nothing here. The call sets
   <code>maxRetries: 0</code> at the SDK layer on purpose: the <code>haiku-then-sonnet</code> repair
-  chain owns schema-validation recovery and the BullMQ stage retry (once it's wired) owns transport
-  recovery, so a third hidden SDK retry layer would only multiply cost. The call threads
+  chain owns schema-validation recovery and the stage's
+  <a href="./llm-outage-resilience.html">parking ladder</a> owns transport recovery, so a third
+  hidden SDK retry layer would only multiply cost. The call threads
   <code>providerOptions.mythrun.stage = 'session_prep'</code> for log attribution — one of the stage
   labels the wrapper now recognizes alongside the world-gen stages.
 </aside>
@@ -1014,7 +1054,9 @@
   Anthropic call: <code>embed.ts</code> is the Voyage embeddings client that powers
   <a href="../data/world-store-retrieval.html">world-store retrieval</a> — Anthropic ships no
   embeddings endpoint, so semantic search uses a second provider with its own key, boot probe, and
-  page.
+  page. The <a href="./llm-outage-resilience.html">LLM outage resilience</a> page owns the story of
+  what happens when calls through this layer <em>fail</em>: the transport dispatchers, the failure
+  taxonomy, the Redis outage state and recovery probe, and prep-pipeline parking.
 </p>
 
 <h2 id="appendix-surface">Appendix: surface</h2>
@@ -1048,6 +1090,38 @@
         <code>LlmContextTooLongError</code>, <code>LlmTimeoutError</code>,
         <code>LlmStructuredOutputError</code>, <code>LlmContentFilteredError</code>,
         <code>mapToMythrunError(err)</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/ai.ts</code></td>
+      <td>
+        <code>generateObject</code> / <code>streamObject</code> / <code>generateText</code> /
+        <code>streamTextWithTools</code> — the canonical schema-validated wrapper surface (repair
+        chain, diagnostics, the <code>stageBudgetMs</code> attempt loop,
+        <code>setLlmHealthSink</code>).
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/llm-fetch.ts</code></td>
+      <td>
+        <code>providerFetch()</code>, <code>createObservedFetch()</code>,
+        <code>createDispatchers()</code> — the per-mode transport. See
+        <a href="./llm-outage-resilience.html">LLM outage resilience</a>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/classify-llm-error.ts</code></td>
+      <td><code>classifyLlmError(err, ctx)</code> — the two-axis failure taxonomy.</td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/llm-health.ts</code></td>
+      <td><code>createLlmHealthTracker(redis, prefix, logger)</code> — the Redis outage state.</td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/llm-health-probe.ts</code></td>
+      <td>
+        <code>runProbeCycle</code>, <code>probeModelOnce</code>,
+        <code>createArmedStampPromoter</code> — the 60s recovery probe + promote scan.
       </td>
     </tr>
     <tr>

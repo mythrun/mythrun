@@ -1,6 +1,6 @@
 digraph worker {
   // The worker. A second ECS Fargate service that runs node dist/worker.js
-  // and pulls jobs from nine BullMQ queues on redisBatch. Health server on
+  // and pulls jobs from ten BullMQ queues on redisBatch. Health server on
   // 127.0.0.1:3001 is what ECS probes. Real prep-stage processors land across
   // MYT-51 onward; session-prep (MYT-61) is the third queue/worker; the
   // session-turn worker (MYT-66) is the fourth — the lock-fenced DM-turn
@@ -51,6 +51,7 @@ digraph worker {
     q_scribe   [label="queue: scribe\n(post-turn reconciler)", color="ember", fontcolor="ember"];
     q_recon    [label="queue: session-reconcile\n(end-of-session → canon)", color="ember", fontcolor="ember"];
     q_analysis [label="queue: session-analysis\n(end-of-session → recap + handoff)", color="ember", fontcolor="ember"];
+    q_probe    [label="queue: llm-health-probe\n(repeatable 60s scheduler)", color="ember", fontcolor="ember"];
   }
 
   subgraph cluster_worker {
@@ -73,6 +74,8 @@ digraph worker {
     contain    [label="queue/job-containment.ts\ncontainProcessor wraps the\n3 inline prep processors\nthrow → logged, contained job failure\n(secret-free err descriptor)", color="ember", fontcolor="ember"];
     guard      [label="process escape guard\nunhandledRejection / uncaughtException\n→ log + keep-alive (one bad job\ncan't kill nine queues)\nstorm: >25 escapes / 60s → exit(1)", color="ember", fontcolor="ember"];
     qevents    [label="QueueEvents('session-turn')\nbroker failed → turn_error\n+ finalize backstop\ndedicated BRPOP connection", color="ember", fontcolor="ember"];
+    pqevents   [label="QueueEvents × 3 prep queues\nbroker terminal failed →\nentity terminal + clear stamp\n(jobId-only identity)", color="ember", fontcolor="ember"];
+    w_probe    [label="llm-health-probe worker\nconcurrency 1 · 60s cycle\nhealthy: 1 GET + stamp scan\ndegraded: probe models → Lua clear\n→ promote() parked prep jobs", color="ember", fontcolor="ember"];
     health     [label="worker/health-server.ts\nGET /health on 127.0.0.1:3001\nprobes: pg + redisBatch +\nredisRealtime + isRunning()"];
     bullmq_redis [label="redis/bullmq-client.ts\nmaxRetriesPerRequest: null\n(BullMQ requirement)"];
   }
@@ -105,6 +108,9 @@ digraph worker {
   w_turn     -> q_analysis [label="enqueue analysis\n(finalize)", style=dotted, color="ember"];
   w_scribe   -> q_turn   [label="enqueue correction turn\n(retcon Z)", style=dotted, color="ember"];
   q_turn     -> qevents  [label="broker failed", style=dotted, color="ember"];
+  q_probe    -> w_probe  [label="60s cycle", color="ember"];
+  w_probe    -> q_world  [label="promote() parked\ndelayed jobs on recovery\n(+ campaign-setup,\nsession-prep)", style=dotted, color="ember"];
+  q_world    -> pqevents [label="broker terminal failed\n(+ campaign-setup,\nsession-prep)", style=dotted, color="ember"];
 
   // Worker shape
   cfg     -> w_world  [style=dashed, label="queue name + concurrency"];

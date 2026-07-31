@@ -1,0 +1,74 @@
+digraph llm_outage_resilience {
+  // The outage-resilience loop. Passive detection: every failed LLM call is
+  // classified at the ai.ts boundary (two axes: retry-worthy / outage-signal)
+  // with transport context from the per-mode undici dispatchers; connectivity
+  // failures report through a boot-injected sink into a Redis-shared window.
+  // Enough distinct failures arm the sitewide degraded state. Active
+  // recovery: a 60s probe cycle probes the implicated models while degraded,
+  // clears the state after three clean cycles, and promotes parked jobs.
+  // Parking: a prep processor that contains a connectivity failure delays its
+  // OWN BullMQ job (moveToDelayed), stamps llm_resume_stamps, and wakes on a
+  // backoff ladder. The frame polls GET /api/llm-health for the strip.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.7;
+
+  subgraph cluster_call {
+    label="every LLM call  (API server + workers)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    fetch    [label="llm-fetch.ts\ntwo undici dispatchers\nstreaming: 10s/60s/120s\nnon-streaming: 10s/300s/300s\n+ {mode, headersArrived}"];
+    classify [label="classify-llm-error.ts\nunwrap walk (depth 5)\nretry axis + outage axis\nclass: connectivity | rate-limit\n| abort | other"];
+    loop     [label="ai.ts attempt loop\n(stageBudgetMs calls)\nfull remaining budget per attempt\nretry gate: fits a healthy run?\n≤3 attempts, SDK maxRetries: 0", color="ember", fontcolor="ember"];
+  }
+
+  sink [label="boot-injected sink\nsetLlmHealthSink →\ntracker.report()\n(fire-and-forget)"];
+
+  subgraph cluster_redis {
+    label="Redis  (llm-health:* under redisKeyPrefix)";
+    style="dotted";
+
+    window [label="window  ZSET\n30-min rolling"];
+    state  [label="state\npresent ⇔ degraded\nTTL 30 min", color="ember", fontcolor="ember"];
+    models [label="models  SET\nimplicated ids"];
+    counter [label="probe-successes\nat 3 → Lua clear"];
+  }
+
+  probe [label="llm-health-probe worker\n60s repeatable cycle\nhealthy: one GET + scan\ndegraded: probe each model\n(single attempt, no thinking)", color="ember", fontcolor="ember"];
+
+  subgraph cluster_park {
+    label="prep pipelines  (world-gen / session-prep / character-creation)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    processor [label="stage fails, class is\nconnectivity | rate-limit\n→ markStageFailed +\nstamp + moveToDelayed(self)"];
+    stamp     [label="llm_resume_stamps  (pg)\nresumeAttempt · nextResumeAt\nparkConsumedMs (6h cap)\nladder 30s→2m→5m→15m"];
+    delayed   [label="the SAME BullMQ job,\ndelayed — wakes itself;\nprobe promotes it on recovery"];
+  }
+
+  route [label="GET /api/llm-health\n(public, one Redis read)"];
+  strip [label="AppFrame NoticeStrip\n60s poll, prose strip\n(+ parked hold copy on\nthe generating surfaces)"];
+
+  fetch -> classify [label="failure +\n{mode, headers}"];
+  classify -> loop;
+  loop -> sink [label="outage-signal\nfailures only"];
+  sink -> window [label="Lua arm script:\nZADD + evaluate\n≥3 / 10 min /\n≥2 sites or jobs"];
+  window -> state [label="arms"];
+  state -> models [style="dashed", arrowhead="none"];
+
+  probe -> models [label="SMEMBERS\n(targets)"];
+  probe -> counter [label="all succeed → INCR;\nany failure → reset"];
+  counter -> state [label="Lua clear\n(DELs all four)"];
+  probe -> delayed [label="promote() armed\nstamps on recovery\n(fire-once net)"];
+
+  processor -> stamp;
+  processor -> delayed;
+  delayed -> processor [label="wake: claim the\nfailed row, re-run"];
+
+  state -> route;
+  route -> strip;
+}

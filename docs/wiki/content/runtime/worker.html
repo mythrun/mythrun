@@ -16,28 +16,30 @@
 <!-- source: backend/src/session/post-session-analysis.ts -->
 <!-- source: backend/src/session/session-turn-queue-events.ts -->
 <!-- source: backend/src/queue/job-containment.ts -->
-<!-- source-hash: sha256:310bb435ab0bdd105ef3a6746f11415d58d6f507e8186bc726e8524bb6d10c0a -->
+<!-- source-hash: sha256:0df71459ff358e061f04b5976de8e86127fd71868045f62f177fbb3a0dfccff2 -->
 <!-- last-ticket: myth-ha6qr -->
 
 <h1>Worker</h1>
 
 <p class="lead">
   The async-execution half of the backend. A second ECS Fargate service running
-  <code>node dist/worker.js</code> with nine BullMQ Workers — <code>world-gen</code> (concurrency
-  3), <code>campaign-setup</code> (concurrency 5), <code>session-prep</code> (concurrency 3), the
-  MYT-66 <code>session-turn</code> worker (concurrency 5), the MYT-67 <code>dm-trigger</code> worker
+  <code>node dist/worker.js</code> with ten BullMQ Workers — <code>world-gen</code> (concurrency 3),
+  <code>campaign-setup</code> (concurrency 5), <code>session-prep</code> (concurrency 3), the MYT-66
+  <code>session-turn</code> worker (concurrency 5), the MYT-67 <code>dm-trigger</code> worker
   (concurrency 5), the MYT-69 <code>st-evaluation</code> worker (concurrency 2), the MYT-73
   <code>scribe</code> worker (concurrency 2), the MYT-74a <code>session-reconcile</code> worker
-  (concurrency 1), and the MYT-74b <code>session-analysis</code> worker (concurrency 1) — all
-  consuming from <code>redisBatch</code>, plus a <code>QueueEvents('session-turn')</code> subscriber
-  on a dedicated blocking connection. Phase 0 shipped stub processors that logged job receipt and
-  marked complete. The real prep-stage processors landed across MYT-51 (world-gen), MYT-52
-  (streaming entity / edge events), MYT-53 (per-player character creation), MYT-54 (campaign-scoped
-  character integration), and MYT-61 (session prep); the <code>session-turn</code> worker — the
-  lock-fenced DM-turn conductor — joined in MYT-66, the <code>dm-trigger</code> decision worker in
-  MYT-67, the post-hoc <a href="./slow-thinker.html">Slow Thinker</a>'s
-  <code>st-evaluation</code> worker in MYT-69, the post-turn <a href="./scribe.html">Scribe</a>'s
-  <code>scribe</code> worker in MYT-73, the
+  (concurrency 1), the MYT-74b <code>session-analysis</code> worker (concurrency 1), and the
+  <a href="./llm-outage-resilience.html">LLM outage-resilience</a>
+  <code>llm-health-probe</code> worker (concurrency 1, a repeatable 60s cycle) — all consuming from
+  <code>redisBatch</code>, plus four QueueEvents subscribers on dedicated blocking connections:
+  <code>session-turn</code> and, since the outage-resilience feature, the three prep queues. Phase 0
+  shipped stub processors that logged job receipt and marked complete. The real prep-stage
+  processors landed across MYT-51 (world-gen), MYT-52 (streaming entity / edge events), MYT-53
+  (per-player character creation), MYT-54 (campaign-scoped character integration), and MYT-61
+  (session prep); the <code>session-turn</code> worker — the lock-fenced DM-turn conductor — joined
+  in MYT-66, the <code>dm-trigger</code> decision worker in MYT-67, the post-hoc
+  <a href="./slow-thinker.html">Slow Thinker</a>'s <code>st-evaluation</code> worker in MYT-69, the
+  post-turn <a href="./scribe.html">Scribe</a>'s <code>scribe</code> worker in MYT-73, the
   <a href="./session-reconcile.html">end-of-session reconcile</a> worker in MYT-74a, and the
   <a href="./session-reconcile.html#post-session-analysis-and-the-handoff">post-session analysis</a>
   worker in MYT-74b. The shape locked in at Phase 0 so each later stage was a coverage edit, not a
@@ -69,7 +71,7 @@
 <p>
   The worker entrypoint is <code>backend/src/worker.ts</code>. It reads the same
   <code>loadEnv()</code> contract the API does, opens connections to the same Postgres + two-Redis
-  data plane, and then registers nine BullMQ <code>Worker</code> instances against
+  data plane, and then registers ten BullMQ <code>Worker</code> instances against
   <code>redisBatch</code>: <code>QUEUE_WORLD_GEN</code> (<code>world-gen</code>, concurrency 3),
   <code>QUEUE_CAMPAIGN_SETUP</code> (<code>campaign-setup</code>, concurrency 5),
   <code>QUEUE_SESSION_PREP</code> (<code>session-prep</code>, concurrency 3, added in MYT-61),
@@ -78,12 +80,13 @@
   <code>QUEUE_ST_EVAL</code> (<code>st-evaluation</code>, concurrency 2, added in MYT-69),
   <code>QUEUE_SCRIBE</code> (<code>scribe</code>, concurrency 2, added in MYT-73),
   <code>QUEUE_SESSION_RECONCILE</code> (<code>session-reconcile</code>, concurrency 1, added in
-  MYT-74a), and <code>QUEUE_SESSION_ANALYSIS</code> (<code>session-analysis</code>, concurrency 1,
-  added in MYT-74b). Queue names and concurrency caps for the prep workers live in
-  <code>backend/src/worker/bullmq-config.ts</code> — the single source of truth so the API-side
-  <code>Queue</code> producers and the worker-side <code>Worker</code> consumers can't drift; the
-  session-turn, dm-trigger, st-evaluation, scribe, session-reconcile, and session-analysis workers'
-  own queue names and tuning constants live alongside their processors in
+  MYT-74a), <code>QUEUE_SESSION_ANALYSIS</code> (<code>session-analysis</code>, concurrency 1, added
+  in MYT-74b), and <code>QUEUE_LLM_HEALTH_PROBE</code> (<code>llm-health-probe</code>, concurrency
+  1, added by the outage-resilience feature). Queue names and concurrency caps for the prep workers
+  live in <code>backend/src/worker/bullmq-config.ts</code> — the single source of truth so the
+  API-side <code>Queue</code> producers and the worker-side <code>Worker</code> consumers can't
+  drift; the session-turn, dm-trigger, st-evaluation, scribe, session-reconcile, and
+  session-analysis workers' own queue names and tuning constants live alongside their processors in
   <code>session/turn-worker.ts</code>, <code>session/dm-trigger-config.ts</code>,
   <code>session/st-eval-queue.ts</code> / <code>session/st-config.ts</code>,
   <code>session/scribe-queue.ts</code> / <code>session/scribe-config.ts</code>,
@@ -194,14 +197,34 @@
   reach them, and skipping the close would leak two Redis clients per deploy.
 </p>
 
+<p>
+  The <a href="./llm-outage-resilience.html">outage-resilience</a> feature added three pieces of
+  wiring here. First, boot binds the LLM health sink:
+  <code>setLlmHealthSink(tracker.report)</code> connects <code>ai.ts</code>'s connectivity-failure
+  reports to the Redis-shared outage tracker — without this call the sink stays a no-op and the
+  outage detector never arms from this process (the API server binds the same sink for its inline
+  workers). Second, the <code>llm-health-probe</code> worker: a repeatable 60-second job registered
+  via idempotent <code>upsertJobScheduler</code> (every boot re-asserts the same scheduler rather
+  than stacking duplicates) whose cycle probes implicated models while degraded and promotes parked
+  prep jobs on recovery. The promote scan needs producer handles on the three prep queues (a BullMQ
+  <code>Worker</code> can't list delayed jobs), so the worker also constructs three scan-side
+  <code>Queue</code> clients — closed explicitly at shutdown like the finalize producers. Third,
+  <code>buildPrepQueueEvents</code> subscribes QueueEvents on <code>world-gen</code>,
+  <code>campaign-setup</code>, and <code>session-prep</code> — the broker-side terminal net that
+  recovers a parked run whose wake died terminally, operating from the event's jobId alone; each
+  subscriber holds its own dedicated blocking connection with an explicit shutdown close.
+</p>
+
 <aside class="wiki-rationale">
   <strong>The QueueEvents subscriber needs explicit shutdown; the workers don't leak</strong> — the
   subscriber <code>duplicate()</code>s <code>redisBatch</code> for a dedicated
   <code>BRPOP</code> blocking connection, which <code>redisBatch.quit()</code> does
   <em>not</em> cover. So its <code>close()</code> is added to the SIGTERM teardown explicitly —
   skipping it would leak one Redis connection per deploy. (MYT-74b adds two more explicit closes for
-  the same reason — the finalize-backstop producer handles.) The nine Workers each share or own
-  connections the existing <code>quit()</code> calls already drain.
+  the same reason — the finalize-backstop producer handles — and the outage-resilience feature adds
+  seven more: three prep QueueEvents subscribers, the probe producer, and three promote-scan queue
+  handles.) The ten Workers each share or own connections the existing <code>quit()</code> calls
+  already drain.
 </aside>
 
 <p>
@@ -257,7 +280,7 @@
   <code>createPgPool(env.databaseUrl, { max: 4 })</code> with <code>SELECT 1</code> follows. The
   escape guard goes in next, after every probe has passed and immediately before the first queue
   consumer registers (<a href="#job-containment">why that exact spot</a>). Only once every
-  dependency is up and all nine workers are registered is the already-bound health server
+  dependency is up and all ten workers are registered is the already-bound health server
   <strong>armed</strong> with its probes — arming, not binding, is what flips the task from starting
   to healthy at the ECS level.
 </p>
@@ -323,7 +346,12 @@
   (<code>backend/src/queue/job-containment.ts</code>), an async wrapper that turns any throw in the
   processor's await chain, synchronous or asynchronous, into a logged
   <code>job.contained_failure</code> and re-throws so BullMQ still marks the job failed and applies
-  its retry policy. Containment means "this job fails", never "swallow silently". The six session
+  its retry policy. Containment means "this job fails", never "swallow silently". One throw passes
+  the boundary untouched: BullMQ's <code>DelayedError</code>, the control signal a
+  <a href="./llm-outage-resilience.html">parked</a> prep job throws after
+  <code>moveToDelayed</code>-ing itself — a sanctioned self-delay, not a failure, so the boundary
+  rethrows it as-is and logs <code>job.parked</code> at info (an error-level
+  <code>contained_failure</code> here would page on every routine park rung). The six session
   workers are not wrapped: their builders own their failure semantics (the turn worker is total by
   design; reconcile and analysis throw deliberately so BullMQ retries), documented on their own
   pages.
@@ -350,16 +378,17 @@
   Voyage key, unreachable Redis — became a swallowed rejection and a half-live, silent process:
   health bound but never armed, zero consumers, no crash, no signal. It now sits after the last
   probe and immediately before the first queue consumer registers, so it covers steady state (where
-  keep-alive is right) and not boot (where <a href="#the-boot-gate">exiting</a> is right). Nothing
-  between that line and <code>health.arm()</code> awaits, so no job can interleave into the
-  uncovered window — the two phases are disjoint by construction, not by luck.
+  keep-alive is right) and not boot (where <a href="#the-boot-gate">exiting</a> is right). The one
+  await between that line and <code>health.arm()</code> — the probe scheduler upsert — runs with the
+  guard already installed, so a job that starts during it is covered, while its own throw still
+  propagates to the boot gate (awaited rejections never reach the guard).
 </aside>
 
 <aside class="wiki-rationale">
   <strong>Keep-alive per escape, crash on a storm</strong> — generic Node advice says always exit on
   <code>uncaughtException</code> because process state may be corrupt. The worker deliberately
   departs: an escaped LLM-parse failure doesn't corrupt the process-scoped state (the pg pool, the
-  Redis clients, the BullMQ workers), and exiting would orphan eight healthy queues to punish one —
+  Redis clients, the BullMQ workers), and exiting would orphan nine healthy queues to punish one —
   the exact blast radius the incident proved unacceptable. The residual risk is the <em>zombie</em>:
   a systemic bug escaping on every job while <code>/health</code> stays green (<code
     >isRunning()</code
@@ -394,7 +423,7 @@
   <code>GET http://127.0.0.1:3001/health</code> probes the four moving parts: the pg pool (<code
     >SELECT 1</code
   >), <code>redisBatch.ping()</code>, <code>redisRealtime.ping()</code>, and each registered
-  <code>Worker</code>'s <code>isRunning()</code> state (all nine). Each probe is given a 1-second
+  <code>Worker</code>'s <code>isRunning()</code> state (all ten). Each probe is given a 1-second
   timeout via <code>Promise.race</code>. A 200 response means all probes passed; a 503 response
   carries a <code>failed[]</code> array of probe names so operators can see at a glance which
   dependency tripped. The endpoint binds <code>127.0.0.1</code> only — it's task-internal, consumed
@@ -444,18 +473,20 @@
   detaches the <a href="#job-containment">process escape guard</a> first — a rejection racing
   teardown must not re-trigger the storm hatch's fail-fast exit — then closes the health server
   (stops new probes from going green during teardown), then runs <code>worker.close()</code> on all
-  nine BullMQ Workers in parallel with a 100-second deadline each. Any worker that misses the
+  ten BullMQ Workers in parallel with a 100-second deadline each. Any worker that misses the
   deadline is force-closed via <code>worker.close(true)</code>, which leaves in-flight jobs as
   <em>stalled</em> for another worker to pick up — BullMQ's stall recovery is the safety net here.
   For the session-turn worker that stall recovery is not just a shutdown nicety but the load-bearing
   crash-recovery path (a force-closed turn re-runs on another worker from clean state). The
   <code>QueueEvents('session-turn')</code> subscriber is then closed explicitly (its dedicated
   blocking connection isn't covered by the <code>redisBatch.quit()</code> below), followed by the
-  two MYT-74b finalize-backstop producer handles (distinct <code>Queue</code> objects on
-  <code>redisBatch</code>, closed after the workers drain so an in-flight backstop finalize can
-  still enqueue). After the workers, the subscriber, and the backstop producers close,
-  <code>pg.end()</code> and the two <code>redis.quit()</code> calls finish out, then
-  <code>process.exit(0)</code>.
+  three prep-queue QueueEvents subscribers (same dedicated-connection reason), the two MYT-74b
+  finalize-backstop producer handles, and the four outage-resilience queue handles (the
+  <code>llm-health-probe</code> producer plus the three promote-scan clients) — all distinct
+  <code>Queue</code> objects on <code>redisBatch</code>, closed after the workers drain so an
+  in-flight backstop finalize or probe cycle can still finish. After the workers, the subscribers,
+  and the producers close, <code>pg.end()</code> and the two <code>redis.quit()</code> calls finish
+  out, then <code>process.exit(0)</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -588,7 +619,7 @@
   </li>
   <li>
     Curl <code>http://127.0.0.1:3001/health</code>. A 200 with <code>{ "status": "ok" }</code> means
-    pg + both Redises + all nine BullMQ workers are healthy. A 503 carrying
+    pg + both Redises + all ten BullMQ workers are healthy. A 503 carrying
     <code>failed: ['boot']</code> means the socket is bound but boot hasn't finished arming — either
     still coming up, or stuck on a probe.
   </li>
@@ -685,10 +716,12 @@
   reconciler; the <a href="./session-reconcile.html">session-reconcile</a> worker is the eighth, the
   end-of-session reconciler that folds the working set into durable canon; and the
   <a href="./session-reconcile.html#post-session-analysis-and-the-handoff">session-analysis</a>
-  worker is the ninth, the end-of-session narrative closeout that writes the recap + handoff. The
-  session-turn, dm-trigger, st-evaluation, scribe, session-reconcile, and session-analysis workers
-  all read and write <code>redisRealtime</code> (the per-session lock, turn / trigger / direction
-  state, the working set, the running summary, and DM-turn frame publishing) on top of the shared
+  worker is the ninth, the end-of-session narrative closeout that writes the recap + handoff; and
+  the <a href="./llm-outage-resilience.html">llm-health-probe</a> worker is the tenth, the
+  outage-recovery cycle that probes implicated models and wakes parked prep jobs. The session-turn,
+  dm-trigger, st-evaluation, scribe, session-reconcile, and session-analysis workers all read and
+  write <code>redisRealtime</code> (the per-session lock, turn / trigger / direction state, the
+  working set, the running summary, and DM-turn frame publishing) on top of the shared
   <code>redisBatch</code> queues — the dm-trigger worker makes the real Haiku classifier call, the
   st-evaluation worker the Haiku gate + Opus director calls, the scribe worker the Haiku tripwire +
   Opus retcon calls, the session-reconcile worker the single Opus reconcile call, and the

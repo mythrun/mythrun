@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html" class="active">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/llm-outage-resilience.html">LLM outage resilience</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html" class="active">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Session prep</div>
         <article>
@@ -554,7 +554,12 @@
   session its own claim row on a table that keys on <code>(campaign, stage)</code>. A claim that
   comes back <code>completed</code> is an idempotent re-entry (BullMQ retried an already-done job)
   and returns cleanly; a <code>lost-race</code> result means another worker won and also returns
-  cleanly.
+  cleanly; an <code>in-flight</code> result (a live, not-yet-stuck <code>running</code> row on
+  another worker) <em>stops</em> with a retryable throw so BullMQ re-drives later — the
+  <a href="./llm-outage-resilience.html">outage-resilience</a> claim discipline every prep loop now
+  shares. Before the claim, the processor reads the sitewide LLM health state (one Redis GET), and a
+  successful claim disarms any resume stamp's <code>nextResumeAt</code> — both feed the parking path
+  below.
 </p>
 
 <aside class="wiki-rationale">
@@ -613,6 +618,24 @@
   On any error it publishes <code>prep-failed</code> with the terminal flag instead. These three
   <code>prep-*</code> arms are the entire player-visible signal — they ride the campaign's pipeline
   channel, never the prose.
+</p>
+
+<p>
+  One class of error doesn't end there: a park-eligible failure (<code>connectivity</code> or
+  <code>rate-limit</code>, non-terminal, park budget remaining) takes the
+  <a href="./llm-outage-resilience.html">parking</a> path. The stage row stays failed — the wake
+  must be able to claim it — a resume stamp is upserted under
+  <code>('session_prep', campaignId)</code>, and the job delays <em>itself</em> (<code
+    >moveToDelayed</code
+  >
+  + <code>DelayedError</code>) to retry the whole stage on the 30s → 2m → 5m → 15m ladder, up to 6
+  hours of parked wall-clock. Wakes during a known sitewide outage (the pre-claim health read)
+  re-park without consuming budget. On stage completion the stamp is deleted — the park episode
+  ends. The prep-status snapshot derivation reads the stamp so a parked prep keeps presenting as
+  <code>generating</code> (with the hold copy's <code>lastErrorClass</code>) instead of failed, and
+  the trigger route checks the queue for a live <code>sp-&lt;campaignId&gt;-&lt;n&gt;</code> job
+  before re-adding — a parked wake's held id would make the re-add a silent no-op, so a live job
+  answers the in-progress shape instead.
 </p>
 
 <h3 id="vetting-the-opening">Vetting the opening against its own playbook</h3>

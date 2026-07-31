@@ -21,10 +21,11 @@ digraph llm {
     schema    [label="schemas/profanity.ts\nProfanitySchema (Zod)\n{ profane, reason? }"];
     prompts   [label="prompts.ts + prompts/auth/profanity.txt\nloadPrompt(area, name, vars)\ncached at first read"];
 
-    models    [label="models.ts\nHAIKU / SONNET / OPUS\nwrapLanguageModel(...)"];
+    models    [label="models.ts\nHAIKU / SONNET / OPUS\nwrapLanguageModel(...)\ncreateAnthropic({ fetch })"];
     middleware [label="middleware.ts\nlogAndNormalizeMiddleware\nwraps doGenerate"];
     logger     [label="logger.ts\npino { component: 'llm' }"];
-    errors     [label="errors.ts\n7 typed classes +\nmapToMythrunError"];
+    errors     [label="errors.ts\n9 typed classes +\nmapToMythrunError"];
+    llmfetch   [label="llm-fetch.ts\ntwo undici dispatchers\n(streaming / non-streaming)\nsee: LLM outage resilience"];
   }
 
   subgraph cluster_sdk {
@@ -51,5 +52,6 @@ digraph llm {
 
   // SDK to provider
   sdk_text -> sdk_anth     [label="provider call"];
-  sdk_anth -> anthropic    [label="HTTPS"];
+  sdk_anth -> llmfetch     [label="custom fetch"];
+  llmfetch -> anthropic    [label="HTTPS,\nper-mode timeouts"];
 }

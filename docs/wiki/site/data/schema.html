@@ -29,10 +29,10 @@
 <h1>Schema</h1>
 
 <p class="lead">
-  The Postgres shape Mythrun runs on: 35 application tables grouped into identity, billing, worlds,
-  campaigns, sessions, and ops; 25-plus named performance indexes; 3 empty SRD reference tables
-  waiting on data load. Every primary key is a UUIDv7. The schema is enforced at the DB layer, not
-  the app layer.
+  The Postgres shape Mythrun runs on: 41 application tables (as of migration 038) grouped into
+  identity, billing, worlds, campaigns, sessions, and ops; 25-plus named performance indexes; 3
+  empty SRD reference tables waiting on data load. Every primary key is a UUIDv7. The schema is
+  enforced at the DB layer, not the app layer.
 </p>
 
 <figure class="wiki-diagram">
@@ -551,14 +551,17 @@
 <h2 id="how-it-fits-together">How it fits together</h2>
 
 <p>
-  The schema is the union of nine migration files in <code>backend/migrations/</code>:
-  <code>001_initial_schema.sql</code> ships every <code>CREATE TABLE</code> in topological FK order,
-  <code>002_indexes.sql</code> adds the named performance and uniqueness indexes,
-  <code>003_srd_reference_data.sql</code> creates the three empty SRD tables,
-  <code>004_credit_ledger_invariants.sql</code> tightens the <code>credit_ledger</code> with
-  defense-in-depth CHECKs, an idempotency partial-unique index, and a CASCADE→RESTRICT swap on the
-  user FK, <code>005_drop_profile_columns_users.sql</code> reduces the <code>users</code> row to its
-  minimal-claims shape and switches its UNIQUE on <code>username</code> to be case-insensitive,
+  The schema's foundation is nine migration files in <code>backend/migrations/</code> (later
+  migrations — world retrieval, fact supersede, the primary campaign invite, the
+  <code>llm_resume_stamps</code> park stamp — layer onto it and appear in the cluster sections below
+  and on their owning pages): <code>001_initial_schema.sql</code> ships every
+  <code>CREATE TABLE</code> in topological FK order, <code>002_indexes.sql</code> adds the named
+  performance and uniqueness indexes, <code>003_srd_reference_data.sql</code> creates the three
+  empty SRD tables, <code>004_credit_ledger_invariants.sql</code> tightens the
+  <code>credit_ledger</code> with defense-in-depth CHECKs, an idempotency partial-unique index, and
+  a CASCADE→RESTRICT swap on the user FK, <code>005_drop_profile_columns_users.sql</code> reduces
+  the <code>users</code> row to its minimal-claims shape and switches its UNIQUE on
+  <code>username</code> to be case-insensitive,
   <code>006_drop_billing_config_tables.sql</code> drops the four legacy billing-config tables now
   that the tier and pack credit-allocation contract has moved into a checked-in TS file at
   <a href="../auth-billing/stripe-contract.html">Stripe contract</a>,
@@ -574,8 +577,8 @@
   <code>009_character_portability.sql</code> drops <code>characters.campaign_id</code>, makes
   <code>characters.user_id</code> NOT NULL, and adds a <code>campaign_characters</code> join table
   so a character row is portable across campaigns without a future migration. The
-  <a href="./migrations.html">migrations runner</a> applies all nine end-to-end on a fresh database.
-  The diagram clusters tables by the story they tell — read it left to right.
+  <a href="./migrations.html">migrations runner</a> applies the full numbered set end-to-end on a
+  fresh database. The diagram clusters tables by the story they tell — read it left to right.
 </p>
 
 <h3 id="identity-and-billing">Identity and billing</h3>
@@ -875,6 +878,20 @@
 </aside>
 
 <p>
+  Riding beside the ledger is <code>llm_resume_stamps</code> (migration 038): one row per
+  <em>parked</em> prep run, keyed <code>(pipeline, entity_id)</code> where pipeline is
+  <code>world_gen</code> / <code>session_prep</code> / <code>character_creation</code> and the
+  FK-free <code>entity_id</code> points at a campaign or concept depending on pipeline. A park (a
+  prep job riding out an LLM outage — see
+  <a href="../runtime/llm-outage-resilience.html">LLM outage resilience</a>) deliberately leaves its
+  <code>pipeline_runs</code> row <code>failed</code> so the wake can claim it; the stamp is the
+  single discriminator between "parked, will resume" and "genuinely failed."
+  <code>next_resume_at</code> arms the wake (NULL = claimed/in-flight); <code>resume_attempt</code>,
+  <code>park_consumed_ms</code>, and <code>last_error_class</code> survive claims and clear only
+  with the row on stage completion.
+</p>
+
+<p>
   <code>world_marketplace</code> and <code>moderation_flags</code> are schema-ready but not built at
   launch — the columns exist so the marketplace and trust-and-safety milestones don't need a
   schema-migration ceremony when they ship. <code>settings</code> is a key-value bag for global
@@ -1045,8 +1062,8 @@ docker compose exec postgres psql -U mythrun -d mythrun -c "\di"</code></pre>
     <tr>
       <td>Pipeline & ops</td>
       <td>
-        <code>pipeline_runs</code>, <code>world_marketplace</code>, <code>moderation_flags</code>,
-        <code>settings</code>
+        <code>pipeline_runs</code>, <code>llm_resume_stamps</code>, <code>world_marketplace</code>,
+        <code>moderation_flags</code>, <code>settings</code>
       </td>
     </tr>
     <tr>

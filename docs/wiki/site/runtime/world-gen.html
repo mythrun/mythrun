@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html" class="active">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/llm-outage-resilience.html">LLM outage resilience</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html" class="active">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › World gen</div>
         <article>
@@ -1186,10 +1186,17 @@
       RETURNING id</code
     >
     either creates the row or flips a pending/failed row to <code>running</code>. If
-    <code>RETURNING</code> is empty, another worker won the race OR the row is already
-    <code>completed</code> — skip the stage in either case. The unique index keys on
+    <code>RETURNING</code> is empty, the claim discriminates: a <code>completed</code> row skips the
+    stage; a <code>running</code>-but-not-stuck row returns the distinct
+    <code>in-flight</code> result and the loop <em>stops</em> with a retryable throw — never skips.
+    (Before the <a href="./llm-outage-resilience.html">outage-resilience</a> feature this shape fell
+    into <code>lost-race</code> and the loop <code>continue</code>d past a live stage: BullMQ's
+    stall handling re-drives a dead worker's job once, the dead attempt's row sits
+    <code>running</code> under the stuck-reset threshold, and worlds silently completed with missing
+    stages.) The unique index keys on
     <code>(COALESCE(world_id, campaign_id), stage, COALESCE(user_id, sentinel))</code>; world-gen
-    rows have <code>user_id = NULL</code>.
+    rows have <code>user_id = NULL</code>. A successful claim also disarms any resume stamp's
+    <code>nextResumeAt</code> — the parked-wake bookkeeping described under stage failure below.
   </li>
   <li>
     <strong>Stuck-stage reset.</strong> If the conflict branch found a <code>running</code> row, the
@@ -1224,10 +1231,20 @@
     <strong>On stage failure.</strong> Write a sanitized error JSON to
     <code>pipeline_runs.error</code> (strict allowlist — only
     <code>{ code, message }</code> survive; raw provider error chains with embedded API keys or
-    response bodies are dropped) and publish <code>stage-failed</code>.
+    response bodies are dropped) and publish <code>stage-failed</code> (now carrying the
+    <code>failureClass</code> the LLM wrapper attached, when one exists).
     <code>StageNotImplementedError</code> is treated as an expected stop (publish
-    <code>phase = world_gen_failed</code> and return; no BullMQ retry); every other thrown error
-    rethrows so BullMQ's retry policy fires.
+    <code>phase = world_gen_failed</code> and return; no BullMQ retry). A
+    <strong>park-eligible</strong> failure — class <code>connectivity</code> or
+    <code>rate-limit</code>, non-terminal, park budget remaining — takes the
+    <a href="./llm-outage-resilience.html">parking</a> path instead: the stage row stays failed (a
+    wake must be able to claim it), a resume stamp is upserted on <code>llm_resume_stamps</code>, a
+    generating-shaped parked phase event publishes, and the job delays <em>itself</em> (<code
+      >moveToDelayed</code
+    >
+    + <code>DelayedError</code>) to wake on the 30s → 2m → 5m → 15m ladder. The processor reads the
+    sitewide health state before each claim so a wake during a known outage re-parks without
+    consuming its 6-hour budget. Every other thrown error rethrows so BullMQ's retry policy fires.
   </li>
 </ol>
 
@@ -2663,9 +2680,16 @@
         stuck stage name. If it contains <code>world_gen_cost_cap_exceeded</code> →
         <code>409 world_gen_capped</code>. If it contains <code>content_filtered</code> (Anthropic
         rejected the prompt) → <code>409 content_filtered</code> — retrying would hit the same
-        filter on the same source concept. Otherwise treat as a transient infra failure and
-        re-enqueue the world-gen job (jobId-dedupe via BullMQ).
-        <code>202 { campaignId, action: 'world-gen-re-enqueued' }</code>.
+        filter on the same source concept. Otherwise treat as a transient infra failure. Before
+        re-enqueueing, two <a href="./llm-outage-resilience.html">outage-resilience</a> gates run: a
+        job still alive on the queue (a backlogged-but-alive parked wake — the re-add would silently
+        no-op against its held id) answers <code>409 world_gen_in_progress</code> instead; and any
+        leftover resume stamp is cleared so the manual retry starts a fresh park episode (fresh
+        6-hour budget, rung 1) rather than instantly re-exhausting mid-outage. Then re-enqueue
+        (jobId-dedupe via BullMQ). <code>202 { campaignId, action: 'world-gen-re-enqueued' }</code>.
+        Note a <em>parked</em> world never reaches this arm while its stamp is live —
+        <code>derivePhase</code> keeps it generating-shaped (see
+        <a href="./pipeline-status.html">pipeline status</a>).
       </td>
     </tr>
     <tr>
@@ -2673,13 +2697,23 @@
       <td><code>409 nothing_to_resume</code>.</td>
     </tr>
     <tr>
-      <td><code>character_creation</code> | <code>post_creation</code></td>
+      <td><code>character_creation</code></td>
       <td>
-        <code>422 phase_resume_not_yet_implemented</code> with the phase echoed. MYT-53 landed the
-        character-creation pipeline itself, but resume from those phases remains unimplemented — a
-        player re-triggers their own per-player pipeline by re-POSTing
-        <code>POST /characters</code> instead. The downstream ticket reference is logged
-        server-side, not in the response.
+        Sweep concepts stuck at <code>processing</code> with owed pipeline work (a pending/failed
+        character-stage row and no running one) and re-add each member's deterministic
+        <code>cc-&lt;campaignId&gt;-&lt;userId&gt;</code> job — except members whose job is still
+        <em>alive</em> on the queue (a parked wake's delayed job matches the stuck shape, and the
+        re-add would silently no-op against its held id): those are in-progress, not stuck. All
+        stuck members alive → <code>409 character_creation_in_progress</code> +
+        <code>Retry-After: 30</code>; none stuck at all → <code>409 nothing_to_resume</code>;
+        otherwise <code>202</code> with the re-enqueued user ids.
+      </td>
+    </tr>
+    <tr>
+      <td><code>post_creation</code></td>
+      <td>
+        <code>422 phase_resume_not_yet_implemented</code> with the phase echoed. The downstream
+        ticket reference is logged server-side, not in the response.
       </td>
     </tr>
     <tr>

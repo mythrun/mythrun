@@ -3691,6 +3691,79 @@ END)</code></li>
     </tbody>
   </table>
 </details>
+<h2 class="schema-cluster" id="other">Other</h2>
+<details class="schema-table" data-table-name="llm_resume_stamps" id="schema-table-llm_resume_stamps">
+  <summary>
+    <span class="schema-table-name">llm_resume_stamps</span>
+    <span class="schema-table-meta">8 columns · 0 indexes · 2 CHECKs · 0 FKs</span>
+  </summary>
+  <table class="schema-columns">
+    <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Default</th><th>References</th></tr></thead>
+    <tbody>
+      <tr data-column-name="pipeline">
+        <td><code>pipeline</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="entity_id">
+        <td><code>entity_id</code></td>
+        <td><code>uuid</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="resume_attempt">
+        <td><code>resume_attempt</code></td>
+        <td><code>integer</code></td>
+        <td>NO</td>
+        <td><code>0</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="next_resume_at">
+        <td><code>next_resume_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>YES</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="park_consumed_ms">
+        <td><code>park_consumed_ms</code></td>
+        <td><code>bigint</code></td>
+        <td>NO</td>
+        <td><code>0</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="last_error_class">
+        <td><code>last_error_class</code></td>
+        <td><code>text</code></td>
+        <td>NO</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="created_at">
+        <td><code>created_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+      <tr data-column-name="updated_at">
+        <td><code>updated_at</code></td>
+        <td><code>timestamptz</code></td>
+        <td>NO</td>
+        <td><code>now()</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  <h4>CHECK constraints</h4>
+  <ul class="schema-list">
+    <li><code>CHECK ((last_error_class = ANY (ARRAY['connectivity'::text, 'rate-limit'::text])))</code></li>
+    <li><code>CHECK ((pipeline = ANY (ARRAY['world_gen'::text, 'session_prep'::text, 'character_creation'::text])))</code></li>
+  </ul>
+</details>
 </div>
 
 <h2 id="integration-points">Integration points</h2>
@@ -3705,7 +3778,7 @@ END)</code></li>
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#identity-amp-billing">Identity &amp; billing</a></li><li style="padding-left:0"><a href="#worlds-amp-entities">Worlds &amp; entities</a></li><li style="padding-left:0"><a href="#campaigns-amp-play">Campaigns &amp; play</a></li><li style="padding-left:0"><a href="#pipeline-amp-ops">Pipeline &amp; ops</a></li><li style="padding-left:0"><a href="#srd-reference">SRD reference</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#identity-amp-billing">Identity &amp; billing</a></li><li style="padding-left:0"><a href="#worlds-amp-entities">Worlds &amp; entities</a></li><li style="padding-left:0"><a href="#campaigns-amp-play">Campaigns &amp; play</a></li><li style="padding-left:0"><a href="#pipeline-amp-ops">Pipeline &amp; ops</a></li><li style="padding-left:0"><a href="#srd-reference">SRD reference</a></li><li style="padding-left:0"><a href="#other">Other</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

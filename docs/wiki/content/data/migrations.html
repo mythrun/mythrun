@@ -1,7 +1,7 @@
 <!-- source: backend/src/db/migrate.ts -->
 <!-- source: backend/src/db/lock-key.ts -->
 <!-- source: backend/migrations/ -->
-<!-- source-hash: sha256:7f296ded203226ab2815ac8525f15b7a7b683b5c66ee1a69c65c0f7a0f7d4454 -->
+<!-- source-hash: sha256:63e261345700aec9c9baa5f8f85a023285351b69cd1f3bc6347a9f74c6fa197a -->
 <!-- last-ticket: MYT-48 -->
 
 <h1>Migrations</h1>
@@ -344,7 +344,7 @@ aws ecs execute-command \
 
 <p>
   The runner applies the <a href="./schema.html">current schema</a> — the numbered files in
-  <code>backend/migrations/</code> (37 of them as of <code>037_tripwire_verdicts.sql</code>), the
+  <code>backend/migrations/</code> (38 of them as of <code>038_llm_resume_stamps.sql</code>), the
   union of which lays down every application table, its named indexes, and the three
   still-unpopulated SRD reference tables — onto a fresh database; the <code>schema</code> page is
   the explainer for what those files lay down, and the

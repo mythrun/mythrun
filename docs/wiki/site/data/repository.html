@@ -820,8 +820,15 @@
   <code>pipelineRuns</code>), plus the world-gen support namespaces the prep pipeline's migration
   off raw SQL added (<code>randomTables</code> for the stage-5 table writer,
   <code>settings</code> for the cost-cap policy reads, and <code>worldInventory</code> for the
-  composite world-dump read). The
-  <a href="../auth-billing/billing-webhook.html">webhook handlers</a>,
+  composite world-dump read), plus <code>resumeStamps</code> over <code>llm_resume_stamps</code> —
+  the <a href="../runtime/llm-outage-resilience.html">parked prep run</a> stamp (upsert-park with
+  its 30s→15m delay ladder and 6-hour budget constants, claim-time disarm, completion-time delete,
+  and the armed-stamp list the recovery probe scans); like <code>pipelineRuns</code>'s claim
+  helpers, the processors bind it pool-side because park bookkeeping must survive a
+  stage-transaction rollback. <code>pipelineRuns</code>'s claim result union also grew an
+  <code>in-flight</code> arm (a running-not-stuck row held by a live worker), distinct from
+  <code>lost-race</code> so every processor loop stops on it rather than skipping past a live stage.
+  The <a href="../auth-billing/billing-webhook.html">webhook handlers</a>,
   <a href="../auth-billing/billing-routes.html">billing routes</a>, and
   <a href="../runtime/world-gen.html">world-gen worker</a> consume them.
   <code>sessionMessages</code> and <code>sessionParticipants</code> landed with their first

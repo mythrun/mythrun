@@ -3,7 +3,7 @@
 <!-- source: backend/src/worker/bullmq-config.ts -->
 <!-- source: backend/.env.development.example -->
 <!-- source: backend/package.json -->
-<!-- source-hash: sha256:119dbba5e0439190089c09c0090d77109b9de0563ed612e96989c8a899539c27 -->
+<!-- source-hash: sha256:4ea19f4a3370fbf0edd2ec5fab0313bbcece9b7d4c6fc33fcf64fe09a6282c0d -->
 <!-- last-ticket: MYT-72 -->
 
 <h1>LLM client</h1>
@@ -12,7 +12,7 @@
   The thin shell every Mythrun LLM call sits on top of. Three tier-named model constants
   (<code>HAIKU</code>, <code>SONNET</code>, <code>OPUS</code>), a logging + error-normalization
   middleware that handles both <code>generateText</code> and <code>streamObject</code> /
-  <code>streamText</code> call shapes, a typed error taxonomy (eight classes including the terminal
+  <code>streamText</code> call shapes, a typed error taxonomy (nine classes including the terminal
   <code>LlmContentFilteredError</code>), and a file-based prompt loader. The
   <code>streamObject</code> / <code>generateObject</code> wrappers also accept an optional
   <code>maxOutputTokens</code> ceiling so a long-prose call can lift the SDK default before it
@@ -35,7 +35,10 @@
   <code>redactRawText</code>), and the Haiku <a href="./session-turn.html">turn-audit gate</a> that
   classifies each Fast-Thinker render for behavioral violations (authored PC speech, an inline
   correction, a faked session end) before it reaches the table. Everything heavier (provider
-  mechanics, retries, structured-output validation) is delegated to Vercel AI SDK v6.
+  mechanics, structured-output validation) is delegated to Vercel AI SDK v6 — with one deliberate
+  exception: retries for budget-shaped prep calls are now wrapper-owned, part of the
+  <a href="./llm-outage-resilience.html">LLM outage resilience</a> layer that also gives every
+  Anthropic request a per-mode transport timeout and classifies every failure at this boundary.
 </p>
 
 <!-- @diagram: runtime/llm -->
@@ -79,12 +82,16 @@
 </aside>
 
 <p>
-  Five files of Mythrun-owned code sit under <code>backend/src/llm/</code>:
+  The core Mythrun-owned files sit under <code>backend/src/llm/</code>:
   <code>models.ts</code> defines the three tier constants, <code>middleware.ts</code> wraps each
   with logging + error normalization, <code>errors.ts</code> defines the typed error taxonomy and
-  the Vercel-to-Mythrun mapper, <code>prompts.ts</code> is the file-based template loader, and
-  <code>profanity.ts</code> is the first call site. Two more directories hold the data shapes:
-  <code>schemas/</code> for Zod schemas describing structured-output responses, and
+  the Vercel-to-Mythrun mapper, <code>prompts.ts</code> is the file-based template loader,
+  <code>ai.ts</code> is the canonical wrapper for schema-validated calls (repair chain, diagnostics,
+  and the outage-layer attempt loop), and <code>profanity.ts</code> is the original call site. The
+  outage-resilience siblings — <code>llm-fetch.ts</code>, <code>classify-llm-error.ts</code>,
+  <code>llm-health.ts</code>, <code>llm-health-probe.ts</code> — have
+  <a href="./llm-outage-resilience.html">their own page</a>. Two more directories hold the data
+  shapes: <code>schemas/</code> for Zod schemas describing structured-output responses, and
   <code>prompts/</code> for the <code>.txt</code> system-prompt templates the loader reads.
 </p>
 
@@ -92,8 +99,12 @@
 
 <p>
   <code>models.ts</code> exports three constants — <code>HAIKU</code>, <code>SONNET</code>,
-  <code>OPUS</code> — each constructed from <code>anthropic(modelId)</code> wrapped by
-  <code>wrapLanguageModel</code> with the logging middleware. The IDs are pinned in this file and
+  <code>OPUS</code> — each constructed from a shared
+  <code>createAnthropic({ fetch })</code> provider and wrapped by
+  <code>wrapLanguageModel</code> with the logging middleware. The custom fetch is the
+  <a href="./llm-outage-resilience.html">outage-resilience transport</a>: every Anthropic request
+  routes through per-mode undici dispatchers so a hung connection fails with a classifiable
+  <code>UND_ERR_*</code> code instead of hanging indefinitely. The IDs are pinned in this file and
   this file alone: <code>claude-haiku-4-5-20251001</code>, <code>claude-sonnet-5</code>,
   <code>claude-opus-5</code>. Every other call site in the codebase imports a tier constant by name;
   no file outside <code>models.ts</code> mentions a model ID string.
@@ -316,7 +327,9 @@
   throw on its own. The <a href="./fast-thinker.html">consumer</a> owns converting both to thrown
   Mythrun errors, so a truncated turn never ends "normally." The usage promises are pre-handled
   (no-op catches) so an FT that throws out of its consume loop never leaves an unhandled rejection
-  to kill the worker.
+  to kill the worker. Because the wrapper never throws, it also carries an error/abort-part observer
+  for the <a href="./llm-outage-resilience.html">outage detector</a>: each in-band error part is
+  classified and reported before it yields through to the consumer.
 </aside>
 
 <h2 id="concurrency-and-rate-limits">Concurrency and rate-limit ceilings</h2>
@@ -435,9 +448,11 @@
 <h2>The error taxonomy</h2>
 
 <p>
-  <code>errors.ts</code> defines eight typed classes and a single mapper:
+  <code>errors.ts</code> defines nine typed classes and a single mapper:
   <code>LlmRateLimitedError</code> (429), <code>LlmOverloadedError</code> (529 — Anthropic-specific
-  upstream-busy), <code>LlmAuthError</code> (401 / 403), <code>LlmContextTooLongError</code> (400 +
+  upstream-busy), <code>LlmUpstreamError</code> (a provider-side 500-class failure surfaced as an
+  in-band <code>api_error</code> event on an open stream — transient, same retry posture as its 529
+  sibling), <code>LlmAuthError</code> (401 / 403), <code>LlmContextTooLongError</code> (400 +
   context-window message match), <code>LlmInvalidRequestError</code> (other 4xx),
   <code>LlmTimeoutError</code> (<code>AbortError</code>),
   <code>LlmStructuredOutputError</code> (<code>AI_NoObjectGeneratedError</code> — the SDK exhausted
@@ -456,7 +471,13 @@
   <code>wrapGenerate</code> also detects <code>finishReason.unified === 'content-filter'</code> on
   otherwise-successful calls and raises <code>LlmContentFilteredError</code> from there — the call
   doesn't reject from the SDK, but the response is unusable, so the middleware shapes it into the
-  taxonomy at call-frame edge.
+  taxonomy at call-frame edge. The stream side carries one more deliberate mapping: mid-stream
+  Anthropic error <em>events</em> on an open stream arrive as raw JSON payloads, not Error
+  instances, and the in-stream arm maps <code>overloaded_error</code> →
+  <code>LlmOverloadedError</code> and <code>api_error</code> → <code>LlmUpstreamError</code> with
+  the raw payload preserved as <code>cause</code> — without it the generic fallback mints
+  <code>Error("[object Object]")</code> and a partial overload on the streaming path dies
+  unclassified by the <a href="./llm-outage-resilience.html">outage taxonomy</a>.
 </p>
 
 <p>
@@ -591,8 +612,9 @@
   validated result directly via <code>await result.object</code> — the array-keyed
   <code>runStreamingStage</code> would emit nothing here. The call sets
   <code>maxRetries: 0</code> at the SDK layer on purpose: the <code>haiku-then-sonnet</code> repair
-  chain owns schema-validation recovery and the BullMQ stage retry (once it's wired) owns transport
-  recovery, so a third hidden SDK retry layer would only multiply cost. The call threads
+  chain owns schema-validation recovery and the stage's
+  <a href="./llm-outage-resilience.html">parking ladder</a> owns transport recovery, so a third
+  hidden SDK retry layer would only multiply cost. The call threads
   <code>providerOptions.mythrun.stage = 'session_prep'</code> for log attribution — one of the stage
   labels the wrapper now recognizes alongside the world-gen stages.
 </aside>
@@ -811,7 +833,9 @@
   Anthropic call: <code>embed.ts</code> is the Voyage embeddings client that powers
   <a href="../data/world-store-retrieval.html">world-store retrieval</a> — Anthropic ships no
   embeddings endpoint, so semantic search uses a second provider with its own key, boot probe, and
-  page.
+  page. The <a href="./llm-outage-resilience.html">LLM outage resilience</a> page owns the story of
+  what happens when calls through this layer <em>fail</em>: the transport dispatchers, the failure
+  taxonomy, the Redis outage state and recovery probe, and prep-pipeline parking.
 </p>
 
 <h2>Appendix: surface</h2>
@@ -845,6 +869,38 @@
         <code>LlmContextTooLongError</code>, <code>LlmTimeoutError</code>,
         <code>LlmStructuredOutputError</code>, <code>LlmContentFilteredError</code>,
         <code>mapToMythrunError(err)</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/ai.ts</code></td>
+      <td>
+        <code>generateObject</code> / <code>streamObject</code> / <code>generateText</code> /
+        <code>streamTextWithTools</code> — the canonical schema-validated wrapper surface (repair
+        chain, diagnostics, the <code>stageBudgetMs</code> attempt loop,
+        <code>setLlmHealthSink</code>).
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/llm-fetch.ts</code></td>
+      <td>
+        <code>providerFetch()</code>, <code>createObservedFetch()</code>,
+        <code>createDispatchers()</code> — the per-mode transport. See
+        <a href="./llm-outage-resilience.html">LLM outage resilience</a>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/classify-llm-error.ts</code></td>
+      <td><code>classifyLlmError(err, ctx)</code> — the two-axis failure taxonomy.</td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/llm-health.ts</code></td>
+      <td><code>createLlmHealthTracker(redis, prefix, logger)</code> — the Redis outage state.</td>
+    </tr>
+    <tr>
+      <td><code>backend/src/llm/llm-health-probe.ts</code></td>
+      <td>
+        <code>runProbeCycle</code>, <code>probeModelOnce</code>,
+        <code>createArmedStampPromoter</code> — the 60s recovery probe + promote scan.
       </td>
     </tr>
     <tr>

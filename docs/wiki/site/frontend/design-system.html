@@ -678,7 +678,17 @@
   </li>
   <li>
     <strong>Feedback</strong> — <code>Banner</code> (inline, persistent),
-    <code>Toast</code> (transient, global), <code>Spinner</code>.
+    <code>Toast</code> (transient, global), <code>Spinner</code>, and
+    <code>NoticeStrip</code> (the sitewide outage notice under the frame's sticky bar): a slim
+    full-width quiet prose strip — chrome type role, secondary ink, a hairline
+    <code>--border</code> top edge, no icons or dots or dismiss, the state carried as prose. Its
+    host is a <em>permanently-mounted</em> <code>role="status"</code> live region (a status node
+    inserted already populated is unreliably announced); a null <code>message</code> collapses it
+    to intrinsic zero height — the edge and inset classes ride with the message — never
+    <code>display:none</code> or an unmount, which would evict the region from the accessibility
+    tree and lose the ok→degraded announcement. Consumed by the
+    <a href="./app-shell.html">app frame</a> for the
+    <a href="../runtime/llm-outage-resilience.html">LLM outage</a> readout.
   </li>
   <li>
     <strong>Display</strong> — <code>Avatar</code>/<code>AvatarGroup</code> (image-with-initials

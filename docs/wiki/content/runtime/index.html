@@ -15,7 +15,7 @@
 <!-- source: eslint.config.js -->
 <!-- source: docker-compose.yml -->
 <!-- source: docker-compose.override.yml.example -->
-<!-- source-hash: sha256:725b0a096ce85dc614f226cec8a1ba95de681a64d4712b744536c4b96994f55a -->
+<!-- source-hash: sha256:6853b0e75dc5554fca9235b43bc6aa892deb8e8d8e6ea0e9cfba0fe59d60a9dd -->
 <!-- last-ticket: MYT-84 -->
 
 <h1>Backend</h1>
@@ -60,11 +60,19 @@
 </aside>
 
 <p>
-  The <code>backend/</code> workspace is <code>@mythrun/backend</code>. Production dependencies are
-  <code>fastify</code>, <code>pg</code>, and <code>ioredis</code>; dev dependencies are
-  <code>tsx</code>, <code>typescript</code>, <code>vitest</code>, and the <code>stripe</code> SDK
-  (used at boot for the <a href="../auth-billing/stripe-contract.html">Stripe contract probe</a>).
-  The source tree is shallow but no longer flat: <code>app.ts</code> / <code>server.ts</code> /
+  The <code>backend/</code> workspace is <code>@mythrun/backend</code>. The production-dependency
+  core is <code>fastify</code> (+ its cookie/cors/rate-limit/websocket plugins), <code>pg</code>,
+  <code>ioredis</code>, <code>bullmq</code>, <code>pino</code>, <code>zod</code>, and
+  <code>uuidv7</code>, joined by the vertical-specific SDKs each surface's page covers: the Vercel
+  AI SDK + <code>@ai-sdk/anthropic</code> (the <a href="./llm.html">LLM client</a>),
+  <code>undici</code> (the
+  <a href="./llm-outage-resilience.html">outage-resilience transport dispatchers</a>),
+  <code>stripe</code> (the <a href="../auth-billing/stripe-contract.html">Stripe contract</a>),
+  <code>aws-jwt-verify</code> + the Cognito/Secrets-Manager AWS clients (<a
+    href="../auth-billing/jwt-middleware.html"
+    >auth</a
+  >). Dev dependencies are <code>typescript</code>, <code>vitest</code>, and friends. The source
+  tree is shallow but no longer flat: <code>app.ts</code> / <code>server.ts</code> /
   <code>app-deps.ts</code> / <code>worker.ts</code> at the root, with subdirectories for
   <code>auth/</code>, <code>billing/</code>, <code>boot/</code>, <code>config/</code>,
   <code>contract/</code>, <code>db/</code>, <code>dev-tool-check/</code>, <code>llm/</code>,
