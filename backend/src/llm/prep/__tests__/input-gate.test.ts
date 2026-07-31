@@ -38,6 +38,10 @@ describe('runInputGate', () => {
     const v = await runInputGate({ concept: 'A windswept archipelago...', intentSummary: null })
     expect(v.verdict).toBe('allow')
     expect(v.reason).toBeNull()
+    const callOpts = vi.mocked(ai.generateText).mock.calls[0]?.[0] as unknown as {
+      providerOptions?: unknown
+    }
+    expect(callOpts.providerOptions).toMatchObject({ mythrun: { stage: 'input_gate' } })
   })
 
   it('rejects SRD-incompatible concept above 0.85 confidence', async () => {

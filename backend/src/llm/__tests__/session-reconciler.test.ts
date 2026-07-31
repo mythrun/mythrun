@@ -95,7 +95,11 @@ describe('runSessionReconciler', () => {
 
     await runSessionReconciler(baseInput)
 
-    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as {
+      prompt: string
+      providerOptions?: unknown
+    }
+    expect(call.providerOptions).toMatchObject({ mythrun: { stage: 'session_reconcile' } })
     expect(call.prompt).toContain(baseInput.workingSet)
     expect(call.prompt).toContain(baseInput.candidates)
     expect(call.prompt).toContain(baseInput.worldTone)

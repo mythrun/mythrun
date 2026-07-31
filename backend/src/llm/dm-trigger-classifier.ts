@@ -113,6 +113,7 @@ export async function classifyDmTrigger(
     repairStrategy: 'haiku-then-sonnet',
     timeoutMs: HAIKU_CLASSIFY_TIMEOUT_MS,
     callSite: 'dm-trigger-classifier',
+    providerOptions: { mythrun: { stage: 'dm_trigger' } },
   })
 
   return result.output

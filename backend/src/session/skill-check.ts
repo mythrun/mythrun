@@ -163,6 +163,7 @@ async function fetchDcTable(
         context: input.context,
       }),
       callSite: 'ft-skill-check',
+      providerOptions: { mythrun: { stage: 'skill_check_dc', sessionId: deps.sessionId } },
       repairStrategy: 'haiku-then-sonnet',
       timeoutMs: SKILL_CHECK_TIMEOUT_MS,
       ...(deps.abortSignal !== undefined ? { abortSignal: deps.abortSignal } : {}),

@@ -58,6 +58,7 @@ export async function runPostSessionAnalysis(
       closingNarration: input.closingNarration ?? '',
     }),
     callSite: 'post-session-analysis',
+    providerOptions: { mythrun: { stage: 'post_session_analysis' } },
     repairStrategy: 'sonnet',
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     maxOutputTokens: ANALYSIS_MAX_OUTPUT_TOKENS,

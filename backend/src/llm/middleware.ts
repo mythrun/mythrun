@@ -33,6 +33,10 @@ interface LogBindings extends MythrunContext {
    *  cache regressions are visible (a mis-placed breakpoint is silent
    *  otherwise: no error, just full input price). */
   readonly cacheReadTokens?: number | undefined
+  /** Cache writes (cost wave 1 §1.0): billed at 1.25× the input rate — without
+   *  this the write premium is unpriceable and a mis-placed breakpoint that
+   *  rewrites the prefix every call is invisible in the cost report. */
+  readonly cacheWriteTokens?: number | undefined
   readonly finishReason?: string | undefined
   readonly err?: unknown
   readonly reason?: string | undefined
@@ -102,6 +106,7 @@ interface StreamTelemetry {
   outputTokens?: number | undefined
   totalTokens?: number | undefined
   cacheReadTokens?: number | undefined
+  cacheWriteTokens?: number | undefined
   finishReason?: string | undefined
 }
 
@@ -136,6 +141,7 @@ function wrapModelStream(
       outputTokens: telemetry.outputTokens,
       totalTokens: telemetry.totalTokens,
       cacheReadTokens: telemetry.cacheReadTokens,
+      cacheWriteTokens: telemetry.cacheWriteTokens,
       finishReason: telemetry.finishReason,
       latencyMs: Date.now() - start,
       ...ctx,
@@ -181,6 +187,7 @@ function wrapModelStream(
           telemetry.outputTokens = value.usage.outputTokens.total
           telemetry.totalTokens = sumTokens(telemetry.inputTokens, telemetry.outputTokens)
           telemetry.cacheReadTokens = value.usage.inputTokens.cacheRead
+          telemetry.cacheWriteTokens = value.usage.inputTokens.cacheWrite
           telemetry.finishReason = value.finishReason.unified
           // Content-policy filter is terminal (MYT-52 §7.2): translate the
           // finishReason into a thrown LlmContentFilteredError so the stage
@@ -308,6 +315,7 @@ export function logAndNormalizeMiddleware(modelId: string): LanguageModelV3Middl
         outputTokens,
         totalTokens: sumTokens(inputTokens, outputTokens),
         cacheReadTokens: result.usage.inputTokens.cacheRead,
+        cacheWriteTokens: result.usage.inputTokens.cacheWrite,
         latencyMs: Date.now() - start,
         finishReason: result.finishReason.unified,
         ...ctx,

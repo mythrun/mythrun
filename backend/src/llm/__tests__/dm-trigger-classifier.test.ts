@@ -101,9 +101,11 @@ describe('classifyDmTrigger', () => {
       output: unknown
       prompt: string
       system: string
+      providerOptions?: unknown
     }
     // The wrapper forwards the model + an Output.object wrapper to the SDK.
     expect(callOpts.model).toBe(HAIKU)
+    expect(callOpts.providerOptions).toMatchObject({ mythrun: { stage: 'dm_trigger' } })
     expect(callOpts.output).toBeDefined()
     // The serialized context (public fields only) lands in the prompt.
     expect(callOpts.prompt).toContain('Vire')

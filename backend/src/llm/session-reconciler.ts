@@ -63,6 +63,7 @@ export async function runSessionReconciler(
       closingNarration: input.closingNarration ?? '',
     }),
     callSite: 'session-reconciler',
+    providerOptions: { mythrun: { stage: 'session_reconcile' } },
     repairStrategy: 'sonnet',
     timeoutMs: RECONCILE_TIMEOUT_MS,
     maxOutputTokens: RECONCILE_MAX_OUTPUT_TOKENS,

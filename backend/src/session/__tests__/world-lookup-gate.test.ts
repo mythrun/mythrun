@@ -271,7 +271,9 @@ describe('resolveWorldLookupGate', () => {
     const callOpts = mockGenerateText.mock.calls[0]?.[0] as unknown as {
       prompt: string
       abortSignal: AbortSignal
+      providerOptions?: unknown
     }
+    expect(callOpts.providerOptions).toMatchObject({ mythrun: { stage: 'world_lookup_gate' } })
     expect(callOpts.prompt).toContain('Vire, head archivist of the Ashen Council')
     expect(callOpts.prompt).toContain('the Ashen Council')
     expect(callOpts.prompt).toContain('dm') // channel

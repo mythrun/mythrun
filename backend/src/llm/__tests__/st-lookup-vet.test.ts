@@ -68,7 +68,11 @@ describe('runStLookupVet', () => {
     expect(r.result).toEqual(okOutput)
     expect(r.repairAttempted).toBe(false)
     expect(r.usage.inputTokens).toBe(120)
-    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as {
+      prompt: string
+      providerOptions?: unknown
+    }
+    expect(call.providerOptions).toMatchObject({ mythrun: { stage: 'st_lookup_vet' } })
     expect(call.prompt).toContain('What do I remember about the old bridge?')
     expect(call.prompt).toContain('TIER known: the bridge was rebuilt two winters ago.')
     expect(call.prompt).toContain('weathered river-town realism')

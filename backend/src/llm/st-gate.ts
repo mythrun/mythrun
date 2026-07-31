@@ -40,6 +40,7 @@ export async function runStGate(input: StGateInput): Promise<StGateOutput> {
       recent_exchanges: input.recentExchanges,
     }),
     callSite: 'st-gate',
+    providerOptions: { mythrun: { stage: 'st_gate' } },
     repairStrategy: 'haiku-then-sonnet',
     timeoutMs: ST_GATE_TIMEOUT_MS,
   })

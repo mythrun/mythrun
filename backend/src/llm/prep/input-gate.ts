@@ -79,6 +79,7 @@ export async function runInputGate(args: InputGateArgs): Promise<InputGateVerdic
     prompt,
     maxRetries: 3,
     callSite: 'input-gate',
+    providerOptions: { mythrun: { stage: 'input_gate' } },
     schemaName: 'InputGateSchema',
     // exactOptionalPropertyTypes: only pass the key when a signal exists.
     ...(args.abortSignal !== undefined ? { abortSignal: args.abortSignal } : {}),

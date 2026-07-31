@@ -91,6 +91,9 @@ describe('runPostSessionAnalysis', () => {
     expect(opts?.redactRawText).toBe(true)
     expect(opts?.callSite).toBe('post-session-analysis')
     expect(opts?.repairStrategy).toBe('sonnet')
+    expect(opts?.providerOptions).toMatchObject({
+      mythrun: { stage: 'post_session_analysis' },
+    })
     expect(typeof opts?.prompt).toBe('string')
     // Proves loadPrompt actually substituted the {{...}} placeholders.
     expect(opts?.prompt).toContain(baseInput.transcript)

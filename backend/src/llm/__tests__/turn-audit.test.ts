@@ -76,8 +76,10 @@ describe('auditTurn', () => {
       output: unknown
       prompt: string
       system: string
+      providerOptions?: unknown
     }
     expect(callOpts.model).toBe(TURN_AUDIT_MODEL)
+    expect(callOpts.providerOptions).toMatchObject({ mythrun: { stage: 'turn_audit' } })
     expect(callOpts.output).toBeDefined()
     // The narration, submitting message, and roster all land in the prompt.
     expect(callOpts.prompt).toContain('What\'s in the hold, Trask?')

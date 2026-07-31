@@ -103,6 +103,7 @@ export async function auditTurn(input: TurnAuditInput): Promise<TurnAuditResult>
     repairStrategy: 'haiku-then-sonnet',
     timeoutMs: TURN_AUDIT_TIMEOUT_MS,
     callSite: 'ft-turn-audit',
+    providerOptions: { mythrun: { stage: 'turn_audit' } },
   })
   return result.output
 }

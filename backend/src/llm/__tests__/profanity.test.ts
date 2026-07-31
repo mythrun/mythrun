@@ -57,6 +57,7 @@ describe('classifyProfanity', () => {
     expect(callArgs.system as string).toContain('Reject the username')
     expect(callArgs.maxRetries).toBe(3)
     expect(callArgs.output).toBeDefined()
+    expect(callArgs.providerOptions).toMatchObject({ mythrun: { stage: 'profanity_gate' } })
   })
 
   it('returns the output verbatim from generateText', async () => {

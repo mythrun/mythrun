@@ -72,7 +72,11 @@ describe('runSecretTripwire', () => {
     expect(r.result.severity).toBe('none')
     expect(r.repairAttempted).toBe(false)
     expect(r.usage.inputTokens).toBe(90)
-    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as {
+      prompt: string
+      providerOptions?: unknown
+    }
+    expect(call.providerOptions).toMatchObject({ mythrun: { stage: 'secret_tripwire' } })
     expect(call.prompt).toContain(
       'The innkeeper slides a tankard across the bar and eyes the door.',
     )

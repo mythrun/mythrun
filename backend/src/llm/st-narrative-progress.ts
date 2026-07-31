@@ -54,6 +54,7 @@ export async function runStNarrativeProgress(
       recent_exchanges: input.recentExchanges,
     }),
     callSite: 'st-narrative-progress',
+    providerOptions: { mythrun: { stage: 'st_narrative_progress' } },
     repairStrategy: 'haiku-then-sonnet',
     timeoutMs: ST_PROGRESS_TIMEOUT_MS,
   })

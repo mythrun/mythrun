@@ -68,6 +68,7 @@ export async function runStDirector(input: StDirectorInput): Promise<StDirectorO
       summary_target_words: String(ST_SUMMARY_TARGET_WORDS),
     }),
     callSite: 'st-director',
+    providerOptions: { mythrun: { stage: 'st_eval' } },
     repairStrategy: 'haiku-then-sonnet',
     timeoutMs: ST_EVAL_TIMEOUT_MS,
     maxOutputTokens: ST_EVAL_MAX_OUTPUT_TOKENS,

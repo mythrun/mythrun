@@ -46,10 +46,16 @@ describe('runStNarrativeProgress', () => {
     })
 
     expect(r.result).toEqual({ basis: 'two of three goals landed', progress: 0.6 })
-    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as {
+      prompt: string
+      providerOptions?: unknown
+    }
     expect(call.prompt).toContain('SECRET-PLAYBOOK')
     expect(call.prompt).toContain('SUMMARY')
     expect(call.prompt).toContain('EXCHANGES')
+    expect(call.providerOptions).toMatchObject({
+      mythrun: { stage: 'st_narrative_progress' },
+    })
   })
 
   it('surfaces usage for :usage:st accounting', async () => {

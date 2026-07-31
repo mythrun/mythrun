@@ -71,6 +71,7 @@ export async function runSecretTripwire(input: SecretTripwireInput): Promise<Sec
       diceOutcomes: input.diceOutcomes ?? '(none this turn)',
     }),
     callSite: 'secret-tripwire',
+    providerOptions: { mythrun: { stage: 'secret_tripwire' } },
     repairStrategy: 'haiku-then-sonnet',
     timeoutMs: SCRIBE_TRIPWIRE_TIMEOUT_MS,
     redactRawText: true,

@@ -201,6 +201,7 @@ async function fetchGateTable(
         topic: input.topic,
       }),
       callSite: 'world-lookup-gate',
+      providerOptions: { mythrun: { stage: 'world_lookup_gate' } },
       repairStrategy: 'haiku-then-sonnet',
       timeoutMs: WORLD_LOOKUP_GATE_TIMEOUT_MS,
       ...(deps.abortSignal !== undefined ? { abortSignal: deps.abortSignal } : {}),

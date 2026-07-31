@@ -419,7 +419,11 @@ describe('resolveSkillCheck', () => {
     const callOpts = mockGenerateText.mock.calls[0]?.[0] as unknown as {
       prompt: string
       abortSignal: AbortSignal
+      providerOptions?: unknown
     }
+    expect(callOpts.providerOptions).toMatchObject({
+      mythrun: { stage: 'skill_check_dc', sessionId: 'session-1' },
+    })
     // Prompt-var contract: the character summary + world tone flowed in.
     expect(callOpts.prompt).toContain('Vire')
     expect(callOpts.prompt).toContain('Rogue')

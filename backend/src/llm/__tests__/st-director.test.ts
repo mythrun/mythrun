@@ -60,9 +60,13 @@ describe('runStDirector', () => {
     expect(r.result).toEqual(okOutput)
     expect(r.repairAttempted).toBe(false)
     expect(r.usage.inputTokens).toBe(100)
-    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as {
+      prompt: string
+      providerOptions?: unknown
+    }
     expect(call.prompt).toContain('SECRET')
     expect(call.prompt).toContain('Arin (Rogue)')
+    expect(call.providerOptions).toMatchObject({ mythrun: { stage: 'st_eval' } })
   })
 
   it('surfaces repairAttempted=true (the worker discards on this)', async () => {

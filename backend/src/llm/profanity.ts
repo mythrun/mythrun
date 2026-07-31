@@ -28,6 +28,7 @@ export async function classifyProfanity(text: string): Promise<ProfanityResult> 
     prompt: text,
     maxRetries: 3,
     callSite: 'username-profanity-classifier',
+    providerOptions: { mythrun: { stage: 'profanity_gate' } },
     schemaName: 'ProfanitySchema',
   })
   return result.output

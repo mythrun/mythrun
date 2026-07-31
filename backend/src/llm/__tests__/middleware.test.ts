@@ -20,7 +20,7 @@ const successResult: LanguageModelV3GenerateResult = {
   content: [{ type: 'text', text: 'hi' }],
   finishReason: { unified: 'stop' as const, raw: 'end_turn' },
   usage: {
-    inputTokens: { total: 47, noCache: 47, cacheRead: 0, cacheWrite: 0 },
+    inputTokens: { total: 47, noCache: 30, cacheRead: 5, cacheWrite: 12 },
     outputTokens: { total: 8, text: 8, reasoning: 0 },
   },
   warnings: [],
@@ -59,7 +59,8 @@ describe('logAndNormalizeMiddleware', () => {
       inputTokens: 47,
       outputTokens: 8,
       totalTokens: 55,
-      cacheReadTokens: 0,
+      cacheReadTokens: 5,
+      cacheWriteTokens: 12,
       finishReason: 'stop',
     })
     const latencyMs = (obj as { latencyMs: unknown }).latencyMs

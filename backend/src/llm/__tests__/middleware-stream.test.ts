@@ -112,6 +112,34 @@ describe('logAndNormalizeMiddleware wrapStream', () => {
     expect(msg).toContain('stream completed')
   })
 
+  it('cacheWriteTokens rides the stream-mode llm.call line (cost wave 1)', async () => {
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => undefined)
+    const mw = logAndNormalizeMiddleware('claude-sonnet-test')
+    assert(mw.wrapStream !== undefined, 'wrapStream must be defined')
+
+    const cacheFinish: LanguageModelV3StreamPart = {
+      type: 'finish',
+      usage: {
+        inputTokens: { total: 100, noCache: 60, cacheRead: 25, cacheWrite: 15 },
+        outputTokens: { total: 8, text: 8, reasoning: 0 },
+      },
+      finishReason: { unified: 'stop', raw: 'end_turn' },
+    }
+    const out = await mw.wrapStream({
+      doGenerate: stubGenerate,
+      doStream: () => Promise.resolve(makeStreamResult([textDeltaPart('h'), cacheFinish])),
+      params: emptyParams(),
+      model: stubModel,
+    })
+
+    await drainStream(out.stream)
+    expect(infoSpy.mock.calls[1]?.[0]).toMatchObject({
+      event: 'llm.call',
+      cacheReadTokens: 25,
+      cacheWriteTokens: 15,
+    })
+  })
+
   it('case 2 — Success with finishReason=error: logs llm.call, not llm.error', async () => {
     const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => undefined)
     const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => undefined)
