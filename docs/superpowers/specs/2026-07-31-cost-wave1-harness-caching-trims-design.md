@@ -1,77 +1,94 @@
-# Cost Program Wave 1 — Cost-Assertion Harness, ST/Prep Caching, Prompt Trims — Design
+# Cost Program Wave 1 — Cost-Assertion Harness + Caching — Design (v2)
 
-**Date:** 2026-07-31
-**Program source:** `tmp/2026-07-30-pricing-restructure-and-cost-reduction-plan.md` (Miklos's plan; §4.1 harness, OPT-1, OPT-7, OPT-8, smokes S-1/S-2/S-4/S-5). This spec is Wave 1 of four: Wave 2 = OPT-9 session meter (+ farewell/END bugs), Wave 3 = pricing/Stripe restructure (blocked on Miklos's §5 decisions), Wave 4 = cadence + model swaps behind evals (OPT-2, 4/5/6, OPT-3 last). OPT-10 already shipped (the 2026-07-30 outage-resilience feature).
-**Decisions locked in brainstorm:** start with Wave 1; cost smokes run **on-demand (per-OPT proof gate) + weekly scheduled against staging**; never in pre-push/CI.
+**Date:** 2026-07-31 (v2 after blind round 1: OPT-8 rescoped — per-stage schemas invalidate the prompt cache, cross-stage sharing is provider-impossible; OPT-1 gains its enabling ai.ts contract extension; OPT-7 inverted to cache-first with content trims deferred to Wave 4's evals)
+**Program source:** `tmp/2026-07-30-pricing-restructure-and-cost-reduction-plan.md`. Wave 1 of four: Wave 2 = OPT-9 meter (+ farewell/END bugs), Wave 3 = pricing/Stripe (Miklos's §5 decisions), Wave 4 = cadence + model swaps behind evals (incl. any meaning-bearing prompt trims). OPT-10 shipped 2026-07-30.
+**Decisions locked:** Wave 1 first; smokes on-demand (per-OPT proof gate) + weekly staging; never in pre-push/CI.
 
-**Goal:** pure-savings optimizations with wire-level dollar proof — no product decisions, no quality evals required. Expected outcomes (program doc §3): ST Opus input ~90% off on the cached span (today `cacheRead = 0` on every eval); world gen $1.40 → ~$1.20 with prep helped; ~$0.80/2.5h-session from trims; and a harness that makes every later OPT's dollars assertable.
+**Honest expected outcome (revised in v2):** the wave's dollars come from caching, not trims — ST evals ~90% off the cached span (today `cacheRead = 0`), the per-turn Haiku calls (gate + tripwire) cached (~$0.67/2.5h-session, bigger and safer than the abandoned trim), and same-schema retry reuse in prep. **The program doc's world $1.40 → $1.20 (OPT-8) does NOT survive review** — cross-stage cache sharing is impossible (§3) — and the program-level tracking must be updated. Meaning-bearing trims (gate content, FT payload) are Wave-4 work behind quality evals.
 
 ---
 
 ## 1. Cost-assertion harness (`backend/scripts/cost/`)
 
+### 1.0 Enabling instrumentation (small, named — v1's "no new instrumentation" was false)
+
+- `providerOptions.mythrun` (sessionId + stage/callSite label) attached at the call sites that today emit anonymous lines: ST director, ST gate, turn audit, DM-trigger classifier, session reconciler, post-session analysis. Without ids, Haiku lines (gate vs audit vs DC) are unattributable and scenario scoping degrades to timestamps.
+- `cacheWriteTokens` added to the `llm.call` LogBindings (one field; the 1.25× write premium is otherwise unpriceable and a misplaced breakpoint that rewrites the prefix every call is otherwise invisible).
+
 ### 1.1 Runner
 
-`backend/scripts/cost/cost-smoke.ts <scenario> [--manifest <path>] [--log <path>]`:
+`backend/scripts/cost/cost-smoke.ts <scenario>`:
 
-1. Targets the RUNNING local stack (backend :3030 + worker + Postgres + Redis; the runner refuses to start its own — stack liveness is a precondition it checks and reports) or, in the weekly mode, the staging stack from inside the VPC.
-2. Executes the named scenario (§3) end-to-end.
-3. Captures usage from the **existing** `llm.call` structured logs (pino NDJSON; fields `inputTokens`, `outputTokens`, `cacheReadTokens`, `model`, `stage` already emitted by the cost middleware — no new instrumentation). Local capture = tailing the log file(s) the booted processes write, scoped to the scenario window by timestamp + scenario-correlated ids (campaignId/session id the scenario created). Staging capture = the same NDJSON via CloudWatch `filter-log-events` on the scenario window.
-4. Computes USD per call via the existing model-pricing table (`backend/src/billing/model-pricing` — the single pricing source; the manifest never duplicates prices).
-5. Asserts against the **expected-cost manifest** and prints the one-page report: component table (tokens in/out/cacheRead, $), delta vs manifest, PASS/FAIL per component and overall. **A red cost smoke is a red smoke** — same severity as a functional failure.
+1. Targets the RUNNING local stack (refuses to boot its own; liveness precondition includes "expected log files present and fresh") or staging (weekly mode, CloudWatch capture).
+2. Executes the named scenario (§5).
+3. Captures `llm.call` NDJSON from **BOTH** dev log files (`backend/logs/dev-<date>.log` API leg + `dev-worker-<date>.log` worker leg — queue-driven calls log to the worker; in-request calls to the API; the log-file precondition means `pnpm dev`/dev-logged only). Multi-file, midnight-spanning-safe. Scoped by scenario-correlated ids (§1.0) + the window; **window close = queue quiescence** (expected-count-with-timeout), never the last WS frame — turn N's eval/audit/scribe land after the stream ends.
+4. **USD derivation (normative — the naive reading is 3–5× wrong):** logged `inputTokens` is the SDK SUM (noCache + cacheRead + cacheWrite). Price as: base = `inputTokens − cacheReadTokens − cacheWriteTokens` at the input rate; `cacheReadTokens` at the cache-read rate; `cacheWriteTokens` at 1.25×; output at the output rate — mirroring `mapUsage` in cost-middleware.ts. Prices only from the existing model-pricing table (single source; it deliberately holds sticker rates).
+5. Asserts vs the manifest; prints the one-page component report. A red cost smoke is a red smoke.
 
 ### 1.2 Manifest (`backend/scripts/cost/expected-costs.json`)
 
-Checked in. Per-component entries: `{tokensIn, tokensOut, cacheReadMin?, usd, tolerancePct}` — tolerance defaults ±20%, per-entry overrides allowed. Initial entries seeded from the program doc §2 measured baselines (FT $/turn by context bracket; ST $/eval + evals/turn; prep total; reconcile total; analysis total; world-gen total per stage; session lifecycle total). **Each OPT landing updates its entries in the same commit as the optimization, with the passing cost-smoke report quoted in the commit message.** Anthropic price changes (the 2026-09-01 standard-rate flip) are a scheduled manifest update re-verified against S-1/S-2/S-4/S-5.
+- **Token** budgets seeded from the program doc §2 measurements; **dollar** budgets seeded from the harness's own first verified runs (table-rate-computed) — §2's dollars are intro-priced and would red against the sticker-rate table on day one. The 2026-09-01 flip is therefore a no-op for the harness.
+- **Bands pinned only after 3–5 baseline runs per scenario** (the §2 basis is n=1; adaptive-thinking Opus output is the high-variance term). Defaults ±20% with per-entry overrides derived from observed spread.
+- Cache assertions are **per-model scoped** (caches never cross models) and TTL-aware (5-minute ephemeral only — the billing layer rejects 1h-cache tokens by policy).
+- Each OPT landing updates its entries in the same commit, quoting the passing report.
 
 ### 1.3 Weekly scheduled run
 
-The same runner in the existing in-VPC ECS run-task family (the standing "fire in the VPC" pattern), EventBridge weekly schedule, against staging. Report lands in CloudWatch logs; failure emits a structured `cost_smoke.failed` event (alarm wiring rides the existing follow-up alarm bead — log events now, paging later). Estimated spend ~$2–4/week.
+The existing `mythrun-staging-smoke-*` ECS run-task family gains a cost-smoke task + an EventBridge weekly schedule (new wiring — the family exists, the schedule doesn't). Failure emits `cost_smoke.failed` structured logs (alarm wiring rides the standing alarm bead). ~$2–4/week.
 
-## 2. OPT-1 — ST prompt caching
+## 2. The enabling seam — cacheControl-capable contract on the ai.ts wrapper (NEW, load-bearing)
 
-The FT already proves the mechanism (`fast-thinker.ts` — message-level `cacheControl: {type:'ephemeral'}` breakpoints on the system message and the stable prefix; **call-level providerOptions is documented inert for cache_control on this provider**). The ST eval path (`st-director.ts`) adopts it:
+The FT's proven mechanism is message-level `providerOptions.anthropic.cacheControl` on a messages array. The canonical wrapper's `generateObject`/`streamObject`/loop paths accept only flat `prompt: string` (+ optional `system`) — **there is nowhere to hang a breakpoint**, and call-level providerOptions is documented inert. Wave 1 therefore extends the single-abstraction-layer contract:
 
-- Reorder the ST prompt so stable content leads: system message (breakpoint) → stable campaign/world state block (breakpoint) → per-turn window. The stable span must be byte-identical across evals within a session for the cache to hit — the assembly is audited for anything per-turn (timestamps, turn counters) embedded in the stable span and such content moves below the breakpoint.
-- No change to what the ST sees (enforced-ignorance boundaries untouched — the ST already sees everything; this is ordering + annotation only).
-- Measured baseline: 13 Opus evals/session, 159,402 in, `cacheRead = 0`, $1.46/session. Expected: ~90% off the cached span.
-- Proof: S-2's hard assertion `ST cacheRead > 0 on EVERY eval` + the S-1-lite total.
+- New optional input shape on the three entry points: an ordered list of prompt blocks `{text, cacheBreakpoint?: boolean}` (system + user spans), compiled inside ai.ts to the SDK messages form with per-block `cacheControl` — flat `prompt` remains supported unchanged.
+- The loop path (`stageBudgetMs` calls) threads blocks through `driveStreamingObjectAttempt` identically.
+- Tested at the wrapper level: block compilation, breakpoint placement, legacy-path byte-identity.
+- **Positive interaction (noted, free):** a loop attempt that fails after prompt processing has already written the cache — its retry reads it.
 
-## 3. OPT-8 — world-gen + prep caching
+## 3. OPT-1 — ST prompt caching (+ the per-turn Haiku calls)
 
-Same mechanism across the prep engine: the pipeline stages re-send shared world-canon prefixes (canon/kernel blocks) per stage call; the stage-call assembly gains breakpoints on those shared prefixes (world-gen stages + session-prep's two calls). Stage prompts are ordered stable-first where they aren't already. Expected: world $1.40 → ~$1.20; prep total helped ahead of OPT-4's model swap. Proof: S-4/S-5 `cacheRead > 0` assertions + per-stage dollar bands.
+**ST eval (Opus):** reorder `st-evaluation.txt` stable-first and annotate via §2's blocks. Stable span (above the last breakpoint): template head + roster + sd_playbook. Below: everything ST-output-derived (running summary, standing directive, pending one-shot), the exchange window, and BOTH mode slots (`wind_down`/`converge` are per-phase — volatile). Baseline: 13 evals/session, 159k in, cacheRead = 0, $1.46. Cadence ~84s is safely inside the 5-min TTL; the gate's 5-turn skip floor can open ~7-min gaps — assertions accommodate (§5).
 
-## 4. OPT-7 — prompt trims
+**Haiku gate + scribe tripwire (the review's cache-first inversion — bigger and safer than any trim):** both re-send per-session-stable spans every turn with cacheRead = 0. Gate: boilerplate + full sd_playbook (~7.5k of ~10k) cached ≈ $0.67/2.5h-session at zero quality risk. Tripwire: reorder stable-first (secrets/publicContext blocks are per-session-stable; the template currently leads with volatile prose). **Constraint that ordered this wave: Haiku 4.5's minimum cacheable prefix is 4096 tokens — any future gate trim below ~5k stable span forecloses caching; caching therefore lands FIRST and any residual trim is re-derived afterward (post-caching, trimmed playbook tokens are worth $0.10/MTok — near nothing).**
 
-- Haiku gate input 10k → ~5k (the gate's fat context is the target; trim what the gate demonstrably doesn't need for its binary decision — content selection is reviewed against the gate's prompt template contract, not blind truncation).
-- Audit/scribe per-turn trims.
-- FT fixed payload 17.5k → 15k.
-- Every trim follows the prompt+schema co-evolution rule: the existing prompt/schema constructed smokes re-run per trim, plus the cost smokes. Trims that would change MEANING (not just size) are out of scope for Wave 1 — flag, don't ship.
+Schema note: these are structured-output calls — the schema is part of the cached prefix context and is per-call-site STABLE, so same-call-site caching works; the impossibility in §4 below is CROSS-schema only.
+
+## 4. OPT-8 — rescoped: same-shape reuse only
+
+**Cross-stage prefix sharing is provider-impossible and is dropped:** each stage call carries its own schema; on this stack the schema is delivered via `output_config.format`, and changing it "will invalidate any prompt cache for that conversation thread" (provider-documented). Independent blockers: adjacent-stage gaps exceed the 5-minute TTL (locations_and_npcs alone streams ~5 min), and the billing layer rejects 1h-cache tokens by policy. **The program doc's world $1.40 → $1.20 expectation is retired; program tracking updated.**
+
+What remains (real, small): same-call-site reuse — session-prep's overflow-retry pair (same schema, near-identical prompt, minutes apart) and BullMQ/loop stage retries re-reading the attempt's own cache write. Annotate those call sites via §2's blocks; expected savings honest-small; proven by S-4's cacheRead-on-retry assertion rather than a blanket pipeline claim.
 
 ## 5. Scenario smokes (Wave 1 set)
 
 | Smoke | Scenario | Asserts |
 |---|---|---|
-| S-1-lite | Constructed-state campaign, scripted 12-turn WS play incl. 2 skill checks (extends the existing `scripts/smoke` session-driving precedent) | per-turn FT cost bracket; ST eval count matches cadence config; total in-session $ within band |
-| S-2 | S-1-lite turns 2+ | FT `cacheRead ≥ 85%` of input; **ST `cacheRead > 0` on every eval**; prep/world-gen `cacheRead > 0` (post-OPT-8) |
-| S-4 | Finalize character creation → prep pipeline | prep $ ≤ manifest; configured model asserted; ft_context/sd_playbook schema-valid |
-| S-5 | Full prep-engine run on a fixed input | per-stage $ ≤ manifest; stage retry cost counted separately |
+| S-1 | Constructed-state campaign, scripted 12-turn WS play incl. 2 skill checks (**new driver** — the existing smoke scripts drive in-process, not over WS; S-1's WS driver is new code and says so) | per-turn FT cost bracket; ST **$/eval** within band + eval count within an empirically measured range (no cadence config exists until Wave 4 — count is gate-driven and nondeterministic); total in-session $ **informational**, not gating |
+| S-2 | S-1 turns 2+ | FT `cacheRead ≥ 85%`; ST: every eval EITHER `cacheRead > 0` OR is the session's first (cold write: `cacheWrite > 0`) OR follows a >TTL gap (logged, not failed); gate + tripwire `cacheRead > 0` from turn 2 |
+| S-4 | Finalize character creation → prep pipeline | prep $ ≤ manifest; configured model asserted; retry-path `cacheRead > 0` when a retry occurs; ft_context/sd_playbook schema-valid |
+| S-5 | Full prep-engine run on fixed input | per-stage $ ≤ manifest (per-model scoped); stage retry cost counted separately |
 
-S-3 (lifecycle), S-6 (long-session extrapolation), S-7 (cadence telemetry) belong to Wave 2 with the meter. Estimated on-demand full-run spend: ~$2–4.
+The wave's savings are proven per-call (token/$ deltas at the call sites); session-scale dollar claims are arithmetic extrapolation from these measurements and are labeled as such — S-6 (long-session) arrives with Wave 2's meter. S-3/S-7 also Wave 2.
 
-## 6. Execution order within the wave
+## 6. What Wave 1 does NOT trim (deferred to Wave 4 behind evals)
 
-Harness + manifest first (it proves everything else) → S-4/S-5 green against as-built baselines → OPT-1 (+S-2 ST assertion flips on) → OPT-8 (+S-2 prep/world-gen assertions flip on) → OPT-7 trims (S-1-lite/S-2 re-baselined per trim) → weekly ECS schedule wiring last.
+- **Gate content:** the gate input is ~70–80% sd_playbook and every fire condition is playbook-relative; selecting "what the gate doesn't need" is meaning-bearing by construction and code-side selection is ZFC-forbidden. Any gate trim needs OPT-2's intervention-latency eval harness. Post-caching it's also nearly worthless.
+- **Audit/scribe content:** the audit input IS the payload under audit + false-positive calibration (a player-trust boundary); the tripwire's publicContext is the false-retcon grounding floor. No provably-dead bytes identified.
+- **FT fixed payload:** the span is ~91% cached — a 2.5k trim is worth ~$0.08/session against the product's core surface. Dropped.
 
-## 7. Testing (beyond the smokes themselves)
+## 7. Execution order within the wave
 
-- Unit: manifest loader/tolerance math; NDJSON usage extraction (fixture log lines incl. missing-cacheRead and multi-model runs); USD computation against the pricing table; report rendering.
-- The caching changes ship with assertion-bearing unit tests where the prompt assembly is pure (stable-span byte-stability across two assemblies of the same session state — the cache-hit precondition, testable without the API).
-- Constructed prompt/schema smokes re-run per trim (existing suites).
+Harness instrumentation (§1.0) + runner + manifest → 3–5 baseline runs, bands pinned, S-4/S-5 green on as-built → §2 wrapper contract extension → OPT-1 ST caching (+S-2 ST assertions on) → gate + tripwire caching (+S-2 turn-2+ assertions on) → OPT-8-rescoped retry-reuse annotations → weekly ECS schedule wiring last.
 
-## 8. Out of scope (Wave 1)
+## 8. Testing (beyond the smokes)
 
-- OPT-9 meter, `session_usage` durable trail, S-3/S-6/S-7 (Wave 2 — the meter owns them).
-- Any pricing/Stripe/tier change, paywall copy (Wave 3; Miklos's §5 decisions pending).
-- Model swaps + their evals, ST cadence (Wave 4).
-- CloudWatch $/hour alarm (rides the standing alarm bead; `cost_smoke.failed` events land now).
+- Unit: manifest loader/tolerance; NDJSON extraction (fixtures incl. missing-cacheRead, multi-model, dual-file merge); the USD derivation against mapUsage's semantics; report rendering; §2 block compilation + breakpoint placement + legacy byte-identity.
+- **Stable-span boundary test (not determinism):** the prefix up to the last breakpoint is byte-identical across assemblies with DIFFERENT per-turn state (changed summary/exchanges/directive/mode); the volatile suffix differs. Applied to ST, gate, tripwire assemblies.
+- Prompt/schema constructed smokes re-run for every template reorder (co-evolution rule).
+
+## 9. Out of scope (Wave 1)
+
+- OPT-9 meter, `session_usage` trail, S-3/S-6/S-7 (Wave 2).
+- Pricing/Stripe/tiers, paywall copy (Wave 3; Miklos's §5 decisions pending).
+- Model swaps, ST cadence, and ALL meaning-bearing prompt trims (Wave 4, behind evals).
+- CloudWatch $/hour alarm (standing alarm bead; `cost_smoke.failed` events land now).
