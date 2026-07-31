@@ -52,7 +52,13 @@ import {
   type ToolSet,
 } from 'ai'
 import { z } from 'zod'
+import { classifyLlmError, type LlmFailureClass, type LlmFailureVerdict } from './classify-llm-error.js'
 import { LlmStructuredOutputError, mapToMythrunError } from './errors.js'
+import {
+  registerAttemptObservation,
+  takeAttemptObservation,
+  type FetchObservation,
+} from './llm-fetch.js'
 import { logger } from './logger.js'
 import { HAIKU, SONNET } from './models.js'
 import { repairStructuredOutput } from './prep/structured-output-repair.js'
@@ -92,6 +98,52 @@ const VALID_STAGES = new Set<WorldGenStage>([
 ])
 
 type RepairStrategy = 'sonnet' | 'haiku-then-sonnet'
+
+// --- outage-resilience §1.4: the boot-injected failure-reporting hook -------
+//
+// ai.ts stays dependency-free: the API server + workers inject a Redis-backed
+// sink (llm-health tracker) at boot via setLlmHealthSink; the default is a
+// no-op. Only connectivity-class failures (outageSignal === true per §1.2)
+// ever reach the sink, and the call is fire-and-forget — a sink failure must
+// never fail the calling turn/stage.
+
+export interface LlmConnectivityReport {
+  readonly callsite: string
+  /** Job id or session id — extracted from providerOptions.mythrun
+   *  (jobId ?? sessionId ?? worldId ?? campaignId), 'unknown' when absent. */
+  readonly jobId: string
+  readonly modelId: string
+  readonly mode: 'streaming' | 'non-streaming' | null
+  readonly failureClass: 'connectivity'
+}
+
+// The sink may be async (the boot integration injects a Redis-backed one);
+// emitConnectivityReport routes a rejected sink promise into the same
+// drop-and-log guard as a synchronous throw.
+export type LlmHealthSink = (report: LlmConnectivityReport) => void | Promise<void>
+
+let healthSink: LlmHealthSink | null = null
+
+export function setLlmHealthSink(sink: LlmHealthSink | null): void {
+  healthSink = sink
+}
+
+// §1.3 loop constants. Every loop-scoped call makes at most 3 attempts with
+// jittered backoff ≤2s between them; a RETRY starts only when the remaining
+// budget still fits an expected healthy run (default 60s — fast calls; slow
+// stages pass their observed healthy duration).
+const DEFAULT_EXPECTED_HEALTHY_DURATION_MS = 60_000
+const MAX_LOOP_ATTEMPTS = 3
+const MAX_RETRY_JITTER_MS = 2_000
+// §1.2 requires an EXPLICIT timeout on repair calls — but NOT the fast-call
+// 60s: the repair prompt regenerates the ENTIRE corrected tree with no
+// maxOutputTokens cap, so on the big streamObject stages a legitimate repair
+// can run for minutes, and a 60s bound would convert a stage that used to
+// self-heal into a terminal LlmStructuredOutputError. Loop-scoped calls bound
+// repair by the attempt's REMAINING stage budget instead; this generous
+// constant is the legacy single-shot bound — explicit per the spec, sized
+// for unbounded repair output.
+const REPAIR_CALL_TIMEOUT_MS = 5 * 60_000
 
 /**
  * myth-t1qz Phase 4: the diagnostic payload the wrapper attaches to a
@@ -163,6 +215,25 @@ export interface GenerateObjectOpts<T> {
    * snippet capture path byte-for-byte unchanged for every existing caller.
    */
   readonly redactRawText?: boolean
+  /**
+   * Outage-resilience §1.3: arms the wrapper-owned attempt loop AND switches
+   * the call to streaming transport internally (§1.0 — streamText +
+   * Output.object; external contract unchanged). While armed: the loop's
+   * per-attempt controller is the ONE timing authority (each attempt gets the
+   * FULL remaining budget; `timeoutMs` is subsumed and ignored), SDK
+   * maxRetries is forced to 0, and every failed attempt classifies (§1.2)
+   * and reports (§1.4). Absent = legacy single-shot behavior, byte-identical.
+   */
+  readonly stageBudgetMs?: number
+  /**
+   * §1.3 retry gate: a RETRY starts only if the remaining budget (minus any
+   * 429 wait) is at least this. Per-call-site: fast calls default 60s; slow
+   * stages pass their observed healthy duration. First attempt always runs.
+   */
+  readonly expectedHealthyDurationMs?: number
+  /** §1.4: opt this call out of health reporting (the recovery probe sets it
+   *  so probe traffic never re-arms the outage window). */
+  readonly skipHealthReport?: boolean
 }
 
 export interface GenerateObjectResult<T> {
@@ -190,6 +261,10 @@ export interface StreamObjectOpts<T> {
    *  Sonnet burn). Combined with the internal timeout via AbortSignal.any —
    *  whichever fires first aborts. Mirrors GenerateObjectOpts.abortSignal. */
   readonly abortSignal?: AbortSignal
+  /** §1.4: see GenerateObjectOpts.skipHealthReport. Externally-consumed
+   *  streams are never loop-scoped (§1.3) — they get boundary classification
+   *  + reporting only; their retry unit is the stage (§3 parking). */
+  readonly skipHealthReport?: boolean
 }
 
 export interface GenerateTextOpts {
@@ -200,6 +275,10 @@ export interface GenerateTextOpts {
   readonly providerOptions?: unknown
   /** myth-4omh: see GenerateObjectOpts.timeoutMs. */
   readonly timeoutMs?: number
+  /** §1.2 boundary classification label; defaults to 'generate-text'. */
+  readonly callSite?: string
+  /** §1.4: see GenerateObjectOpts.skipHealthReport. */
+  readonly skipHealthReport?: boolean
 }
 
 export interface GenerateTextResult {
@@ -296,6 +375,18 @@ interface RepairContext<T> {
   // MYT-72: when true, redact the raw-text snippet + Zod issues from the WARN
   // log and the attached diagnostic (the raw output reasons over secrets).
   readonly redactRawText: boolean
+  // Outage-resilience §1.2: loop-scoped calls rethrow connectivity-classed
+  // repair-call failures to the attempt loop instead of converting them to
+  // terminal tier failures (a transport outage during repair is retryable);
+  // legacy single-shot callers keep the tier-failure conversion.
+  readonly surfaceConnectivityFailures: boolean
+  // Loop-scoped path only: the attempt's abort signal + stage-budget
+  // deadline. Repair calls merge the signal and are bounded by the REMAINING
+  // budget — repair spend must never outlive the budget or continue past an
+  // external abort. Both undefined on the legacy single-shot path, which
+  // bounds repair with REPAIR_CALL_TIMEOUT_MS.
+  readonly attemptSignal: AbortSignal | undefined
+  readonly attemptDeadline: number | undefined
 }
 
 interface RepairAttempt<T> {
@@ -357,6 +448,9 @@ async function attemptRepair<T>(
       model: HAIKU,
       stage,
       providerOptions: repairProvOpts,
+      surfaceConnectivity: ctx.surfaceConnectivityFailures,
+      attemptSignal: ctx.attemptSignal,
+      attemptDeadline: ctx.attemptDeadline,
     })
     if (haikuOutcome.tag === 'ok') {
       return {
@@ -377,6 +471,9 @@ async function attemptRepair<T>(
     model: SONNET,
     stage,
     providerOptions: repairProvOpts,
+    surfaceConnectivity: ctx.surfaceConnectivityFailures,
+    attemptSignal: ctx.attemptSignal,
+    attemptDeadline: ctx.attemptDeadline,
   })
   if (sonnetOutcome.tag === 'ok') {
     return {
@@ -406,7 +503,20 @@ async function tryRepairWithModel<T>(args: {
   model: LanguageModel
   stage: WorldGenStage
   providerOptions: { readonly mythrun: { readonly stage: WorldGenStage } }
+  surfaceConnectivity: boolean
+  attemptSignal: AbortSignal | undefined
+  attemptDeadline: number | undefined
 }): Promise<RepairOutcomeInternal<T>> {
+  // Outage-resilience §1.2: repair calls get an explicit timeout so a hung
+  // repair connection can't silently eat the stage budget. Loop-scoped: the
+  // attempt's REMAINING budget, recomputed per tier so a Sonnet tier after a
+  // failed Haiku tier gets only what is actually left. Legacy single-shot:
+  // the generous constant (repair output is unbounded — see
+  // REPAIR_CALL_TIMEOUT_MS).
+  const timeoutMs =
+    args.attemptDeadline !== undefined
+      ? Math.max(args.attemptDeadline - Date.now(), 1)
+      : REPAIR_CALL_TIMEOUT_MS
   try {
     const repair = await repairStructuredOutput<T>({
       tree: args.tree,
@@ -415,14 +525,28 @@ async function tryRepairWithModel<T>(args: {
       model: args.model,
       stage: args.stage,
       providerOptions: args.providerOptions,
+      timeoutMs,
+      // Loop-scoped: the attempt's signal is merged into the repair call so
+      // an external abort (or the stage-budget timer) stops repair spend
+      // immediately instead of letting it run to its own timeout.
+      ...(args.attemptSignal !== undefined ? { abortSignal: args.attemptSignal } : {}),
     })
     if (repair.ok) {
       return { tag: 'ok', tree: repair.tree, usage: repair.usage }
     }
     return { tag: 'fail' }
-  } catch {
-    // Repair-call transport / SDK error — treat as a tier failure and let
-    // the next tier (or the caller's WARN-and-rethrow) handle it.
+  } catch (err) {
+    // Outage-resilience §1.2: a connectivity-classed repair failure means the
+    // transport is down — converting it to a tier failure would end in a
+    // TERMINAL schema error the worker never retries. Loop-scoped callers
+    // rethrow it to the attempt loop; legacy single-shot callers keep the
+    // tier-failure conversion (next tier, then WARN-and-rethrow).
+    if (
+      args.surfaceConnectivity &&
+      classifyLlmError(err, { mode: null, headersArrived: null }).failureClass === 'connectivity'
+    ) {
+      throw err
+    }
     return { tag: 'fail' }
   }
 }
@@ -541,6 +665,310 @@ function createTimeoutSignal(timeoutMs: number | undefined): {
   }
 }
 
+// --- outage-resilience §1.2/§1.3: boundary classification + attempt loop ---
+
+/** The call-site fields boundary classification and reporting need; every
+ *  opts shape in this file satisfies it structurally. */
+interface BoundaryCallMeta {
+  readonly callSite: string
+  readonly model: LanguageModel
+  readonly providerOptions?: unknown
+  readonly skipHealthReport?: boolean | undefined
+}
+
+/** §1.4 report identity: job id or session id from providerOptions.mythrun.
+ *  Task 8/9 call sites thread an explicit `jobId`; the session-id fallbacks
+ *  cover live-play surfaces that already carry MythrunContext. */
+function extractJobId(providerOptions: unknown): string {
+  if (typeof providerOptions !== 'object' || providerOptions === null) return 'unknown'
+  const mythrun = (providerOptions as { mythrun?: unknown }).mythrun
+  if (typeof mythrun !== 'object' || mythrun === null) return 'unknown'
+  const fields = mythrun as Record<string, unknown>
+  for (const key of ['jobId', 'sessionId', 'worldId', 'campaignId']) {
+    const value = fields[key]
+    if (typeof value === 'string' && value.length > 0) return value
+  }
+  return 'unknown'
+}
+
+/** Task 8 contract: surfaced errors carry their §1.2 class as a property the
+ *  park predicate reads without re-classifying. Note this mutates an object
+ *  the caller already holds — on the streamTextWithTools path that is the
+ *  error inside an in-band stream part yielded onward to the FT consumer,
+ *  which therefore sees `llmFailureClass` on it (intended: that is how the
+ *  parking task reads the class downstream). */
+function attachFailureClass(err: unknown, failureClass: LlmFailureClass): void {
+  if (typeof err !== 'object' || err === null) return
+  ;(err as { llmFailureClass?: LlmFailureClass }).llmFailureClass = failureClass
+}
+
+/** §1.4 fire-and-forget: a sink failure must never fail the calling stage.
+ *  Guards BOTH failure shapes — a synchronous throw (try/catch) and an async
+ *  sink's rejected promise (Promise.resolve().catch): left floating, that
+ *  rejection would kill the worker (this file's documented historical
+ *  failure mode). */
+function emitConnectivityReport(
+  meta: BoundaryCallMeta,
+  mode: 'streaming' | 'non-streaming' | null,
+): void {
+  if (healthSink === null) return
+  const logSinkFailure = (err: unknown): void => {
+    logger.warn(
+      { event: 'llm.health_sink.threw', callSite: meta.callSite, err },
+      'llm health sink threw; report dropped',
+    )
+  }
+  try {
+    void Promise.resolve(
+      healthSink({
+        callsite: meta.callSite,
+        jobId: extractJobId(meta.providerOptions),
+        modelId: modelLabel(meta.model),
+        mode,
+        failureClass: 'connectivity',
+      }),
+    ).catch(logSinkFailure)
+  } catch (err) {
+    logSinkFailure(err)
+  }
+}
+
+/**
+ * §1.2: classify a failure at the ai.ts boundary, attach its class to the
+ * surfaced error, and report connectivity-class failures (single-attempt
+ * sites report their one attempt). Loop-scoped calls do NOT use this — the
+ * loop separates classification from reporting so the external-abort bail
+ * can suppress the report.
+ */
+function classifyAttachAndReport(
+  err: unknown,
+  meta: BoundaryCallMeta,
+  observation: FetchObservation | null,
+): LlmFailureVerdict {
+  const verdict = classifyLlmError(err, {
+    // Every single-attempt call site threads a literal null observation
+    // (no observed transport off the loop path); the non-null arms below
+    // are dead until a site threads a real one.
+    /* c8 ignore next 2 */
+    mode: observation?.mode ?? null,
+    headersArrived: observation?.headersArrived ?? null,
+  })
+  attachFailureClass(err, verdict.failureClass)
+  if (verdict.outageSignal && meta.skipHealthReport !== true) {
+    /* c8 ignore next — same: observation is null at every current call site. */
+    emitConnectivityReport(meta, observation?.mode ?? null)
+  }
+  return verdict
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+/** AbortSignal.aborted flips at runtime; the function boundary keeps TS from
+ *  narrowing it to a constant across the loop's awaits. */
+function externallyAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true
+}
+
+/** §1.3 (429 row): retry-after seconds from the failure's responseHeaders,
+ *  walked through causes (bounded like the §1.2 walk). Non-numeric or absent
+ *  values yield null and the jittered backoff stands alone. */
+function extractRetryAfterMs(err: unknown): number | null {
+  let current: unknown = err
+  for (let depth = 0; depth <= 5 && typeof current === 'object' && current !== null; depth++) {
+    const headers = (current as { responseHeaders?: unknown }).responseHeaders
+    if (typeof headers === 'object' && headers !== null) {
+      const raw = (headers as Record<string, unknown>)['retry-after']
+      if (typeof raw === 'string' && /^\d+$/.test(raw)) return Number(raw) * 1000
+    }
+    current = (current as { cause?: unknown }).cause
+  }
+  return null
+}
+
+/**
+ * §1.0: one loop attempt's transport — drive the SDK streaming path
+ * (streamText + Output.object, the non-deprecated pair) and assemble the
+ * final validated object. Identical output semantics to the generate path:
+ * schema failures surface as AI_NoObjectGeneratedError carrying the raw
+ * text, so the existing repair chain applies unchanged. In-band stream
+ * errors never reach `.output` directly (a zero-step stream rejects with the
+ * SDK's NoOutputGeneratedError shell), so the FIRST in-band error — captured
+ * via onError — is rethrown as the attempt's real failure.
+ */
+async function driveStreamingObjectAttempt<T>(
+  opts: GenerateObjectOpts<T>,
+  attemptSignal: AbortSignal,
+): Promise<{ readonly output: T; readonly usage: LanguageModelUsage }> {
+  let inBandError: unknown
+  const result = sdkStreamText({
+    model: opts.model,
+    prompt: opts.prompt,
+    output: Output.object<T>({ schema: opts.schema }),
+    abortSignal: attemptSignal,
+    // §1.3: the loop owns attempts — SDK-internal retries are disabled.
+    maxRetries: 0,
+    onError: ({ error }) => {
+      if (inBandError === undefined) inBandError = error
+    },
+    ...(opts.system !== undefined ? { system: opts.system } : {}),
+    ...(opts.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),
+    ...(opts.providerOptions !== undefined
+      ? {
+          providerOptions: opts.providerOptions as NonNullable<
+            Parameters<typeof sdkStreamText>[0]['providerOptions']
+          >,
+        }
+      : {}),
+  })
+  try {
+    // Accessing .output consumes the stream internally; totalUsage is read
+    // only on success (the SDK's DelayedPromise pattern means the unaccessed
+    // rejection on the failure path never detaches).
+    const output = await result.output
+    const usage = await result.totalUsage
+    return { output, usage }
+  } catch (err) {
+    throw inBandError !== undefined ? inBandError : err
+  }
+}
+
+type LoopAttemptOutcome<T> =
+  | { readonly tag: 'ok'; readonly result: GenerateObjectResult<T> }
+  | {
+      readonly tag: 'failed'
+      readonly error: Error
+      readonly verdict: LlmFailureVerdict
+      readonly observation: FetchObservation | null
+    }
+
+/**
+ * One §1.3 attempt: fresh AbortController armed with the FULL remaining
+ * budget (the ONE timing authority for loop-scoped calls — createTimeoutSignal
+ * is not armed), per-attempt observation registered by signal identity, and
+ * the repair chain applied in-attempt on schema failures exactly as the
+ * legacy path does. Never throws for retry-worthy failures — the loop decides.
+ */
+async function runLoopAttempt<T>(
+  opts: GenerateObjectOpts<T>,
+  ctx: RepairContext<T>,
+  deadline: number,
+): Promise<LoopAttemptOutcome<T>> {
+  const remainingMs = Math.max(deadline - Date.now(), 1)
+  const attemptController = new AbortController()
+  const budgetTimer = setTimeout(() => {
+    attemptController.abort()
+  }, remainingMs)
+  const attemptSignal =
+    opts.abortSignal !== undefined
+      ? AbortSignal.any([attemptController.signal, opts.abortSignal])
+      : attemptController.signal
+  registerAttemptObservation(attemptSignal)
+  try {
+    const { output, usage } = await driveStreamingObjectAttempt(opts, attemptSignal)
+    return { tag: 'ok', result: { output, usage, repairAttempted: false } }
+  } catch (err) {
+    const observation = takeAttemptObservation(attemptSignal)
+    const failureCtx = {
+      mode: observation?.mode ?? null,
+      headersArrived: observation?.headersArrived ?? null,
+    }
+    const mapped = err instanceof LlmStructuredOutputError ? err : mapToMythrunError(err)
+    if (!(mapped instanceof LlmStructuredOutputError)) {
+      const verdict = classifyLlmError(mapped, failureCtx)
+      attachFailureClass(mapped, verdict.failureClass)
+      return { tag: 'failed', error: mapped, verdict, observation }
+    }
+    // Schema failure → the same repair chain as the legacy path, in-attempt.
+    // ctx.surfaceConnectivityFailures is true here, so a connectivity-classed
+    // repair-call failure THROWS out of attemptRepair and becomes this
+    // attempt's (retry-worthy) failure instead of a terminal tier failure.
+    // The attempt's signal + deadline ride along: the budget timer is still
+    // armed here (the finally hasn't run), so repair aborts with the attempt
+    // and is bounded by the remaining budget.
+    try {
+      const attempt = await attemptRepair<T>(mapped, {
+        ...ctx,
+        attemptSignal,
+        attemptDeadline: deadline,
+      })
+      if (attempt.result !== undefined) {
+        logRepair(ctx, attempt, 'info')
+        return {
+          tag: 'ok',
+          result: {
+            output: attempt.result.output,
+            usage: attempt.result.usage,
+            repairAttempted: true,
+          },
+        }
+      }
+      logRepair(ctx, attempt, 'warn')
+      attachDiagnostic(mapped, buildDiagnostic(ctx, attempt))
+      const verdict = classifyLlmError(mapped, failureCtx)
+      attachFailureClass(mapped, verdict.failureClass)
+      return { tag: 'failed', error: mapped, verdict, observation }
+    } catch (repairErr) {
+      const repairError =
+        repairErr instanceof Error ? repairErr : new Error(String(repairErr))
+      // The repair call ran outside the attempt's observed fetch — classify
+      // with a null transport context (code-based connectivity still lands).
+      const verdict = classifyLlmError(repairError, { mode: null, headersArrived: null })
+      attachFailureClass(repairError, verdict.failureClass)
+      return { tag: 'failed', error: repairError, verdict, observation: null }
+    }
+    // Both arms of the inner try/catch return, so v8 reports the outer
+    // catch's fall-through bytes at the finally boundary as an uncoverable
+    // branch.
+    /* c8 ignore next */
+  } finally {
+    clearTimeout(budgetTimer)
+    // Success path cleanup; on the failure path the catch already took the
+    // entry and this second take is a no-op.
+    takeAttemptObservation(attemptSignal)
+  }
+}
+
+/** §1.3: the wrapper-owned attempt loop. See GenerateObjectOpts.stageBudgetMs. */
+async function generateObjectWithBudget<T>(
+  opts: GenerateObjectOpts<T>,
+  stageBudgetMs: number,
+  ctx: RepairContext<T>,
+): Promise<GenerateObjectResult<T>> {
+  const deadline = Date.now() + stageBudgetMs
+  const expectedHealthyMs =
+    opts.expectedHealthyDurationMs ?? DEFAULT_EXPECTED_HEALTHY_DURATION_MS
+  for (let attempt = 1; ; attempt += 1) {
+    const outcome = await runLoopAttempt(opts, ctx, deadline)
+    if (outcome.tag === 'ok') return outcome.result
+    const { error, verdict, observation } = outcome
+    // §1.3: external aborts win — bail, no retry, no report.
+    if (externallyAborted(opts.abortSignal)) throw error
+    if (verdict.outageSignal && opts.skipHealthReport !== true) {
+      emitConnectivityReport(opts, observation?.mode ?? null)
+    }
+    if (!verdict.retryWorthy || attempt >= MAX_LOOP_ATTEMPTS) throw error
+    // §1.3 backoff: jitter ≤2s; a 429 waits max(jitter, retry-after).
+    const jitterMs = Math.random() * MAX_RETRY_JITTER_MS
+    const waitMs =
+      verdict.failureClass === 'rate-limit'
+        ? Math.max(jitterMs, extractRetryAfterMs(error) ?? 0)
+        : jitterMs
+    // §1.3 retry gate: a retry starts only when, after the wait, an expected
+    // healthy run still fits the remaining budget — otherwise the retry burns
+    // spend and dies as a misclassified abort.
+    if (deadline - Date.now() - waitMs < expectedHealthyMs) throw error
+    await sleep(waitMs)
+    if (externallyAborted(opts.abortSignal)) throw error
+    // Unreachable: the for(;;) exits only via return or throw, so v8
+    // reports the loop's fall-through bytes as uncovered.
+    /* c8 ignore next 2 */
+  }
+}
+
 /**
  * Schema-validated `generateText` replacement. Returns the SDK output, the
  * SDK usage, and a `repairAttempted` flag indicating whether the fallback
@@ -560,6 +988,19 @@ export async function generateObject<T>(
     repairStrategy,
     providerOptions: opts.providerOptions,
     redactRawText: opts.redactRawText ?? false,
+    surfaceConnectivityFailures: opts.stageBudgetMs !== undefined,
+    // The loop path overlays the per-attempt signal + deadline in
+    // runLoopAttempt; the legacy path below never has them.
+    attemptSignal: undefined,
+    attemptDeadline: undefined,
+  }
+
+  // Outage-resilience §1.3: stageBudgetMs arms the wrapper-owned attempt
+  // loop (streaming transport, full-remaining-budget attempts, classify +
+  // report per attempt). Absent, the legacy single-shot path below is
+  // byte-identical to the pre-loop behavior.
+  if (opts.stageBudgetMs !== undefined) {
+    return generateObjectWithBudget(opts, opts.stageBudgetMs, ctx)
   }
 
   const timeout = createTimeoutSignal(opts.timeoutMs)
@@ -599,6 +1040,9 @@ export async function generateObject<T>(
     // LlmStructuredOutputError so the repair pipeline runs.
     const mapped = err instanceof LlmStructuredOutputError ? err : mapToMythrunError(err)
     if (!(mapped instanceof LlmStructuredOutputError)) {
+      // §1.2: single-attempt sites classify + report their one attempt (no
+      // transport observation is threaded on the legacy path — nulls).
+      classifyAttachAndReport(mapped, opts, null)
       throw mapped
     }
     const attempt = await attemptRepair<T>(mapped, ctx)
@@ -612,6 +1056,7 @@ export async function generateObject<T>(
     }
     logRepair(ctx, attempt, 'warn')
     attachDiagnostic(mapped, buildDiagnostic(ctx, attempt))
+    classifyAttachAndReport(mapped, opts, null)
     throw mapped
     /* c8 ignore next 3 — finally cleanup; v8 branch tracking reports the
      * implicit suppress/rethrow split as one uncovered branch even when
@@ -645,6 +1090,12 @@ export function streamObject<T>(
     // streamObject has no redactRawText opt; default false keeps streaming
     // diagnostics unchanged.
     redactRawText: false,
+    // §1.3: externally-consumed streams are never loop-scoped — a consumed
+    // stream cannot be transparently re-driven — so repair keeps the legacy
+    // tier-failure conversion; the retry unit is the stage (§3 parking).
+    surfaceConnectivityFailures: false,
+    attemptSignal: undefined,
+    attemptDeadline: undefined,
   }
 
   // myth-4omh: streaming stages run for several minutes; the timeout
@@ -690,6 +1141,9 @@ export function streamObject<T>(
       // mapToMythrunError first, then check.
       const mapped = err instanceof LlmStructuredOutputError ? err : mapToMythrunError(err)
       if (!(mapped instanceof LlmStructuredOutputError)) {
+        // §1.2: externally-consumed streams get boundary classification +
+        // reporting only (no loop) — their retry unit is the stage (§3).
+        classifyAttachAndReport(mapped, opts, null)
         throw mapped
       }
       const attempt = await attemptRepair<T>(mapped, ctx)
@@ -699,6 +1153,7 @@ export function streamObject<T>(
       }
       logRepair(ctx, attempt, 'warn')
       attachDiagnostic(mapped, buildDiagnostic(ctx, attempt))
+      classifyAttachAndReport(mapped, opts, null)
       throw mapped
     },
   )
@@ -762,7 +1217,19 @@ export async function generateText(opts: GenerateTextOpts): Promise<GenerateText
     // typed errors on rate limit / auth / etc). generateObject already
     // does this via its repair-chain catch arm; generateText was a plain
     // passthrough.
-    throw mapToMythrunError(err)
+    const mapped = mapToMythrunError(err)
+    // §1.2: every failed call at the ai.ts boundary classifies + reports.
+    classifyAttachAndReport(
+      mapped,
+      {
+        callSite: opts.callSite ?? 'generate-text',
+        model: opts.model,
+        providerOptions: opts.providerOptions,
+        skipHealthReport: opts.skipHealthReport,
+      },
+      null,
+    )
+    throw mapped
   } finally {
     timeout.cancel()
   }
@@ -792,6 +1259,8 @@ export interface StreamTextWithToolsOpts {
   /** mythrun log bindings ONLY — never cacheControl (see messages note). */
   readonly providerOptions?: unknown
   readonly maxOutputTokens?: number
+  /** §1.4: see GenerateObjectOpts.skipHealthReport. */
+  readonly skipHealthReport?: boolean
 }
 
 export interface StreamTextWithToolsResult {
@@ -848,8 +1317,33 @@ export function streamTextWithTools(opts: StreamTextWithToolsOpts): StreamTextWi
   )
   void totalUsage.catch(() => undefined)
   return {
-    fullStream: result.fullStream,
+    fullStream: observeToolStreamParts(result.fullStream, {
+      callSite: opts.callSite,
+      model: opts.model,
+      providerOptions: opts.providerOptions,
+      skipHealthReport: opts.skipHealthReport,
+    }),
     stepUsage,
     totalUsage,
+  }
+}
+
+/**
+ * Outage-resilience §1.2: streamTextWithTools never throws — errors surface
+ * as in-band stream parts — so this observer classifies each error part and
+ * reports connectivity-class failures BEFORE yielding the part through,
+ * unchanged. Abort parts carry no transport context here (no per-attempt
+ * observed fetch on FT turns), and the §1.2 abort rule with a null context
+ * is always no-retry/no-signal — classified by definition, never reported.
+ */
+async function* observeToolStreamParts(
+  stream: AsyncIterable<TextStreamPart<ToolSet>>,
+  meta: BoundaryCallMeta,
+): AsyncIterable<TextStreamPart<ToolSet>> {
+  for await (const part of stream) {
+    if (part.type === 'error') {
+      classifyAttachAndReport((part as { error?: unknown }).error, meta, null)
+    }
+    yield part
   }
 }

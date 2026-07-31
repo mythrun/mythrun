@@ -8,7 +8,13 @@ import {
 } from '@ai-sdk/provider'
 import { logAndNormalizeMiddleware } from '../middleware.js'
 import { logger } from '../logger.js'
-import { LlmRateLimitedError, LlmStructuredOutputError, LlmAuthError } from '../errors.js'
+import {
+  LlmRateLimitedError,
+  LlmStructuredOutputError,
+  LlmAuthError,
+  LlmOverloadedError,
+  LlmUpstreamError,
+} from '../errors.js'
 
 const stubModel = {} as LanguageModelV3
 const stubGenerate = (): Promise<never> => Promise.reject(new Error('generate not used'))
@@ -167,6 +173,121 @@ describe('logAndNormalizeMiddleware wrapStream', () => {
       event: 'llm.error',
       mode: 'stream',
     })
+  })
+
+  // Outage-resilience §1.2 in-stream arm: mid-stream Anthropic error EVENTS
+  // on an OPEN stream arrive as RAW JSON payloads (not Error instances) on
+  // the error part — the provider enqueues `chunk.error` verbatim. Without a
+  // typed mapping the generic fallback mints Error("[object Object]") and a
+  // partial overload on the migrated streaming path dies unclassified.
+  it('case 3b — raw in-band overloaded_error payload maps to LlmOverloadedError', async () => {
+    vi.spyOn(logger, 'info').mockImplementation(() => undefined)
+    vi.spyOn(logger, 'error').mockImplementation(() => undefined)
+    const mw = logAndNormalizeMiddleware('claude-sonnet-test')
+    assert(mw.wrapStream !== undefined)
+
+    const rawPayload = { type: 'overloaded_error', message: 'Overloaded' }
+    const errorPart = { type: 'error', error: rawPayload } as LanguageModelV3StreamPart
+
+    const out = await mw.wrapStream({
+      doGenerate: stubGenerate,
+      doStream: () => Promise.resolve(makeStreamResult([textDeltaPart('h'), errorPart])),
+      params: emptyParams(),
+      model: stubModel,
+    })
+
+    let caught: unknown
+    try {
+      await drainStream(out.stream)
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(LlmOverloadedError)
+    // The raw payload rides as cause so the §1.2 unwrap walk still sees
+    // {type:'overloaded_error'} directly.
+    expect((caught as Error).cause).toBe(rawPayload)
+  })
+
+  it('case 3c — raw in-band api_error payload maps to LlmUpstreamError (500-class)', async () => {
+    vi.spyOn(logger, 'info').mockImplementation(() => undefined)
+    vi.spyOn(logger, 'error').mockImplementation(() => undefined)
+    const mw = logAndNormalizeMiddleware('claude-sonnet-test')
+    assert(mw.wrapStream !== undefined)
+
+    const rawPayload = { type: 'api_error', message: 'Internal server error' }
+    const errorPart = { type: 'error', error: rawPayload } as LanguageModelV3StreamPart
+
+    const out = await mw.wrapStream({
+      doGenerate: stubGenerate,
+      doStream: () => Promise.resolve(makeStreamResult([errorPart])),
+      params: emptyParams(),
+      model: stubModel,
+    })
+
+    let caught: unknown
+    try {
+      await drainStream(out.stream)
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(LlmUpstreamError)
+    expect((caught as { code?: string }).code).toBe('llm_upstream_error')
+    expect((caught as { terminal?: boolean }).terminal).toBe(false)
+    expect((caught as Error).cause).toBe(rawPayload)
+  })
+
+  it('case 3b/3c — a message-less raw payload maps with the "no message" detail', async () => {
+    vi.spyOn(logger, 'info').mockImplementation(() => undefined)
+    vi.spyOn(logger, 'error').mockImplementation(() => undefined)
+    const mw = logAndNormalizeMiddleware('claude-sonnet-test')
+    assert(mw.wrapStream !== undefined)
+
+    const rawPayload = { type: 'overloaded_error' }
+    const errorPart = { type: 'error', error: rawPayload } as LanguageModelV3StreamPart
+
+    const out = await mw.wrapStream({
+      doGenerate: stubGenerate,
+      doStream: () => Promise.resolve(makeStreamResult([errorPart])),
+      params: emptyParams(),
+      model: stubModel,
+    })
+
+    let caught: unknown
+    try {
+      await drainStream(out.stream)
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(LlmOverloadedError)
+    expect((caught as Error).message).toContain('no message')
+    expect((caught as Error).cause).toBe(rawPayload)
+  })
+
+  it('case 3d — Error-instance error parts keep the existing mapToMythrunError semantics', async () => {
+    vi.spyOn(logger, 'info').mockImplementation(() => undefined)
+    vi.spyOn(logger, 'error').mockImplementation(() => undefined)
+    const mw = logAndNormalizeMiddleware('claude-sonnet-test')
+    assert(mw.wrapStream !== undefined)
+
+    // An Error that HAPPENS to carry type:'overloaded_error' must not hit the
+    // raw-payload arm — Error instances flow through mapToMythrunError.
+    const errObj = Object.assign(new Error('boom'), { type: 'overloaded_error' })
+    const errorPart = { type: 'error', error: errObj } as LanguageModelV3StreamPart
+
+    const out = await mw.wrapStream({
+      doGenerate: stubGenerate,
+      doStream: () => Promise.resolve(makeStreamResult([errorPart])),
+      params: emptyParams(),
+      model: stubModel,
+    })
+
+    let caught: unknown
+    try {
+      await drainStream(out.stream)
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBe(errObj)
   })
 
   it('case 4 — Truncation: stream closes without finish, logs llm.error + throws LlmStructuredOutputError', async () => {

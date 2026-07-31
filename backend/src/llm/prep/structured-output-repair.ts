@@ -32,6 +32,16 @@ export interface RepairArgs<T> {
   readonly model: LanguageModel
   readonly stage: WorldGenStage
   readonly providerOptions: { readonly mythrun: { readonly stage: WorldGenStage } }
+  /** Outage-resilience §1.2: repair calls get an explicit timeout so a hung
+   *  repair connection can't silently eat the stage budget. Expires as a
+   *  TimeoutError abort, which classifies as abort-class (tier failure), not
+   *  connectivity. */
+  readonly timeoutMs?: number
+  /** Loop-scoped callers merge their attempt signal in: an external abort or
+   *  the stage-budget timer must stop repair spend immediately — a repair
+   *  call never outlives its caller. Merged with the timeout via
+   *  AbortSignal.any; whichever fires first aborts. */
+  readonly abortSignal?: AbortSignal
 }
 
 export type RepairResult<T> =
@@ -59,11 +69,16 @@ export async function repairStructuredOutput<T>(args: RepairArgs<T>): Promise<Re
       () => args.zodErrors.issues.map((i) => `- ${i.path.join('.')}: ${i.message}`).join('\n'),
     )
 
+  const signals: AbortSignal[] = []
+  if (args.timeoutMs !== undefined) signals.push(AbortSignal.timeout(args.timeoutMs))
+  if (args.abortSignal !== undefined) signals.push(args.abortSignal)
+
   const result = await generateText({
     model: args.model,
     output: Output.object({ schema: args.schema }),
     prompt,
     maxRetries: 1,
+    ...(signals.length > 0 ? { abortSignal: AbortSignal.any(signals) } : {}),
     providerOptions: args.providerOptions as unknown as NonNullable<
       Parameters<typeof generateText>[0]['providerOptions']
     >,

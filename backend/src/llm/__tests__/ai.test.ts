@@ -12,7 +12,7 @@
 // through the same SDK mock. We seed mockGenerateText with a queue of
 // responses to drive both the primary call AND the repair calls.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { z } from 'zod'
 import { LlmStructuredOutputError } from '../errors.js'
 import { logger } from '../logger.js'
@@ -25,6 +25,7 @@ vi.mock('ai', async (importOriginal) => {
     ...actual,
     generateText: vi.fn(),
     streamObject: vi.fn(),
+    streamText: vi.fn(),
     Output: { object: vi.fn((opts: unknown) => opts) },
   }
 })
@@ -35,10 +36,13 @@ import {
   streamObject,
   generateText as wrapperGenerateText,
   extractStage,
+  setLlmHealthSink,
 } from '../ai.js'
+import { LlmTimeoutError } from '../errors.js'
 
 const mockGenerateText = vi.mocked(ai.generateText)
 const mockStreamObject = vi.mocked(ai.streamObject)
+const mockStreamText = vi.mocked(ai.streamText)
 
 const TestSchema = z.object({
   name: z.string().min(1).max(10),
@@ -1102,6 +1106,818 @@ describe('maxOutputTokens forwarding', () => {
     expect(sdkSignal.aborted).toBe(false)
     external.abort()
     expect(sdkSignal.aborted).toBe(true)
+  })
+})
+
+// --- outage-resilience Task 4: the ai.ts attempt loop (design §1.3) --------
+//
+// stageBudgetMs arms a wrapper-owned attempt loop that drives generateObject
+// through STREAMING transport internally (§1.0: streamText + Output.object),
+// classifies every failed attempt (§1.2), and reports connectivity-class
+// failures to the boot-injected health sink (§1.4). Absent stageBudgetMs,
+// the legacy single-shot generateText path is byte-identical — the rest of
+// this file is that oracle.
+
+function makeConnErr(code: string, msg = 'transport died'): Error {
+  return Object.assign(new Error(msg), { code })
+}
+
+function failingStreamResult(err: unknown): ReturnType<typeof ai.streamText> {
+  const output = Promise.reject(err)
+  // Pre-handle so the rejection can never surface as unhandled while the
+  // wrapper is still between microtasks; the wrapper's own await still
+  // observes it.
+  void output.catch(() => undefined)
+  return {
+    output,
+    totalUsage: new Promise(() => undefined),
+  } as unknown as ReturnType<typeof ai.streamText>
+}
+
+function okStreamResult(final: unknown, usage = makeUsage()): ReturnType<typeof ai.streamText> {
+  return {
+    output: Promise.resolve(final),
+    totalUsage: Promise.resolve(usage),
+  } as unknown as ReturnType<typeof ai.streamText>
+}
+
+function hangingStreamResult(signal: AbortSignal | undefined): ReturnType<typeof ai.streamText> {
+  return {
+    output: new Promise((_resolve, reject) => {
+      signal?.addEventListener('abort', () => {
+        reject(new DOMException('aborted', 'AbortError'))
+      })
+    }),
+    totalUsage: new Promise(() => undefined),
+  } as unknown as ReturnType<typeof ai.streamText>
+}
+
+describe('generateObject attempt loop (stageBudgetMs)', () => {
+  beforeEach(() => {
+    mockGenerateText.mockReset()
+    mockStreamObject.mockReset()
+    mockStreamText.mockReset()
+    vi.restoreAllMocks()
+    setLlmHealthSink(null)
+  })
+
+  afterEach(() => {
+    setLlmHealthSink(null)
+    vi.useRealTimers()
+  })
+
+  it('loop-scoped generateObject drives the streaming path and returns the identical validated object', async () => {
+    mockStreamText.mockReturnValueOnce(okStreamResult({ name: 'Alice' }, makeUsage(200, 80)))
+
+    const result = await generateObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'pick a name',
+      callSite: 'test/loop-streams',
+      stageBudgetMs: 120_000,
+    })
+
+    expect(result.output).toEqual({ name: 'Alice' })
+    expect(result.usage.inputTokens).toBe(200)
+    expect(result.repairAttempted).toBe(false)
+    // §1.0: the loop-scoped call goes through streamText, never generateText.
+    expect(mockStreamText).toHaveBeenCalledOnce()
+    expect(mockGenerateText).not.toHaveBeenCalled()
+    const callArgs = mockStreamText.mock.calls[0]?.[0] as unknown as Record<string, unknown>
+    // §1.3: the loop owns attempts — SDK-internal retries are disabled.
+    expect(callArgs.maxRetries).toBe(0)
+    // Output.object is mocked as identity, so the schema rides `output`.
+    expect(callArgs.output).toMatchObject({ schema: TestSchema })
+    expect(callArgs.abortSignal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('loop: connectivity failures retry and report each failed attempt', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const sink = vi.fn()
+    setLlmHealthSink(sink)
+    mockStreamText
+      .mockReturnValueOnce(failingStreamResult(makeConnErr('ECONNRESET')))
+      .mockReturnValueOnce(failingStreamResult(makeConnErr('ETIMEDOUT')))
+      .mockReturnValueOnce(okStreamResult({ name: 'Ana' }))
+
+    const result = await generateObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'pick a name',
+      callSite: 'test/loop-retries',
+      stageBudgetMs: 600_000,
+      providerOptions: { mythrun: { stage: 'concept_intake', worldId: 'w-1' } },
+    })
+
+    expect(result.output).toEqual({ name: 'Ana' })
+    expect(mockStreamText).toHaveBeenCalledTimes(3)
+    expect(sink).toHaveBeenCalledTimes(2)
+    expect(sink.mock.calls[0]?.[0]).toEqual({
+      callsite: 'test/loop-retries',
+      jobId: 'w-1',
+      modelId: expect.any(String) as unknown,
+      mode: null,
+      failureClass: 'connectivity',
+    })
+  })
+
+  it('loop: every attempt gets the FULL remaining budget (no division)', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const sink = vi.fn()
+    setLlmHealthSink(sink)
+    let attempt2Signal: AbortSignal | undefined
+    mockStreamText
+      .mockImplementationOnce(() => failingStreamResult(makeConnErr('ECONNRESET')))
+      .mockImplementationOnce((opts: { abortSignal?: AbortSignal }) => {
+        attempt2Signal = opts.abortSignal
+        return hangingStreamResult(opts.abortSignal)
+      })
+
+    const outcome = generateObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'pick a name',
+      callSite: 'test/loop-full-budget',
+      stageBudgetMs: 300_000,
+    }).then(
+      (r) => ({ ok: r }),
+      (e: unknown) => ({ err: e }),
+    )
+
+    // Attempt 1 fails immediately; jitter is 0 so attempt 2 starts right away.
+    await vi.advanceTimersByTimeAsync(1)
+    expect(mockStreamText).toHaveBeenCalledTimes(2)
+
+    // A divided budget (300s/3 attempts = 100s, or /2 = 150s) would have
+    // aborted by now; the full-remaining-budget contract keeps it alive.
+    await vi.advanceTimersByTimeAsync(200_000)
+    expect(attempt2Signal?.aborted).toBe(false)
+
+    // Past the stage deadline the per-attempt controller fires.
+    await vi.advanceTimersByTimeAsync(100_001)
+    expect(attempt2Signal?.aborted).toBe(true)
+
+    const settled = await outcome
+    expect((settled as { err?: unknown }).err).toBeInstanceOf(LlmTimeoutError)
+    // Only attempt 1 was connectivity-class; the budget abort (no transport
+    // context) classifies as abort — no report.
+    expect(sink).toHaveBeenCalledTimes(1)
+  })
+
+  it('loop: retry gate blocks when remaining < expectedHealthyDurationMs and pins llmFailureClass', async () => {
+    const sink = vi.fn()
+    setLlmHealthSink(sink)
+    const connErr = makeConnErr('ECONNREFUSED')
+    mockStreamText.mockReturnValueOnce(failingStreamResult(connErr))
+
+    let caught: unknown
+    try {
+      await generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/loop-gate',
+        // Below the 60s default expectedHealthyDurationMs: the first attempt
+        // always runs, but no retry may start.
+        stageBudgetMs: 50_000,
+      })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBe(connErr)
+    expect(mockStreamText).toHaveBeenCalledOnce()
+    // The one attempt still classified and reported.
+    expect(sink).toHaveBeenCalledTimes(1)
+    // Task 8 contract: the surfaced error carries its §1.2 failure class.
+    expect((caught as { llmFailureClass?: string }).llmFailureClass).toBe('connectivity')
+  })
+
+  it('loop: external abort bails without retry or report', async () => {
+    const sink = vi.fn()
+    setLlmHealthSink(sink)
+    const external = new AbortController()
+    const connErr = makeConnErr('ECONNRESET')
+    mockStreamText.mockImplementationOnce(() => {
+      external.abort()
+      return failingStreamResult(connErr)
+    })
+
+    await expect(
+      generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/loop-external-abort',
+        stageBudgetMs: 600_000,
+        abortSignal: external.signal,
+      }),
+    ).rejects.toBe(connErr)
+
+    expect(mockStreamText).toHaveBeenCalledOnce()
+    expect(sink).not.toHaveBeenCalled()
+  })
+
+  it('loop: 429 waits max(jitter, retry-after) before the retry', async () => {
+    vi.useFakeTimers()
+    // Jitter would be 0.25 * 2000 = 500ms; retry-after 3s must win.
+    vi.spyOn(Math, 'random').mockReturnValue(0.25)
+    const rateLimited = new Error('rate limited')
+    Object.assign(rateLimited, {
+      cause: {
+        name: 'AI_APICallError',
+        statusCode: 429,
+        responseHeaders: { 'retry-after': '3' },
+      },
+    })
+    mockStreamText
+      .mockReturnValueOnce(failingStreamResult(rateLimited))
+      .mockReturnValueOnce(okStreamResult({ name: 'Ana' }))
+
+    const outcome = generateObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'pick a name',
+      callSite: 'test/loop-429-wait',
+      stageBudgetMs: 600_000,
+    })
+    const guarded = outcome.then(
+      (r) => ({ ok: r }),
+      (e: unknown) => ({ err: e }),
+    )
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(mockStreamText).toHaveBeenCalledTimes(1)
+    // 2.9s in: a jitter-only wait (500ms) would already have retried.
+    await vi.advanceTimersByTimeAsync(2_900)
+    expect(mockStreamText).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(mockStreamText).toHaveBeenCalledTimes(2)
+
+    const settled = await guarded
+    expect((settled as { ok?: { output?: unknown } }).ok?.output).toEqual({ name: 'Ana' })
+  })
+
+  it('loop: the 429 wait is accounted against the retry gate', async () => {
+    const sink = vi.fn()
+    setLlmHealthSink(sink)
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const rateLimited = new Error('rate limited')
+    Object.assign(rateLimited, {
+      cause: {
+        name: 'AI_APICallError',
+        statusCode: 429,
+        responseHeaders: { 'retry-after': '3' },
+      },
+    })
+    mockStreamText.mockReturnValueOnce(failingStreamResult(rateLimited))
+
+    // 62s budget: without wait accounting, remaining (≈62s) ≥ 60s would allow
+    // the retry; with the 3s wait accounted, 62 − 3 = 59s < 60s blocks it.
+    await expect(
+      generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/loop-429-gate',
+        stageBudgetMs: 62_000,
+      }),
+    ).rejects.toBe(rateLimited)
+
+    expect(mockStreamText).toHaveBeenCalledOnce()
+    // 429 is retry-worthy but never outage signal — no report.
+    expect(sink).not.toHaveBeenCalled()
+  })
+
+  it('loop: repair-chain connectivity failure surfaces to the loop and retries', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const sink = vi.fn()
+    setLlmHealthSink(sink)
+    mockStreamText
+      .mockReturnValueOnce(
+        failingStreamResult(makeStructuredError('{"name":"way-too-long-for-schema"}')),
+      )
+      .mockReturnValueOnce(okStreamResult({ name: 'Zoe' }))
+    // The Sonnet repair call dies on transport.
+    mockGenerateText.mockRejectedValueOnce(makeConnErr('ECONNREFUSED', 'repair transport died'))
+
+    const result = await generateObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'pick a name',
+      callSite: 'test/loop-repair-connectivity',
+      stageBudgetMs: 600_000,
+      repairStrategy: 'sonnet',
+    })
+
+    expect(result.output).toEqual({ name: 'Zoe' })
+    expect(mockStreamText).toHaveBeenCalledTimes(2)
+    expect(mockGenerateText).toHaveBeenCalledOnce()
+    expect(sink).toHaveBeenCalledTimes(1)
+    expect(sink.mock.calls[0]?.[0]).toMatchObject({ failureClass: 'connectivity' })
+  })
+
+  it('loop: schema failure repairs in-attempt with a timeout-bounded repair call', async () => {
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => undefined)
+    mockStreamText.mockReturnValueOnce(
+      failingStreamResult(makeStructuredError('{"name":"way-too-long-for-schema"}')),
+    )
+    // Sonnet repair succeeds.
+    mockGenerateText.mockResolvedValueOnce({
+      output: { name: 'Kim' },
+      usage: makeUsage(),
+    } as unknown as Awaited<ReturnType<typeof ai.generateText>>)
+
+    const result = await generateObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'pick a name',
+      callSite: 'test/loop-repair-success',
+      stageBudgetMs: 600_000,
+      repairStrategy: 'sonnet',
+    })
+
+    expect(result.output).toEqual({ name: 'Kim' })
+    expect(result.repairAttempted).toBe(true)
+    expect(mockStreamText).toHaveBeenCalledOnce()
+    // §1.2: repair calls get explicit timeouts — the repair call must carry
+    // an AbortSignal now.
+    const repairArgs = mockGenerateText.mock.calls[0]?.[0] as unknown as Record<string, unknown>
+    expect(repairArgs.abortSignal).toBeInstanceOf(AbortSignal)
+    const infoCall = infoSpy.mock.calls.find(
+      (c) => (c[0] as { event?: string }).event === 'llm.generate_object.failed',
+    )
+    expect(infoCall?.[0]).toMatchObject({ repairOutcome: 'repaired_by_sonnet' })
+  })
+
+  it('loop: external abort mid-repair aborts the repair call (merged attempt signal)', async () => {
+    vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+    const external = new AbortController()
+    let repairSignal: AbortSignal | undefined
+    mockStreamText.mockReturnValueOnce(
+      failingStreamResult(makeStructuredError('{"name":"way-too-long-for-schema"}')),
+    )
+    // The repair call hangs until its signal aborts — a schema failure just
+    // before an external abort must not keep spending on the repair model.
+    mockGenerateText.mockImplementationOnce((opts: { abortSignal?: AbortSignal }) => {
+      repairSignal = opts.abortSignal
+      return new Promise<never>((_resolve, reject) => {
+        opts.abortSignal?.addEventListener('abort', () => {
+          reject(new DOMException('aborted', 'AbortError'))
+        })
+      })
+    })
+
+    const guarded = generateObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'pick a name',
+      callSite: 'test/loop-repair-external-abort',
+      stageBudgetMs: 600_000,
+      abortSignal: external.signal,
+      repairStrategy: 'sonnet',
+    }).then(
+      (r) => ({ ok: r }),
+      (e: unknown) => ({ err: e }),
+    )
+
+    await vi.waitFor(() => {
+      expect(mockGenerateText).toHaveBeenCalledOnce()
+    })
+    expect(repairSignal?.aborted).toBe(false)
+    external.abort()
+    expect(repairSignal?.aborted).toBe(true)
+    const settled = await guarded
+    expect((settled as { err?: unknown }).err).toBeInstanceOf(LlmStructuredOutputError)
+  })
+
+  it("loop: the repair call is bounded by the attempt's remaining budget, not a fixed 60s", async () => {
+    vi.useFakeTimers()
+    vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+    let repairSignal: AbortSignal | undefined
+    mockStreamText.mockReturnValueOnce(
+      failingStreamResult(makeStructuredError('{"name":"way-too-long-for-schema"}')),
+    )
+    mockGenerateText.mockImplementationOnce((opts: { abortSignal?: AbortSignal }) => {
+      repairSignal = opts.abortSignal
+      return new Promise<never>((_resolve, reject) => {
+        opts.abortSignal?.addEventListener('abort', () => {
+          reject(new DOMException('aborted', 'AbortError'))
+        })
+      })
+    })
+
+    const guarded = generateObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'pick a name',
+      callSite: 'test/loop-repair-budget-bound',
+      stageBudgetMs: 100_000,
+      repairStrategy: 'sonnet',
+    }).then(
+      (r) => ({ ok: r }),
+      (e: unknown) => ({ err: e }),
+    )
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(mockGenerateText).toHaveBeenCalledOnce()
+    // 99s in — well past the old fixed 60s bound — a legitimately slow repair
+    // (it regenerates the whole tree, no output cap) is still alive because
+    // its bound is the attempt's remaining budget.
+    await vi.advanceTimersByTimeAsync(99_000)
+    expect(repairSignal?.aborted).toBe(false)
+    // Past the stage deadline the attempt signal fires and the merged repair
+    // signal aborts with it: repair spend can never outlive the budget.
+    await vi.advanceTimersByTimeAsync(1_001)
+    expect(repairSignal?.aborted).toBe(true)
+    const settled = await guarded
+    expect((settled as { err?: unknown }).err).toBeInstanceOf(LlmStructuredOutputError)
+  })
+
+  it('loop: sink exceptions are swallowed (fire-and-forget)', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+    setLlmHealthSink(() => {
+      throw new Error('sink blew up')
+    })
+    mockStreamText
+      .mockReturnValueOnce(failingStreamResult(makeConnErr('ECONNRESET')))
+      .mockReturnValueOnce(okStreamResult({ name: 'Ana' }))
+
+    const result = await generateObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'pick a name',
+      callSite: 'test/loop-sink-throws',
+      stageBudgetMs: 600_000,
+    })
+    expect(result.output).toEqual({ name: 'Ana' })
+  })
+
+  it('loop: an async sink rejection is dropped and logged — no throw, no unhandled rejection', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+    // Void-return bivariance admits an async sink (the boot integration
+    // injects a Redis-backed one). Its rejection must route into the same
+    // drop-and-log guard as a sync throw — a floating rejection here is this
+    // file's documented worker-killing failure mode.
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      setLlmHealthSink(async () => {
+        throw new Error('async sink blew up')
+      })
+      mockStreamText
+        .mockReturnValueOnce(failingStreamResult(makeConnErr('ECONNRESET')))
+        .mockReturnValueOnce(okStreamResult({ name: 'Ana' }))
+
+      const result = await generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/loop-async-sink-rejects',
+        stageBudgetMs: 600_000,
+      })
+      expect(result.output).toEqual({ name: 'Ana' })
+
+      // Give a floating rejection two macrotask turns to surface.
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0)
+      })
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0)
+      })
+      expect(unhandled).toEqual([])
+      expect(
+        warnSpy.mock.calls.some(
+          (c) => (c[0] as { event?: string }).event === 'llm.health_sink.threw',
+        ),
+      ).toBe(true)
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
+
+  it('loop: skipHealthReport suppresses sink reports', async () => {
+    const sink = vi.fn()
+    setLlmHealthSink(sink)
+    const connErr = makeConnErr('ECONNREFUSED')
+    mockStreamText.mockReturnValueOnce(failingStreamResult(connErr))
+
+    await expect(
+      generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/loop-skip-report',
+        stageBudgetMs: 50_000,
+        skipHealthReport: true,
+      }),
+    ).rejects.toBe(connErr)
+
+    expect(sink).not.toHaveBeenCalled()
+  })
+
+  it('legacy path (no stageBudgetMs) stays on generateText and never touches streamText', async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      output: { name: 'Bea' },
+      usage: makeUsage(),
+    } as unknown as Awaited<ReturnType<typeof ai.generateText>>)
+
+    const result = await generateObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'pick a name',
+      callSite: 'test/legacy-untouched',
+    })
+
+    expect(result.output).toEqual({ name: 'Bea' })
+    expect(mockGenerateText).toHaveBeenCalledOnce()
+    expect(mockStreamText).not.toHaveBeenCalled()
+  })
+
+  it('legacy path: repair-chain connectivity failure is still swallowed into tier failure (control)', async () => {
+    vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+    const originalErr = makeStructuredError('{"name":"way-too-long-for-schema"}')
+    mockGenerateText.mockRejectedValueOnce(originalErr)
+    // Sonnet repair dies on transport with a connectivity-classed error —
+    // on the LEGACY path this converts to the terminal tier failure exactly
+    // as before (only loop-scoped calls surface it).
+    mockGenerateText.mockRejectedValueOnce(makeConnErr('ECONNREFUSED', 'repair transport died'))
+
+    await expect(
+      generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/legacy-repair-swallow',
+        repairStrategy: 'sonnet',
+      }),
+    ).rejects.toBe(originalErr)
+  })
+
+  it('legacy path: a connectivity failure classifies, attaches llmFailureClass, and reports', async () => {
+    const sink = vi.fn()
+    setLlmHealthSink(sink)
+    const connErr = makeConnErr('ECONNRESET')
+    mockGenerateText.mockRejectedValueOnce(connErr)
+
+    let caught: unknown
+    try {
+      await generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/legacy-classifies',
+      })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBe(connErr)
+    expect((caught as { llmFailureClass?: string }).llmFailureClass).toBe('connectivity')
+    // §1.2: single-attempt sites report their one attempt.
+    expect(sink).toHaveBeenCalledTimes(1)
+    expect(sink.mock.calls[0]?.[0]).toMatchObject({
+      callsite: 'test/legacy-classifies',
+      mode: null,
+      failureClass: 'connectivity',
+    })
+  })
+
+  it('legacy path: a connectivity failure with no sink registered still classifies and rethrows', async () => {
+    // beforeEach leaves the sink null — §1.4 reporting is a no-op, not a crash.
+    const connErr = makeConnErr('ECONNRESET')
+    mockGenerateText.mockRejectedValueOnce(connErr)
+
+    let caught: unknown
+    try {
+      await generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/legacy-no-sink',
+      })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBe(connErr)
+    expect((caught as { llmFailureClass?: string }).llmFailureClass).toBe('connectivity')
+  })
+
+  it('§1.4 report identity: non-object mythrun and id-less mythrun both report jobId "unknown"', async () => {
+    const sink = vi.fn()
+    setLlmHealthSink(sink)
+    mockGenerateText
+      .mockRejectedValueOnce(makeConnErr('ECONNRESET'))
+      .mockRejectedValueOnce(makeConnErr('ECONNRESET'))
+
+    await expect(
+      generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/legacy-jobid-non-object',
+        providerOptions: { mythrun: 'not-an-object' },
+      }),
+    ).rejects.toThrow('transport died')
+    await expect(
+      generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/legacy-jobid-no-ids',
+        providerOptions: { mythrun: { stage: 'concept_intake' } },
+      }),
+    ).rejects.toThrow('transport died')
+
+    expect(sink).toHaveBeenCalledTimes(2)
+    expect(sink.mock.calls[0]?.[0]).toMatchObject({ jobId: 'unknown' })
+    expect(sink.mock.calls[1]?.[0]).toMatchObject({ jobId: 'unknown' })
+  })
+
+  it('loop: forwards system and maxOutputTokens to the streaming attempt', async () => {
+    mockStreamText.mockReturnValueOnce(okStreamResult({ name: 'Ida' }))
+
+    const result = await generateObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'pick a name',
+      callSite: 'test/loop-option-spreads',
+      stageBudgetMs: 120_000,
+      system: 'be terse',
+      maxOutputTokens: 512,
+    })
+
+    expect(result.output).toEqual({ name: 'Ida' })
+    const callArgs = mockStreamText.mock.calls[0]?.[0] as unknown as Record<string, unknown>
+    expect(callArgs.system).toBe('be terse')
+    expect(callArgs.maxOutputTokens).toBe(512)
+  })
+
+  it('loop: a 429 without a retry-after header falls back to the jittered wait alone', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const rateLimited = new Error('rate limited')
+    Object.assign(rateLimited, { cause: { name: 'AI_APICallError', statusCode: 429 } })
+    mockStreamText
+      .mockReturnValueOnce(failingStreamResult(rateLimited))
+      .mockReturnValueOnce(okStreamResult({ name: 'Ana' }))
+
+    const result = await generateObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'pick a name',
+      callSite: 'test/loop-429-no-header',
+      stageBudgetMs: 600_000,
+    })
+
+    expect(result.output).toEqual({ name: 'Ana' })
+    expect(mockStreamText).toHaveBeenCalledTimes(2)
+  })
+
+  it('loop: an external abort during the backoff sleep bails before the next attempt', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const sink = vi.fn()
+    setLlmHealthSink(sink)
+    const external = new AbortController()
+    const connErr = makeConnErr('ECONNRESET')
+    mockStreamText.mockReturnValueOnce(failingStreamResult(connErr))
+
+    const guarded = generateObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'pick a name',
+      callSite: 'test/loop-abort-during-backoff',
+      stageBudgetMs: 600_000,
+      abortSignal: external.signal,
+    }).then(
+      (r) => ({ ok: r }),
+      (e: unknown) => ({ err: e }),
+    )
+
+    // Attempt 1 failed (and reported) and the 1s jittered backoff is pending.
+    await vi.advanceTimersByTimeAsync(1)
+    expect(mockStreamText).toHaveBeenCalledOnce()
+    expect(sink).toHaveBeenCalledTimes(1)
+
+    // The abort lands mid-sleep; the post-sleep re-check must bail without
+    // starting attempt 2.
+    external.abort()
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    const settled = await guarded
+    expect((settled as { err?: unknown }).err).toBe(connErr)
+    expect(mockStreamText).toHaveBeenCalledOnce()
+  })
+
+  it('loop: a non-Error connectivity throw from the repair chain is wrapped into an Error', async () => {
+    mockStreamText.mockReturnValueOnce(
+      failingStreamResult(makeStructuredError('{"name":"way-too-long-for-schema"}')),
+    )
+    // The Sonnet repair transport rejects with a bare object (no Error
+    // prototype) that still classifies as connectivity by its code string —
+    // tryRepairWithModel rethrows it raw and the loop's catch must wrap it.
+    mockGenerateText.mockRejectedValueOnce({ code: 'ECONNREFUSED' })
+
+    let caught: unknown
+    try {
+      await generateObject<TestShape>({
+        model: SONNET,
+        schema: TestSchema,
+        prompt: 'pick a name',
+        callSite: 'test/loop-repair-non-error',
+        stageBudgetMs: 600_000,
+        repairStrategy: 'sonnet',
+      })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as Error).message).toBe('[object Object]')
+    // The wrapped error carries no connectivity shape — it classifies with a
+    // null transport context and the loop does not retry.
+    expect((caught as { llmFailureClass?: string }).llmFailureClass).toBe('other')
+    expect(mockStreamText).toHaveBeenCalledOnce()
+  })
+})
+
+describe('boundary classification on non-loop surfaces', () => {
+  beforeEach(() => {
+    mockGenerateText.mockReset()
+    mockStreamObject.mockReset()
+    mockStreamText.mockReset()
+    vi.restoreAllMocks()
+    setLlmHealthSink(null)
+  })
+
+  afterEach(() => {
+    setLlmHealthSink(null)
+  })
+
+  it('streamObject: a connectivity stream failure classifies, attaches the class, and reports', async () => {
+    const sink = vi.fn()
+    setLlmHealthSink(sink)
+    const connErr = Object.assign(new Error('stream died'), { code: 'ECONNRESET' })
+    async function* gen(): AsyncGenerator<TestShape> {
+      yield { name: 'partial' }
+    }
+    const objectPromise = Promise.reject(connErr)
+    void objectPromise.catch(() => undefined)
+    mockStreamObject.mockReturnValueOnce({
+      partialObjectStream: gen(),
+      object: objectPromise,
+      usage: Promise.resolve(makeUsage()),
+      warnings: Promise.resolve(undefined),
+    } as unknown as ReturnType<typeof ai.streamObject>)
+
+    const result = streamObject<TestShape>({
+      model: SONNET,
+      schema: TestSchema,
+      prompt: 'name something',
+      callSite: 'test/stream-classifies',
+    })
+
+    let caught: unknown
+    try {
+      await result.object
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBe(connErr)
+    expect((caught as { llmFailureClass?: string }).llmFailureClass).toBe('connectivity')
+    expect(sink).toHaveBeenCalledTimes(1)
+    expect(sink.mock.calls[0]?.[0]).toMatchObject({
+      callsite: 'test/stream-classifies',
+      failureClass: 'connectivity',
+    })
+  })
+
+  it('generateText: a connectivity failure classifies, attaches the class, and reports', async () => {
+    const sink = vi.fn()
+    setLlmHealthSink(sink)
+    const connErr = Object.assign(new Error('conn died'), { code: 'ECONNREFUSED' })
+    mockGenerateText.mockRejectedValueOnce(connErr)
+
+    let caught: unknown
+    try {
+      await wrapperGenerateText({
+        model: SONNET,
+        prompt: 'p',
+        callSite: 'test/generate-text-classifies',
+      })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBe(connErr)
+    expect((caught as { llmFailureClass?: string }).llmFailureClass).toBe('connectivity')
+    expect(sink).toHaveBeenCalledTimes(1)
+    expect(sink.mock.calls[0]?.[0]).toMatchObject({
+      callsite: 'test/generate-text-classifies',
+      failureClass: 'connectivity',
+    })
   })
 })
 

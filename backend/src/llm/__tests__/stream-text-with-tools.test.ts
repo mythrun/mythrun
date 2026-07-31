@@ -30,7 +30,7 @@ vi.mock('ai', async (importOriginal) => {
   }
 })
 
-import { streamTextWithTools, generateObject, stepCountIs } from '../ai.js'
+import { streamTextWithTools, generateObject, stepCountIs, setLlmHealthSink } from '../ai.js'
 
 function makeUsage(input = 100, output = 50): {
   inputTokens: number
@@ -215,6 +215,107 @@ describe('streamTextWithTools', () => {
     expect(callArgs).not.toHaveProperty('prepareStep')
     expect(callArgs).not.toHaveProperty('maxOutputTokens')
     expect(callArgs).not.toHaveProperty('providerOptions')
+  })
+
+  // Outage-resilience §1.2: streamTextWithTools never throws — errors surface
+  // as in-band stream parts — so it gains an error/abort-part OBSERVER that
+  // classifies and reports connectivity-class failures BEFORE yielding the
+  // part through. The part itself is never altered or withheld.
+  it('reports classified connectivity error parts before yielding them', async () => {
+    const events: string[] = []
+    setLlmHealthSink((report) => {
+      events.push(`report:${report.failureClass}`)
+    })
+    try {
+      const connErr = Object.assign(new Error('stream transport died'), { code: 'ECONNRESET' })
+      const errorPart = { type: 'error', error: connErr }
+      const textPart = { type: 'text-delta', id: '1', text: 'x' }
+      streamTextMock.mockReturnValueOnce({
+        fullStream: makeFullStream([errorPart, textPart]),
+        usage: Promise.resolve(makeUsage()),
+        totalUsage: Promise.resolve(makeUsage()),
+      })
+
+      const r = streamTextWithTools({
+        model: SONNET,
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: {},
+        stopWhen: stepCountIs(4),
+        callSite: 'test/observer-error-part',
+      })
+
+      const seen: unknown[] = []
+      for await (const p of r.fullStream) {
+        events.push(`part:${(p as { type: string }).type}`)
+        seen.push(p)
+      }
+      // The report fires BEFORE the error part is yielded through; the parts
+      // themselves pass unchanged.
+      expect(events).toEqual(['report:connectivity', 'part:error', 'part:text-delta'])
+      expect(seen).toEqual([errorPart, textPart])
+    } finally {
+      setLlmHealthSink(null)
+    }
+  })
+
+  it('abort parts and non-connectivity error parts yield through without a report', async () => {
+    const sink = vi.fn()
+    setLlmHealthSink(sink)
+    try {
+      const abortPart = { type: 'abort' }
+      const appErrPart = { type: 'error', error: new Error('tool blew up') }
+      streamTextMock.mockReturnValueOnce({
+        fullStream: makeFullStream([abortPart, appErrPart]),
+        usage: Promise.resolve(makeUsage()),
+        totalUsage: Promise.resolve(makeUsage()),
+      })
+
+      const r = streamTextWithTools({
+        model: SONNET,
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: {},
+        stopWhen: stepCountIs(4),
+        callSite: 'test/observer-no-report',
+      })
+
+      const seen: unknown[] = []
+      for await (const p of r.fullStream) seen.push(p)
+      expect(seen).toEqual([abortPart, appErrPart])
+      expect(sink).not.toHaveBeenCalled()
+    } finally {
+      setLlmHealthSink(null)
+    }
+  })
+
+  it('a primitive in-band error part yields through without a report or attached class', async () => {
+    const sink = vi.fn()
+    setLlmHealthSink(sink)
+    try {
+      // §1.2: a primitive error classifies 'other' (no report) and
+      // attachFailureClass has nothing to attach to — the part must still
+      // pass through untouched.
+      const primitivePart = { type: 'error', error: 'string boom' }
+      streamTextMock.mockReturnValueOnce({
+        fullStream: makeFullStream([primitivePart]),
+        usage: Promise.resolve(makeUsage()),
+        totalUsage: Promise.resolve(makeUsage()),
+      })
+
+      const r = streamTextWithTools({
+        model: SONNET,
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: {},
+        stopWhen: stepCountIs(4),
+        callSite: 'test/observer-primitive-error',
+      })
+
+      const seen: unknown[] = []
+      for await (const p of r.fullStream) seen.push(p)
+      expect(seen).toEqual([primitivePart])
+      expect(sink).not.toHaveBeenCalled()
+    } finally {
+      setLlmHealthSink(null)
+    }
   })
 
   it('timeout cancel: the timer is cleared once usage settles (does not abort after settle)', async () => {

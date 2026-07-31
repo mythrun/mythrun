@@ -4,7 +4,13 @@ import type {
   LanguageModelV3StreamResult,
 } from '@ai-sdk/provider'
 import { logger } from './logger.js'
-import { mapToMythrunError, LlmStructuredOutputError, LlmContentFilteredError } from './errors.js'
+import {
+  mapToMythrunError,
+  LlmStructuredOutputError,
+  LlmContentFilteredError,
+  LlmOverloadedError,
+  LlmUpstreamError,
+} from './errors.js'
 
 interface MythrunContext {
   readonly sessionId?: string | undefined
@@ -63,6 +69,32 @@ function extractMythrunContext(params: unknown): MythrunContext {
 
 function sumTokens(a: number | undefined, b: number | undefined): number | undefined {
   return a !== undefined && b !== undefined ? a + b : undefined
+}
+
+/**
+ * Outage-resilience §1.2 — the ONE deliberate in-stream mapping addition.
+ * Mid-stream Anthropic error EVENTS on an OPEN stream (`overloaded_error` —
+ * the documented overload manifestation — and `api_error`) are enqueued by
+ * the provider as RAW JSON payloads on the error part, not Error instances.
+ * Map them to typed errors here, carrying the raw payload as `cause` so the
+ * §1.2 unwrap walk classifies them; everything else (including Error
+ * instances) keeps the existing mapToMythrunError semantics. Without this
+ * arm the generic fallback mints `Error("[object Object]")` and a partial
+ * overload on the migrated streaming path dies unclassified.
+ */
+function mapInStreamError(raw: unknown): Error {
+  if (typeof raw === 'object' && raw !== null && !(raw instanceof Error)) {
+    const type = (raw as { type?: unknown }).type
+    const message = (raw as { message?: unknown }).message
+    const detail = typeof message === 'string' ? message : 'no message'
+    if (type === 'overloaded_error') {
+      return new LlmOverloadedError(`upstream overloaded mid-stream: ${detail}`, { cause: raw })
+    }
+    if (type === 'api_error') {
+      return new LlmUpstreamError(`upstream api_error mid-stream: ${detail}`, { cause: raw })
+    }
+  }
+  return mapToMythrunError(raw)
 }
 
 interface StreamTelemetry {
@@ -164,7 +196,7 @@ function wrapModelStream(
           }
           logSuccess()
         } else if (value.type === 'error') {
-          const mapped = mapToMythrunError(value.error)
+          const mapped = mapInStreamError(value.error)
           logError(value.error)
           controller.error(mapped)
           return

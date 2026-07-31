@@ -9,6 +9,7 @@ import {
 import {
   LlmRateLimitedError,
   LlmOverloadedError,
+  LlmUpstreamError,
   LlmAuthError,
   LlmInvalidRequestError,
   LlmContextTooLongError,
@@ -265,6 +266,9 @@ describe('typed LLM errors — code + terminal classification', () => {
   it.each([
     ['LlmRateLimitedError', new LlmRateLimitedError('x'), 'llm_rate_limited', false],
     ['LlmOverloadedError', new LlmOverloadedError('x'), 'llm_overloaded', false],
+    // Outage-resilience §1.2: 500-class in-band api_error events map here —
+    // transient, so terminal:false (BullMQ may retry the stage).
+    ['LlmUpstreamError', new LlmUpstreamError('x'), 'llm_upstream_error', false],
     ['LlmTimeoutError', new LlmTimeoutError('x'), 'llm_timeout', false],
     ['LlmAuthError', new LlmAuthError('x'), 'llm_auth_failed', true],
     ['LlmInvalidRequestError', new LlmInvalidRequestError('x'), 'llm_invalid_request', true],

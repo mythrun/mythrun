@@ -86,8 +86,8 @@ function makeDeps(overrides?: {
   const promoteMock = vi.fn((): Promise<void> => Promise.resolve())
   return {
     tracker: makeTracker(overrides?.tracker),
-    models: { probe: probeMock as (modelId: string) => Promise<void> },
-    promoteArmed: promoteMock as (scope: 'all' | 'past-due') => Promise<void>,
+    models: { probe: probeMock },
+    promoteArmed: promoteMock,
     logger,
     probeMock,
     promoteMock,
@@ -266,7 +266,7 @@ describe('runProbeCycle', () => {
     expect(deps.tracker.probeFailure).toHaveBeenCalledTimes(1)
     expect(deps.tracker.probeSuccess).not.toHaveBeenCalled()
     expect(deps.promoteMock).not.toHaveBeenCalled()
-    const failedLine = deps.lines.find((l) => l['event'] === 'llm_health.probe_cycle_failed')
+    const failedLine = deps.lines.find((l) => l.event === 'llm_health.probe_cycle_failed')
     // Per-model rejection reasons ride the line via the secret-free
     // describeErrorForLog descriptor (name/code/terminal/message only).
     expect(failedLine).toMatchObject({
@@ -321,12 +321,7 @@ function makePromoterDeps(args: {
   const conceptLookup = vi.fn(() => Promise.resolve(args.concept ?? null))
   return {
     stamps: { listArmed: vi.fn(() => Promise.resolve(args.stamps)) },
-    concepts: {
-      getByCampaignAndUser: conceptLookup as (
-        campaignId: string,
-        userId: string,
-      ) => Promise<{ readonly id: string } | null>,
-    },
+    concepts: { getByCampaignAndUser: conceptLookup },
     queues: {
       worldGen: { getDelayed: getDelayedMocks.worldGen },
       sessionPrep: { getDelayed: getDelayedMocks.sessionPrep },
@@ -368,7 +363,7 @@ describe('createArmedStampPromoter', () => {
     expect(deps.getDelayedMocks.sessionPrep).not.toHaveBeenCalled()
     expect(deps.getDelayedMocks.characterCreation).not.toHaveBeenCalled()
     expect(
-      deps.lines.find((l) => l['event'] === 'llm_health.resume_promoted'),
+      deps.lines.find((l) => l.event === 'llm_health.resume_promoted'),
     ).toMatchObject({ pipeline: 'world_gen', jobId: campaignId })
   })
 
@@ -446,7 +441,7 @@ describe('createArmedStampPromoter', () => {
 
     expect(second.promote).toHaveBeenCalledTimes(1)
     expect(
-      deps.lines.find((l) => l['event'] === 'llm_health.resume_promote_failed'),
+      deps.lines.find((l) => l.event === 'llm_health.resume_promote_failed'),
     ).toMatchObject({ pipeline: 'world_gen', jobId: idA })
   })
 
@@ -484,7 +479,7 @@ describe('createArmedStampPromoter', () => {
 
     expect(spJob.promote).toHaveBeenCalledTimes(1)
     expect(
-      deps.lines.find((l) => l['event'] === 'llm_health.resume_scan_failed'),
+      deps.lines.find((l) => l.event === 'llm_health.resume_scan_failed'),
     ).toMatchObject({ pipeline: 'world_gen' })
   })
 

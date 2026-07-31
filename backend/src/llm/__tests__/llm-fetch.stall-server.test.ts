@@ -73,7 +73,13 @@ describe('llm-fetch stall server (real undici)', { timeout: 90_000 }, () => {
   afterAll(async () => {
     server.closeAllConnections()
     await new Promise<void>((resolve, reject) => {
-      server.close((err) => (err ? reject(err) : resolve()))
+      server.close((err) => {
+        if (err) {
+          reject(err)
+        } else {
+          resolve()
+        }
+      })
     })
     await Promise.all([dispatchers.streaming.destroy(), dispatchers.nonStreaming.destroy()])
   })

@@ -22,6 +22,21 @@ export class LlmOverloadedError extends Error {
     this.name = 'LlmOverloadedError'
   }
 }
+/**
+ * Outage-resilience §1.2 (in-stream arm): a provider-side 500-class failure
+ * surfaced as an in-band `api_error` SSE event on an OPEN stream. The raw
+ * JSON payload rides as `cause` so the §1.2 unwrap walk still sees
+ * `{type:'api_error'}` (→ connectivity). Transient — terminal:false, same
+ * retry posture as LlmOverloadedError (its 529 sibling).
+ */
+export class LlmUpstreamError extends Error {
+  readonly code = 'llm_upstream_error'
+  readonly terminal = false
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options)
+    this.name = 'LlmUpstreamError'
+  }
+}
 export class LlmAuthError extends Error {
   readonly code = 'llm_auth_failed'
   readonly terminal = true

@@ -134,7 +134,7 @@ export async function runProbeCycle(deps: ProbeCycleDeps): Promise<ProbeCycleRes
   const outcomes = await Promise.allSettled(targets.map((id) => deps.models.probe(id)))
   const failures = targets.flatMap((modelId, i) => {
     const outcome = outcomes[i]
-    return outcome !== undefined && outcome.status === 'rejected'
+    return outcome?.status === 'rejected'
       ? [{ modelId, err: describeErrorForLog(outcome.reason) }]
       : []
   })

@@ -80,6 +80,34 @@ interface MutableObservation {
   invocationCount: number
 }
 
+interface AttemptObservationHandle {
+  latest: MutableObservation | null
+  invocations: number
+}
+
+// Outage-resilience §1.3 — the per-attempt observation exchange. ai.ts
+// registers the attempt's AbortSignal BEFORE the SDK call; every observed
+// fetch consults this registry by init.signal IDENTITY and records the §1.1
+// observation into the matching handle (last-invocation-wins per handle, so
+// SDK-internal retries sharing one signal can't let attempt N's late headers
+// arrival pollute attempt N+1's classification). Identity holds because the
+// SDK's mergeAbortSignals short-circuits a single signal through unchanged —
+// pinned by ai-attempt-observation.test.ts so an SDK upgrade that breaks it
+// fails loudly. Entries are deleted by take (ai.ts calls it in the attempt's
+// finally), so the map cannot leak across attempts.
+const attemptObservations = new Map<AbortSignal, AttemptObservationHandle>()
+
+export function registerAttemptObservation(signal: AbortSignal): void {
+  attemptObservations.set(signal, { latest: null, invocations: 0 })
+}
+
+export function takeAttemptObservation(signal: AbortSignal): FetchObservation | null {
+  const handle = attemptObservations.get(signal)
+  if (handle === undefined) return null
+  attemptObservations.delete(signal)
+  return handle.latest === null ? null : { ...handle.latest }
+}
+
 /**
  * Build a per-attempt fetch: routes by body (`"stream":true` → streaming
  * dispatcher, non-string body → non-streaming), records a last-invocation-wins
@@ -102,11 +130,27 @@ export function createObservedFetch(dispatchers: LlmDispatchers = defaultDispatc
       invocationCount: ++invocations,
     }
     latest = record
+    // §1.3 attempt exchange: when this request's signal was registered by
+    // ai.ts, record a per-invocation observation into that handle too. The
+    // invocation keeps its own record object, so a stale invocation's later
+    // headers arrival mutates an object the handle no longer points at.
+    const handle =
+      init?.signal instanceof AbortSignal ? attemptObservations.get(init.signal) : undefined
+    let attemptRecord: MutableObservation | undefined
+    if (handle !== undefined) {
+      attemptRecord = {
+        mode: record.mode,
+        headersArrived: false,
+        invocationCount: ++handle.invocations,
+      }
+      handle.latest = attemptRecord
+    }
     const response = await undiciFetch(input, {
       ...init,
       dispatcher: streaming ? dispatchers.streaming : dispatchers.nonStreaming,
     })
     record.headersArrived = true
+    if (attemptRecord !== undefined) attemptRecord.headersArrived = true
     return response
   }
 

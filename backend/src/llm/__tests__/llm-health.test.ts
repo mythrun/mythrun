@@ -55,7 +55,7 @@ function makeReport(overrides: Partial<LlmHealthReport> = {}): LlmHealthReport {
  *  back-dated seeds and horizon assertions never depend on the local clock. */
 async function redisNowMs(redis: Redis): Promise<number> {
   const reply = await redis.time()
-  return Number(reply[0] ?? 0) * 1000 + Math.floor(Number(reply[1] ?? 0) / 1000)
+  return (reply[0] ?? 0) * 1000 + Math.floor((reply[1] ?? 0) / 1000)
 }
 
 /** Seed a window member shaped exactly like the tracker's own, back-dated to
@@ -166,8 +166,8 @@ describe('createLlmHealthTracker', () => {
       const now = await redisNowMs(redis)
       for (let i = 0; i < 4; i++) {
         await seedWindowEvent(redis, prefix, now - 31 * 60_000 - i, {
-          callsite: `stage:${i}`,
-          jobId: `job-${i}`,
+          callsite: `stage:${String(i)}`,
+          jobId: `job-${String(i)}`,
           modelId: 'model-old',
         })
       }

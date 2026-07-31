@@ -17,7 +17,7 @@ const { agentCtorArgs } = vi.hoisted(() => {
 vi.mock('undici', async (importOriginal) => {
   const actual = await importOriginal<typeof import('undici')>()
   class MockAgent {
-    constructor(opts: unknown) {
+    constructor(readonly opts: unknown) {
       agentCtorArgs.push({ opts, instance: this })
     }
   }
@@ -25,7 +25,13 @@ vi.mock('undici', async (importOriginal) => {
 })
 
 import * as undici from 'undici'
-import { createDispatchers, createObservedFetch, providerFetch } from '../llm-fetch.js'
+import {
+  createDispatchers,
+  createObservedFetch,
+  providerFetch,
+  registerAttemptObservation,
+  takeAttemptObservation,
+} from '../llm-fetch.js'
 
 const mockFetch = vi.mocked(undici.fetch)
 
@@ -179,6 +185,110 @@ describe('createObservedFetch — observation', () => {
     resolveFirst(okResponse())
     await first
     expect(observation()).toEqual({ mode: 'streaming', headersArrived: false, invocationCount: 2 })
+  })
+})
+
+// Outage-resilience §1.3: the per-attempt observation exchange. ai.ts
+// registers the attempt's AbortSignal before the SDK call; the provider fetch
+// records the §1.1 observation into the handle keyed by init.signal identity;
+// ai.ts takes (and thereby deletes) it after the attempt.
+describe('attempt observation exchange', () => {
+  it('records into the registered handle keyed by init.signal; take returns and deletes it', async () => {
+    mockFetch.mockResolvedValue(okResponse())
+    const { fetch } = createObservedFetch(createDispatchers())
+    const controller = new AbortController()
+    registerAttemptObservation(controller.signal)
+
+    await fetch('http://localhost/v1/messages', {
+      method: 'POST',
+      body: '{"model":"m","stream":true}',
+      signal: controller.signal,
+    })
+
+    expect(takeAttemptObservation(controller.signal)).toEqual({
+      mode: 'streaming',
+      headersArrived: true,
+      invocationCount: 1,
+    })
+    // take() deletes the entry — a second take sees nothing.
+    expect(takeAttemptObservation(controller.signal)).toBeNull()
+  })
+
+  it('a registered signal with no invocation takes as null (and is deleted)', () => {
+    const controller = new AbortController()
+    registerAttemptObservation(controller.signal)
+    expect(takeAttemptObservation(controller.signal)).toBeNull()
+    expect(takeAttemptObservation(controller.signal)).toBeNull()
+  })
+
+  it('unregistered signals leave no observation', async () => {
+    mockFetch.mockResolvedValue(okResponse())
+    const { fetch } = createObservedFetch(createDispatchers())
+    const controller = new AbortController()
+
+    await fetch('http://localhost/v1/messages', {
+      method: 'POST',
+      body: '{"model":"m"}',
+      signal: controller.signal,
+    })
+
+    expect(takeAttemptObservation(controller.signal)).toBeNull()
+  })
+
+  it('keeps headersArrived=false in the handle when the fetch rejects', async () => {
+    mockFetch.mockRejectedValue(new Error('connect timeout'))
+    const { fetch } = createObservedFetch(createDispatchers())
+    const controller = new AbortController()
+    registerAttemptObservation(controller.signal)
+
+    await expect(
+      fetch('http://localhost/v1/messages', {
+        method: 'POST',
+        body: '{"model":"m","stream":true}',
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow('connect timeout')
+
+    expect(takeAttemptObservation(controller.signal)).toEqual({
+      mode: 'streaming',
+      headersArrived: false,
+      invocationCount: 1,
+    })
+  })
+
+  it('per-handle last-invocation-wins: a stale invocation resolving late cannot pollute the handle', async () => {
+    let resolveFirst: (r: undici.Response) => void = () => undefined
+    mockFetch
+      .mockReturnValueOnce(
+        new Promise<undici.Response>((resolve) => {
+          resolveFirst = resolve
+        }),
+      )
+      .mockReturnValueOnce(new Promise<undici.Response>(() => undefined))
+    const { fetch } = createObservedFetch(createDispatchers())
+    const controller = new AbortController()
+    registerAttemptObservation(controller.signal)
+
+    const first = fetch('http://localhost/v1/messages', {
+      method: 'POST',
+      body: '{"stream":true}',
+      signal: controller.signal,
+    })
+    void fetch('http://localhost/v1/messages', {
+      method: 'POST',
+      body: '{"stream":true}',
+      signal: controller.signal,
+    })
+
+    resolveFirst(okResponse())
+    await first
+
+    // Invocation 1's headers arrival must not flip the pending invocation 2.
+    expect(takeAttemptObservation(controller.signal)).toEqual({
+      mode: 'streaming',
+      headersArrived: false,
+      invocationCount: 2,
+    })
   })
 })
 
