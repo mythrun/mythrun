@@ -16,7 +16,7 @@
 // error's `.diagnostic` (rawTextSnippet + zodIssues both nulled) / SSE. Mirrors
 // st-lookup-vet.ts.
 
-import { generateObject, type LanguageModelUsage } from './ai.js'
+import { generateObject, type LanguageModelUsage, type PromptBlocks } from './ai.js'
 import { loadPrompt } from './prompts.js'
 import {
   SecretTripwireResultSchema,
@@ -67,18 +67,69 @@ export interface SecretTripwireOutput {
   readonly repairAttempted: boolean
 }
 
+// Cost-wave1 §3 — tripwire caching. secret-tripwire.txt is ordered
+// stable-first (instruction head + secrets + publicContext +
+// consistencyContext above; the per-turn prose + dice outcomes + the
+// output-format tail below), a pure section permutation gated by
+// secret-tripwire-parity.test.ts. The assembly cuts the RAW template at the
+// volatile marker — variable content can never move the boundary — and pins
+// the cache breakpoint on the stable block. The scribe leg re-sends the
+// stable span every turn (cacheRead was 0); the prep leg's single opening-vet
+// call pays a negligible write premium and can even warm the session's first
+// scribe read when play starts inside the TTL.
+const TRIPWIRE_VOLATILE_MARKER = 'Player-facing prose this turn:'
+
+/** `{{var}}` interpolation over one template span — same semantics as
+ *  prompts.ts (single pass, unmatched placeholders left as-is, replacement
+ *  content never rescanned). Local because the split must interpolate each
+ *  half independently and prompts.ts only renders whole templates. */
+function fill(span: string, vars: Record<string, string>): string {
+  return span.replace(/\{\{(\w+)\}\}/g, (match: string, key: string) => {
+    if (!Object.prototype.hasOwnProperty.call(vars, key)) return match
+    return vars[key] ?? match
+  })
+}
+
+/** Cuts the raw template at the volatile marker, which must appear EXACTLY
+ *  once: zero is template drift, and a second occurrence would make a
+ *  first-occurrence cut silently move the cache breakpoint. Exported for the
+ *  marker-validation tests (the drifted templates never reach disk). */
+export function splitTripwireTemplate(template: string): { head: string; tail: string } {
+  const cut = template.indexOf(TRIPWIRE_VOLATILE_MARKER)
+  if (cut === -1) {
+    throw new Error(
+      `secret-tripwire.txt: volatile marker ${JSON.stringify(TRIPWIRE_VOLATILE_MARKER)} not found — template drifted; re-derive the cache breakpoint (cost-wave1 §3)`,
+    )
+  }
+  if (template.includes(TRIPWIRE_VOLATILE_MARKER, cut + TRIPWIRE_VOLATILE_MARKER.length)) {
+    throw new Error(
+      `secret-tripwire.txt: volatile marker ${JSON.stringify(TRIPWIRE_VOLATILE_MARKER)} appears more than once — the cut point is ambiguous; re-derive the cache breakpoint (cost-wave1 §3)`,
+    )
+  }
+  return { head: template.slice(0, cut), tail: template.slice(cut) }
+}
+
+function tripwireBlocks(input: SecretTripwireInput): PromptBlocks {
+  const { head, tail } = splitTripwireTemplate(loadPrompt('session', 'secret-tripwire'))
+  const vars = {
+    prose: input.prose,
+    secrets: input.secrets,
+    publicContext: input.publicContext,
+    consistencyContext: input.consistencyContext ?? '(none)',
+    diceOutcomes: input.diceOutcomes ?? '(none this turn)',
+  }
+  return [
+    { role: 'user', text: fill(head, vars), cacheBreakpoint: true },
+    { role: 'user', text: fill(tail, vars) },
+  ]
+}
+
 export async function runSecretTripwire(input: SecretTripwireInput): Promise<SecretTripwireOutput> {
   const r = await generateObject({
     model: SCRIBE_TRIPWIRE_MODEL,
     schema: SecretTripwireResultSchema,
     schemaName: 'SecretTripwireResultSchema',
-    prompt: loadPrompt('session', 'secret-tripwire', {
-      prose: input.prose,
-      secrets: input.secrets,
-      publicContext: input.publicContext,
-      consistencyContext: input.consistencyContext ?? '(none)',
-      diceOutcomes: input.diceOutcomes ?? '(none this turn)',
-    }),
+    blocks: tripwireBlocks(input),
     callSite: 'secret-tripwire',
     providerOptions: {
       mythrun: {

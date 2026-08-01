@@ -13,10 +13,11 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as ai from 'ai'
-import { runSecretTripwire } from '../secret-tripwire.js'
+import { runSecretTripwire, splitTripwireTemplate } from '../secret-tripwire.js'
 import { LlmStructuredOutputError } from '../errors.js'
 import type { LlmCallDiagnostic } from '../ai.js'
 import { logger } from '../logger.js'
+import { loadPrompt } from '../prompts.js'
 
 vi.mock('ai', async (importOriginal) => ({
   ...(await importOriginal<typeof import('ai')>()),
@@ -24,6 +25,28 @@ vi.mock('ai', async (importOriginal) => ({
 }))
 
 const mockGenerateText = vi.mocked(ai.generateText)
+
+/** The FT-proven per-message breakpoint shape (fast-thinker.ts §3.9). */
+const BREAKPOINT = { anthropic: { cacheControl: { type: 'ephemeral' } } }
+
+interface CapturedMessage {
+  role: string
+  content: string
+  providerOptions?: unknown
+}
+
+function messagesOf(call = 0): CapturedMessage[] {
+  const args = mockGenerateText.mock.calls[call]?.[0] as unknown as {
+    messages: CapturedMessage[]
+  }
+  return args.messages
+}
+
+function promptTextOf(call = 0): string {
+  return messagesOf(call)
+    .map((m) => m.content)
+    .join('')
+}
 
 type Severity = 'none' | 'soft_consistency' | 'hard_reveal'
 
@@ -75,18 +98,17 @@ describe('runSecretTripwire', () => {
     expect(r.repairAttempted).toBe(false)
     expect(r.usage.inputTokens).toBe(90)
     const call = mockGenerateText.mock.calls[0]?.[0] as unknown as {
-      prompt: string
       providerOptions?: unknown
     }
     expect(call.providerOptions).toMatchObject({
       mythrun: { stage: 'secret_tripwire', sessionId: 'sess-trip-1', campaignId: 'camp-trip-1' },
     })
-    expect(call.prompt).toContain(
+    expect(promptTextOf()).toContain(
       'The innkeeper slides a tankard across the bar and eyes the door.',
     )
-    expect(call.prompt).toContain('[SECRET-1]: the innkeeper is the exiled prince in hiding.')
+    expect(promptTextOf()).toContain('[SECRET-1]: the innkeeper is the exiled prince in hiding.')
     // The PUBLIC briefing (grounding floor) is threaded into the prompt too.
-    expect(call.prompt).toContain('The Rusty Anchor is a dockside inn.')
+    expect(promptTextOf()).toContain('The Rusty Anchor is a dockside inn.')
   })
 
   it('hit path → a non-clean severity carries an opaque secretRef handle', async () => {
@@ -199,5 +221,140 @@ describe('runSecretTripwire', () => {
     for (const call of warnSpy.mock.calls) {
       expect(JSON.stringify(call)).not.toContain('SECRET')
     }
+  })
+})
+
+// Cost-wave1 §3 — tripwire caching. The template is reordered stable-first
+// (instruction head + secrets + publicContext + consistencyContext above the
+// breakpoint; the per-turn prose + dice outcomes + the output-format tail
+// below). The assembly compiles to two user blocks split at the volatile
+// marker with the cache breakpoint pinned on the stable block. Decision
+// parity for the reorder is gated in secret-tripwire-parity.test.ts.
+describe('runSecretTripwire — stable-first blocks (cost-wave1 §3)', () => {
+  const stableInput = {
+    secrets: '[SECRET-1]: the innkeeper is the exiled prince in hiding.',
+    publicContext: 'The Rusty Anchor is a dockside inn. The innkeeper is watchful.',
+    consistencyContext: 'Encounter script: the caravan arrives on the third day.',
+    sessionId: 'sess-trip-blocks',
+  }
+
+  const cleanResult = {
+    output: cleanOutput,
+    usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+  } as never
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('stable prefix is byte-identical across calls with different volatile inputs', async () => {
+    mockGenerateText.mockResolvedValue(cleanResult)
+
+    await runSecretTripwire({
+      ...stableInput,
+      prose: 'Turn 3: the innkeeper pours an ale.',
+      diceOutcomes: 'Perception DC 12: success.',
+    })
+    await runSecretTripwire({
+      ...stableInput,
+      prose: 'Turn 4: rain drums on the shutters, and a stranger enters.',
+      diceOutcomes: 'Stealth DC 15: fail.',
+    })
+
+    const first = messagesOf(0)
+    const second = messagesOf(1)
+    expect(first).toHaveLength(2)
+    expect(second).toHaveLength(2)
+    // The stable block (head + secrets + publicContext + consistencyContext)
+    // is byte-identical across turns; only the volatile tail moves.
+    expect(second[0]?.content).toBe(first[0]?.content)
+    expect(second[1]?.content).not.toBe(first[1]?.content)
+  })
+
+  it('breakpoint sits on the stable block only; prose and dice ride the volatile tail', async () => {
+    mockGenerateText.mockResolvedValueOnce(cleanResult)
+
+    await runSecretTripwire({
+      ...stableInput,
+      prose: 'PROSE-UNDER-TEST',
+      diceOutcomes: 'DICE-THIS-TURN',
+    })
+
+    const messages = messagesOf()
+    expect(messages).toHaveLength(2)
+    expect(messages[0]?.role).toBe('user')
+    expect(messages[0]?.providerOptions).toEqual(BREAKPOINT)
+    // The volatile tail carries NO providerOptions key at all (a stray
+    // undefined-valued key would still serialize into the wire request).
+    expect(Object.keys(messages[1] ?? {})).toEqual(['role', 'content'])
+    // Stable side: the per-session material, none of the per-turn material.
+    expect(messages[0]?.content).toContain(stableInput.secrets)
+    expect(messages[0]?.content).toContain(stableInput.publicContext)
+    expect(messages[0]?.content).toContain(stableInput.consistencyContext)
+    expect(messages[0]?.content).not.toContain('PROSE-UNDER-TEST')
+    expect(messages[0]?.content).not.toContain('DICE-THIS-TURN')
+    // Volatile side: starts at the prose marker, carries the turn material.
+    expect(messages[1]?.content.startsWith('Player-facing prose this turn:')).toBe(true)
+    expect(messages[1]?.content).toContain('PROSE-UNDER-TEST')
+    expect(messages[1]?.content).toContain('DICE-THIS-TURN')
+    expect(messages[1]?.content).not.toContain(stableInput.secrets)
+  })
+
+  it('block concatenation is byte-identical to the flat rendering of the reordered template', async () => {
+    mockGenerateText.mockResolvedValueOnce(cleanResult)
+
+    await runSecretTripwire({
+      ...stableInput,
+      prose: 'Prose with {{curly}} noise and $& regex traps',
+      diceOutcomes: 'Dice $1 text',
+    })
+
+    expect(promptTextOf()).toBe(
+      loadPrompt('session', 'secret-tripwire', {
+        prose: 'Prose with {{curly}} noise and $& regex traps',
+        secrets: stableInput.secrets,
+        publicContext: stableInput.publicContext,
+        consistencyContext: stableInput.consistencyContext,
+        diceOutcomes: 'Dice $1 text',
+      }),
+    )
+  })
+
+  it('absent optional fields render the same defaults on the blocks path', async () => {
+    mockGenerateText.mockResolvedValueOnce(cleanResult)
+
+    await runSecretTripwire({
+      prose: 'p',
+      secrets: stableInput.secrets,
+      publicContext: stableInput.publicContext,
+    })
+
+    expect(promptTextOf()).toBe(
+      loadPrompt('session', 'secret-tripwire', {
+        prose: 'p',
+        secrets: stableInput.secrets,
+        publicContext: stableInput.publicContext,
+        consistencyContext: '(none)',
+        diceOutcomes: '(none this turn)',
+      }),
+    )
+  })
+})
+
+describe('splitTripwireTemplate — the volatile marker must appear exactly once', () => {
+  it('throws when the marker is missing (template drift)', () => {
+    expect(() => splitTripwireTemplate('no volatile boundary in sight')).toThrow(/not found/)
+  })
+
+  it('throws when the marker appears more than once (a first-occurrence cut would silently move the breakpoint)', () => {
+    const doctored =
+      'head\n\nPlayer-facing prose this turn:\n{{prose}}\n\nPlayer-facing prose this turn:\n\ntail'
+    expect(() => splitTripwireTemplate(doctored)).toThrow(/more than once/)
+  })
+
+  it('splits the real template at the single marker', () => {
+    const { head, tail } = splitTripwireTemplate(loadPrompt('session', 'secret-tripwire'))
+    expect(head + tail).toBe(loadPrompt('session', 'secret-tripwire'))
+    expect(tail.startsWith('Player-facing prose this turn:')).toBe(true)
   })
 })
