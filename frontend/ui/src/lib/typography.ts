@@ -41,7 +41,7 @@ export type TypeRole =
 // `subtitle`, `meta`, and `chrome-strong` add a COLOUR facet the other roles
 // leave to the ambient ink: `subtitle` (the italic serif narrative sub-line) and
 // `meta` (the quiet mono record line) carry `text-ink-secondary`, and
-// `chrome-strong` carries `text-accent-fg` (see its entry below) — all token
+// `chrome-strong` carries `text-ink` (see its entry below) — all token
 // UTILITIES, so they flip correctly under `.dark`, unlike a frozen
 // `var(--color-*)`.
 /** Type role → its complete static token class string. */
@@ -58,8 +58,15 @@ export const TYPE_ROLE_CLASS: Record<TypeRole, string> = {
   meta: 'font-ui text-xs font-normal text-ink-secondary',
   // chrome / chrome-strong — the frame's one utility size (spec 2026-07-30):
   // 14px mono, 0.01em tracking. `chrome` stays weight/color-ambient;
-  // `chrome-strong` is the credit NUMBER — semibold + tabular-nums + accent-fg,
-  // the bar's ONLY accent, so 'accent' keeps meaning 'the number that is yours'
+  // `chrome-strong` is the credit NUMBER — semibold + tabular-nums, carrying
+  // its emphasis through WEIGHT rather than colour.
+  //
+  // It carried `text-accent-fg` briefly and that shipped an AA failure: the bar
+  // renders on `surface`, and dark `--accent-fg` (ember-300) is 4.34:1 against
+  // paper-800 — the token is sized for rings (≥3:1) and for text on `bg`
+  // (4.88:1), never for text on a raised surface. See its annotation in
+  // semantic.css. Weight against `ink` clears AA on both grounds, and it is
+  // what the UX spec asked for before the accent detour.
   chrome: 'font-ui text-sm font-normal tracking-[0.01em]',
-  'chrome-strong': 'font-ui text-sm font-semibold tracking-[0.01em] tabular-nums text-accent-fg',
+  'chrome-strong': 'font-ui text-sm font-semibold tracking-[0.01em] tabular-nums text-ink',
 }

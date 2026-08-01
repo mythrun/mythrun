@@ -26,7 +26,8 @@ import { HeaderSlot } from './header-slot.tsx'
 /** The resolved balance number + its unit. Only rendered once `useBalance` has data
  *  (HeaderSlot's Suspense owns the loading state, its error boundary the failure).
  *  The bar's typography (navbar redesign): the label is quiet `chrome`, the number
- *  `chrome-strong` — semibold tabular accent, the bar's ONLY accent. */
+ *  `chrome-strong` — semibold tabular ink; emphasis by weight, not colour
+ *  (accent text fails AA on the bar's surface in dark). */
 function HeaderCreditsValue({ testId }: { readonly testId: string }): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const { data } = useBalance()

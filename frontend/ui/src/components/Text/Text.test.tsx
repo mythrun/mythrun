@@ -46,9 +46,12 @@ describe('Text', () => {
     expect(TYPE_ROLE_CLASS.chrome).toBe('font-ui text-sm font-normal tracking-[0.01em]')
   })
 
-  it("chrome-strong: the credit number — semibold, tabular, the bar's ONE accent", () => {
+  it('chrome-strong: the credit number — semibold, tabular, ink (weight, not colour)', () => {
+    // Deliberately NOT text-accent-fg: the bar renders on `surface`, where dark
+    // accent-fg is 4.34:1 — below AA for text. Pinned so the accent cannot
+    // return without someone re-reading the contrast note in semantic.css.
     expect(TYPE_ROLE_CLASS['chrome-strong']).toBe(
-      'font-ui text-sm font-semibold tracking-[0.01em] tabular-nums text-accent-fg',
+      'font-ui text-sm font-semibold tracking-[0.01em] tabular-nums text-ink',
     )
   })
 
