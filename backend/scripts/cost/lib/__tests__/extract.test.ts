@@ -12,7 +12,12 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { extractCalls, logPathsForWindow, SESSION_STAGES } from '../extract.js'
+import {
+  extractCalls,
+  extractStageOnlyCalls,
+  logPathsForWindow,
+  SESSION_STAGES,
+} from '../extract.js'
 
 const SESSION = 'sess-aaa'
 const CAMPAIGN = 'camp-aaa'
@@ -80,6 +85,12 @@ const WORKER_LEG = [
   // Prep-shaped line: campaignId only + world-gen stage — NOT session-attributed,
   // kept (this is exactly the S-4/S-5 shape).
   llmCall({ time: T + 2_700, model: 'claude-opus-5', mode: 'stream', campaignId: CAMPAIGN, stage: 'locations_and_npcs', inputTokens: 30_000, outputTokens: 8_000, cacheReadTokens: 0 }),
+  // An id-less stage-carrying line (the input-gate/preview-intake shape; also
+  // any stamping regression): invisible to id-scoped extraction, captured by
+  // extractStageOnlyCalls.
+  llmCall({ time: T + 2_800, model: 'claude-haiku-4-5-20251001', stage: 'secret_tripwire', inputTokens: 10_160, outputTokens: 23, cacheReadTokens: 0, cacheWriteTokens: 0 }),
+  // Same id-less shape but out of window — excluded.
+  llmCall({ time: T + 90_000, model: 'claude-haiku-4-5-20251001', stage: 'secret_tripwire', inputTokens: 10_000, outputTokens: 20 }),
 ].join('\n')
 
 let dirs: string[] = []
@@ -164,6 +175,19 @@ describe('extractCalls', () => {
     expect(calls).toHaveLength(8)
   })
 
+  it('knows the full committed session-stage label set (749b3d65)', () => {
+    // retcon_author (breach-fired) and ft_combat_outcome (combat-only) are
+    // session spend — they must land in calls, never drop-and-flag.
+    expect(SESSION_STAGES.has('retcon_author')).toBe(true)
+    expect(SESSION_STAGES.has('ft_combat_outcome')).toBe(true)
+  })
+
+  it('never scopes an id-less line in, even with matching window', () => {
+    const { api, worker } = writeLegs(makeDir())
+    const { calls, dropped } = extractCalls([api, worker], WINDOW, SCOPE)
+    expect([...calls, ...dropped].some((c) => c.stage === 'secret_tripwire')).toBe(false)
+  })
+
   it('throws on empty scopeIds (scoping must never degrade to timestamps)', () => {
     const { api } = writeLegs(makeDir())
     expect(() => extractCalls([api], WINDOW, [])).toThrow(/scopeIds/)
@@ -184,11 +208,16 @@ describe('extractCalls', () => {
 })
 
 describe('logPathsForWindow', () => {
-  it('returns both legs for a single-day window', () => {
-    // Local-time construction mirrors dev-logged.sh's `date +%F` naming.
+  it('includes the PREVIOUS local date for a single-day window (long-lived writers)', () => {
+    // Local-time construction mirrors dev-logged.sh's `date +%F` naming. A
+    // process that booted before midnight keeps appending to its boot-date
+    // file (static shell redirects), so a window on date D must also read
+    // D-1's files — extractCalls' time filter keeps correctness.
     const from = new Date(2026, 6, 30, 10, 0).getTime()
     const to = new Date(2026, 6, 30, 11, 0).getTime()
     expect(logPathsForWindow('/logs', { fromMs: from, toMs: to }).map((p) => basename(p))).toEqual([
+      'dev-2026-07-29.log',
+      'dev-worker-2026-07-29.log',
       'dev-2026-07-30.log',
       'dev-worker-2026-07-30.log',
     ])
@@ -198,6 +227,8 @@ describe('logPathsForWindow', () => {
     const from = new Date(2026, 6, 30, 23, 50).getTime()
     const to = new Date(2026, 6, 31, 0, 10).getTime()
     expect(logPathsForWindow('/logs', { fromMs: from, toMs: to }).map((p) => basename(p))).toEqual([
+      'dev-2026-07-29.log',
+      'dev-worker-2026-07-29.log',
       'dev-2026-07-30.log',
       'dev-worker-2026-07-30.log',
       'dev-2026-07-31.log',
@@ -212,13 +243,14 @@ describe('logPathsForWindow', () => {
     const paths = logPathsForWindow(dir, { fromMs: from, toMs: to })
     // A call just before midnight in day 1's API leg; one just after midnight
     // in day 2's worker leg. Day 1's worker leg doesn't exist (stack quirk) —
-    // extraction must tolerate that.
+    // extraction must tolerate that. (paths[0..1] are the always-included
+    // previous-day candidates; day 1 starts at index 2.)
     writeFileSync(
-      paths[0] ?? '',
+      paths[2] ?? '',
       `${llmCall({ time: from + 1_000, model: 'claude-sonnet-5', sessionId: SESSION, stage: 'st_gate', inputTokens: 10, outputTokens: 1 })}\n`,
     )
     writeFileSync(
-      paths[3] ?? '',
+      paths[5] ?? '',
       `${llmCall({ time: to - 1_000, model: 'claude-sonnet-5', sessionId: SESSION, stage: 'turn_audit', inputTokens: 20, outputTokens: 2 })}\n`,
     )
     const { calls } = extractCalls(paths, { fromMs: from, toMs: to }, [SESSION])
@@ -230,7 +262,7 @@ describe('logPathsForWindow', () => {
 })
 
 describe('SESSION_STAGES', () => {
-  it('holds exactly the plan Task 1 per-session call-site labels', () => {
+  it('holds exactly the committed per-session call-site labels (Task 1 + 749b3d65)', () => {
     expect([...SESSION_STAGES].sort()).toEqual(
       [
         'st_eval',
@@ -246,7 +278,47 @@ describe('SESSION_STAGES', () => {
         'world_lookup_gate',
         'session_reconcile',
         'post_session_analysis',
+        'retcon_author',
+        'ft_combat_outcome',
       ].sort(),
     )
+  })
+})
+
+describe('extractStageOnlyCalls', () => {
+  // The S-4/S-5 arm (Wave-1 review routing): prep-context secret-tripwire
+  // lines carry stage only — no sessionId, no campaignId — so id-scoped
+  // extraction can never see them. Window + named-stage scoping applies,
+  // and ONLY to id-less lines (id-carrying lines belong to extractCalls;
+  // double-counting a line across both extractors would double-price it).
+  it('captures in-window id-less lines for the named stages only', () => {
+    const { api, worker } = writeLegs(makeDir())
+    const lines = extractStageOnlyCalls([api, worker], WINDOW, ['secret_tripwire'])
+    expect(lines).toEqual([
+      {
+        time: T + 2_800,
+        model: 'claude-haiku-4-5-20251001',
+        stage: 'secret_tripwire',
+        inputTokens: 10_160,
+        outputTokens: 23,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+    ])
+  })
+
+  it('excludes id-less lines with no stage and unnamed stages', () => {
+    const { api, worker } = writeLegs(makeDir())
+    // The fully anonymous line (T + 3_200) has no stage; nothing else id-less
+    // carries st_gate.
+    expect(extractStageOnlyCalls([api, worker], WINDOW, ['st_gate'])).toEqual([])
+  })
+
+  it('throws on an invalid window or empty stage list', () => {
+    const { api } = writeLegs(makeDir())
+    expect(() => extractStageOnlyCalls([api], { fromMs: 2, toMs: 1 }, ['x'])).toThrow(
+      /invalid capture window/,
+    )
+    expect(() => extractStageOnlyCalls([api], WINDOW, [])).toThrow(/stages/)
   })
 })

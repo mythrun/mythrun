@@ -20,6 +20,9 @@ export interface CostEntry {
   /** Measured stable-span size for the 4096-minimum cache conditionals
    *  (spec §3): S-2's Haiku cache arms assert only when this ≥ 4096. */
   readonly spanTokens?: number | undefined
+  /** Expected event count (S-1's "eval count within an empirically measured
+   *  range" — spec §5). */
+  readonly count?: number | undefined
 }
 
 const costEntrySchema = z.strictObject({
@@ -29,6 +32,7 @@ const costEntrySchema = z.strictObject({
   usd: z.number().nonnegative().optional(),
   tolerancePct: z.number().nonnegative(),
   spanTokens: z.number().nonnegative().optional(),
+  count: z.number().nonnegative().optional(),
 })
 
 const manifestSchema = z.record(z.string(), costEntrySchema)

@@ -42,6 +42,19 @@ describe('loadManifest', () => {
     expect(loadManifest(path)).toEqual(expected)
   })
 
+  it('loads a count entry (S-1 eval-count assertion) and rejects a negative count', () => {
+    const valid = writeManifest(
+      'count.json',
+      JSON.stringify({ 's1.st_eval_count': { count: 13, tolerancePct: 25 } }),
+    )
+    expect(loadManifest(valid)).toEqual({ 's1.st_eval_count': { count: 13, tolerancePct: 25 } })
+    const negative = writeManifest(
+      'neg-count.json',
+      JSON.stringify({ 's1.st_eval_count': { count: -1, tolerancePct: 25 } }),
+    )
+    expect(() => loadManifest(negative)).toThrow(/failed validation/)
+  })
+
   it('rejects an entry missing tolerancePct', () => {
     const path = writeManifest('no-tol.json', JSON.stringify({ ft: { usd: 0.39 } }))
     expect(() => loadManifest(path)).toThrow(/failed validation/)

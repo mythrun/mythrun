@@ -25,6 +25,7 @@
     "world:embed-backfill": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/world-embed-backfill.ts",
     "world:color-backfill": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/world-color-backfill.ts",
     "dev-tool:check": "tsx scripts/dev-tool-check.ts",
+    "cost:smoke": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/cost/cost-smoke.ts",
     "smoke:phantom-reconciliation": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/phantom-reconciliation.ts",
     "smoke:entity-consolidation-flow": "tsx --env-file=.env.development --env-file-if-exists=../.env.worktree scripts/smoke/entity-consolidation-flow.ts",
     "smoke:prep-pipeline": "tsx --env-file=.env.smoke --env-file-if-exists=../.env.worktree scripts/smoke/prep-pipeline.ts",

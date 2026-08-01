@@ -24,8 +24,6 @@
 // is the E2E smoke; the 12-turn form is the baseline scenario (Task 5).
 
 import { pathToFileURL } from 'node:url'
-import { Redis } from 'ioredis'
-import { Queue } from 'bullmq'
 import type { WebSocket } from 'ws'
 import { createPgPool } from '../../../src/db/postgres.js'
 import { loadFixture, readFixture } from '../../smoke/fixtures/load.js'
@@ -35,6 +33,8 @@ import { QUEUE_SESSION_TURN } from '../../../src/session/turn-queue.js'
 import { QUEUE_DM_TRIGGER } from '../../../src/session/dm-trigger-config.js'
 import { QUEUE_ST_EVAL } from '../../../src/session/st-eval-queue.js'
 import { QUEUE_SCRIBE } from '../../../src/session/scribe-queue.js'
+import { awaitQuiescence } from './quiesce.js'
+import { resetCampaignSessionState } from './reset-session-state.js'
 
 export interface RunS1Opts {
   readonly baseUrl: string
@@ -60,7 +60,6 @@ const START_POLL_MS = 10_000
 const TURN_TIMEOUT_MS = 300_000 // quiet-window debounce (4s) + FT stream + tool calls
 const COMBAT_RESUME_TIMEOUT_MS = 15_000
 const QUIESCENCE_TIMEOUT_MS = 10 * 60_000 // post-turn ST eval (Opus) + scribe chains
-const QUIESCENCE_POLL_MS = 1_000
 const SETTLE_MS = 10_000 // > the 4s quiet window, so a hidden pending debounce fires inside it
 
 // The scripted session, in-fiction for the fixture's fog-wrapped harbor town +
@@ -294,46 +293,6 @@ async function driveTurn(
   throw new Error(`turn ${String(turnNumber)}: no turn_end within ${String(TURN_TIMEOUT_MS)}ms`)
 }
 
-/** Sum waiting+active+delayed across one queue. Delayed counts on purpose: a
- *  parked debounce or a backoff retry is work the window hasn't absorbed yet. */
-async function pendingCount(queue: Queue): Promise<number> {
-  const counts = await queue.getJobCounts('waiting', 'active', 'delayed')
-  return Object.values(counts).reduce((s, n) => s + n, 0)
-}
-
-/** Drained-queue quiescence (spec §1.1(3)): all four session queues at zero
- *  pending, HELD for SETTLE_MS. Returns toMs (settle completion). */
-async function awaitQuiescence(redisBatchUrl: string): Promise<number> {
-  const connection = new Redis(redisBatchUrl, { maxRetriesPerRequest: null })
-  const queues = SESSION_QUEUES.map((name) => new Queue(name, { connection }))
-  try {
-    const deadline = Date.now() + QUIESCENCE_TIMEOUT_MS
-    let zeroSince: number | null = null
-    while (Date.now() < deadline) {
-      const perQueue = await Promise.all(queues.map(pendingCount))
-      const total = perQueue.reduce((s, n) => s + n, 0)
-      if (total === 0) {
-        zeroSince ??= Date.now()
-        if (Date.now() - zeroSince >= SETTLE_MS) {
-          log('quiescence_settled', { settleMs: SETTLE_MS })
-          return Date.now()
-        }
-      } else {
-        if (zeroSince !== null) log('quiescence_reset', {})
-        zeroSince = null
-        log('quiescence_wait', {
-          counts: Object.fromEntries(SESSION_QUEUES.map((n, i) => [n, perQueue[i]])),
-        })
-      }
-      await sleep(QUIESCENCE_POLL_MS)
-    }
-    throw new Error(`queues never quiesced within ${String(QUIESCENCE_TIMEOUT_MS)}ms`)
-  } finally {
-    await Promise.all(queues.map((q) => q.close()))
-    connection.disconnect()
-  }
-}
-
 /** Seed → start → connect → drive N turns → quiesce. Reads DATABASE_URL +
  *  REDIS_BATCH_URL from env (the live local stack's own settings). */
 export async function runS1(opts: RunS1Opts): Promise<RunS1Result> {
@@ -343,8 +302,13 @@ export async function runS1(opts: RunS1Opts): Promise<RunS1Result> {
   }
   const databaseUrl = requiredEnv('DATABASE_URL')
   const redisBatchUrl = requiredEnv('REDIS_BATCH_URL')
+  const redisRealtimeUrl = requiredEnv('REDIS_REALTIME_URL')
 
   const campaignId = await seedReadyToPlay(databaseUrl)
+  // Delete-then-load extends to Redis: stale usage counters flip the ST
+  // wind-down arms (or budget auto-end) and a wedged `:ending` fence 409s
+  // /start — both poison the baseline (see reset-session-state.ts).
+  await resetCampaignSessionState(redisRealtimeUrl, campaignId, log)
   await api(opts, 'POST', '/api/dev/credits/grant', { creditType: 'session', amount: 5 })
   const sessionId = await startSession(opts, campaignId)
   log('session_started', { campaignId, sessionId })
@@ -374,7 +338,13 @@ export async function runS1(opts: RunS1Opts): Promise<RunS1Result> {
     log('turn_complete', { turn: i + 1, ms: Date.now() - t0, skillChecks: result.skillChecks })
   }
 
-  const toMs = await awaitQuiescence(redisBatchUrl)
+  const toMs = await awaitQuiescence({
+    redisUrl: redisBatchUrl,
+    queues: SESSION_QUEUES,
+    settleMs: SETTLE_MS,
+    timeoutMs: QUIESCENCE_TIMEOUT_MS,
+    log,
+  })
   // NO end_session (mirrors ws-transport.ts): S-2 re-asserts this same window,
   // and the all-disconnected suspend cleans up the live session harmlessly.
   sink.expectClose()

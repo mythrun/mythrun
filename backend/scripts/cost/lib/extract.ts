@@ -56,6 +56,11 @@ export const SESSION_STAGES: ReadonlySet<string> = new Set([
   'world_lookup_gate',
   'session_reconcile',
   'post_session_analysis',
+  // 749b3d65 additions: retcon author (scribe handleBreach, hard_reveal only)
+  // and the FT combat-outcome call — both session spend, both absent from
+  // scripted baselines (no breaches, no combat) but never drop-and-flagged.
+  'retcon_author',
+  'ft_combat_outcome',
 ])
 
 function assertWindow(window: CaptureWindow): void {
@@ -147,6 +152,40 @@ export function extractCalls(
   return { calls, dropped }
 }
 
+/**
+ * Extract in-window `llm.call` lines that carry one of the named stages and
+ * NO ids at all (neither sessionId nor campaignId) — the S-4/S-5 arm for
+ * in-request calls that run BEFORE any campaign row exists (input gate,
+ * preview-time concept_intake), which id-scoped extraction can never see.
+ * Restricted to id-less lines so a line can never be counted by both this
+ * and `extractCalls` (double-pricing).
+ */
+export function extractStageOnlyCalls(
+  ndjsonPaths: string[],
+  window: CaptureWindow,
+  stages: readonly string[],
+): LlmCallLine[] {
+  assertWindow(window)
+  if (stages.length === 0) {
+    throw new Error('extractStageOnlyCalls: stages must be non-empty')
+  }
+  const wanted = new Set(stages)
+  const lines: LlmCallLine[] = []
+  for (const path of ndjsonPaths) {
+    if (!existsSync(path)) continue
+    for (const raw of readFileSync(path, 'utf8').split('\n')) {
+      const line = parseLlmCallLine(raw)
+      if (line === undefined) continue
+      if (line.time < window.fromMs || line.time > window.toMs) continue
+      if (line.sessionId !== undefined || line.campaignId !== undefined) continue
+      if (line.stage === undefined || !wanted.has(line.stage)) continue
+      lines.push(line)
+    }
+  }
+  lines.sort((a, b) => a.time - b.time)
+  return lines
+}
+
 /** Local date as `YYYY-MM-DD`, matching dev-logged.sh's `date +%F` naming. */
 function localDateStr(d: Date): string {
   const mm = String(d.getMonth() + 1).padStart(2, '0')
@@ -156,15 +195,20 @@ function localDateStr(d: Date): string {
 
 /**
  * Candidate log paths for a capture window: for every LOCAL date the window
- * touches, both legs (`dev-<date>.log`, `dev-worker-<date>.log`) — midnight-
- * spanning-safe. Pure name computation; `extractCalls` tolerates candidates
- * that don't exist on disk.
+ * touches PLUS the preceding date, both legs (`dev-<date>.log`,
+ * `dev-worker-<date>.log`). The preceding date is unconditional: a long-lived
+ * process keeps appending to its boot-date file across midnight (static
+ * shell redirects don't roll), so a post-midnight window's lines can sit in
+ * yesterday's files — the time filter in `extractCalls` keeps correctness.
+ * Pure name computation; `extractCalls` tolerates candidates that don't
+ * exist on disk.
  */
 export function logPathsForWindow(logDir: string, window: CaptureWindow): string[] {
   assertWindow(window)
   const paths: string[] = []
   const cursor = new Date(window.fromMs)
   cursor.setHours(0, 0, 0, 0)
+  cursor.setDate(cursor.getDate() - 1)
   while (cursor.getTime() <= window.toMs) {
     const date = localDateStr(cursor)
     paths.push(join(logDir, `dev-${date}.log`), join(logDir, `dev-worker-${date}.log`))

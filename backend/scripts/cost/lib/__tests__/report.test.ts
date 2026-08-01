@@ -89,6 +89,111 @@ describe('rowStatus', () => {
   })
 })
 
+describe('rowStatus — directional rows (floors and ceilings)', () => {
+  // S-2's "FT cacheRead ≥ 85%" is a FLOOR: a better-than-expected cache hit
+  // rate must never fail a symmetric band. tolerancePct loosens the bound
+  // (floor × (1 − tol/100)), 0 = exact bound, boundary inclusive.
+  it('min: passes at or above the floor, fails below', () => {
+    const floor: ComponentRow = {
+      component: 'ft_cache_pct',
+      unit: 'pct',
+      actual: 91.2,
+      expected: 85,
+      tolerancePct: 0,
+      direction: 'min',
+    }
+    expect(rowStatus(floor)).toBe('PASS')
+    expect(rowStatus({ ...floor, actual: 85 })).toBe('PASS')
+    expect(rowStatus({ ...floor, actual: 84.99 })).toBe('FAIL')
+    // tolerance 10% → effective floor 76.5
+    expect(rowStatus({ ...floor, actual: 76.5, tolerancePct: 10 })).toBe('PASS')
+    expect(rowStatus({ ...floor, actual: 76.4, tolerancePct: 10 })).toBe('FAIL')
+  })
+
+  // S-4/S-5's "prep $ ≤ manifest" is a CEILING: cheaper-than-expected must
+  // pass. tolerancePct is headroom above the recorded expected value.
+  it('max: passes at or below the ceiling, fails above', () => {
+    const ceiling: ComponentRow = {
+      component: 'prep_total',
+      unit: 'usd',
+      actual: 0.8,
+      expected: 0.9,
+      tolerancePct: 0,
+      direction: 'max',
+    }
+    expect(rowStatus(ceiling)).toBe('PASS')
+    expect(rowStatus({ ...ceiling, actual: 0.9 })).toBe('PASS')
+    expect(rowStatus({ ...ceiling, actual: 0.91 })).toBe('FAIL')
+    // headroom 20% → effective ceiling 1.08
+    expect(rowStatus({ ...ceiling, actual: 1.08, tolerancePct: 20 })).toBe('PASS')
+    expect(rowStatus({ ...ceiling, actual: 1.0801, tolerancePct: 20 })).toBe('FAIL')
+  })
+
+  it('band direction is the default and unchanged', () => {
+    expect(rowStatus({ ...ftTurn, direction: 'band' })).toBe(rowStatus(ftTurn))
+  })
+
+  it('informational wins over direction', () => {
+    expect(
+      rowStatus({
+        component: 'x',
+        unit: 'usd',
+        actual: 99,
+        expected: 1,
+        tolerancePct: 0,
+        direction: 'max',
+        informational: true,
+      }),
+    ).toBe('INFO')
+  })
+
+  it('directional rows still require tolerancePct with expected (half-specified assertion)', () => {
+    expect(() =>
+      rowStatus({ component: 'x', unit: 'usd', actual: 1, expected: 1, direction: 'min' }),
+    ).toThrow(/tolerancePct/)
+  })
+
+  it('throws on non-finite directional inputs (fail loud, never a silent PASS)', () => {
+    expect(() =>
+      rowStatus({
+        component: 'x',
+        unit: 'usd',
+        actual: Number.NaN,
+        expected: 1,
+        tolerancePct: 0,
+        direction: 'min',
+      }),
+    ).toThrow(/non-finite/)
+  })
+})
+
+describe('renderReport — directional rows and pct unit', () => {
+  it('renders floors as ≥bound and ceilings as ≤bound in the band column', () => {
+    const report = renderReport([
+      {
+        component: 'ft_cache_pct',
+        unit: 'pct',
+        actual: 91.2,
+        expected: 85,
+        tolerancePct: 0,
+        direction: 'min',
+      },
+      {
+        component: 'prep_total',
+        unit: 'usd',
+        actual: 0.8,
+        expected: 0.9,
+        tolerancePct: 20,
+        direction: 'max',
+      },
+    ])
+    expect(report).toContain('≥85.0%')
+    expect(report).toContain('≤$1.0800')
+    expect(report).toContain('91.2%')
+    expect(report).toContain('RESULT: PASS (2 pass, 0 fail, 0 info)')
+  })
+})
+
 describe('renderReport', () => {
   it('renders the one-page table with deltas and a terminal RESULT line', () => {
     const report = renderReport(ROWS)

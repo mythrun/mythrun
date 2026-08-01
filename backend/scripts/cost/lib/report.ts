@@ -16,14 +16,29 @@ export type RowStatus = 'PASS' | 'FAIL' | 'INFO'
 
 export interface ComponentRow {
   readonly component: string
-  readonly unit: 'usd' | 'tokens'
+  readonly unit: 'usd' | 'tokens' | 'pct'
   readonly actual: number
   readonly expected?: number | undefined
   readonly tolerancePct?: number | undefined
+  /**
+   * Assertion shape (default 'band'). 'min' is a floor (S-2's cacheRead ≥
+   * 85% — a better-than-expected value must never fail); 'max' is a ceiling
+   * (S-4/S-5's "$ ≤ manifest"). tolerancePct loosens the bound one-sided:
+   * floor × (1 − tol/100), ceiling × (1 + tol/100). Boundary inclusive.
+   */
+  readonly direction?: 'band' | 'min' | 'max' | undefined
   /** Informational row: rendered, never asserted (e.g. S-1's in-session total). */
   readonly informational?: boolean | undefined
   /** Free-text annotation, e.g. the logged-not-failed arm's reason. */
   readonly note?: string | undefined
+}
+
+/** Effective one-sided bound for a directional row; undefined for band rows. */
+function directionalBound(row: ComponentRow): number | undefined {
+  if (row.direction !== 'min' && row.direction !== 'max') return undefined
+  if (row.expected === undefined || row.tolerancePct === undefined) return undefined
+  const factor = row.direction === 'min' ? 1 - row.tolerancePct / 100 : 1 + row.tolerancePct / 100
+  return row.expected * factor
 }
 
 export function rowStatus(row: ComponentRow): RowStatus {
@@ -32,6 +47,15 @@ export function rowStatus(row: ComponentRow): RowStatus {
     throw new Error(
       `report: row "${row.component}" has an expected value but no tolerancePct — half-specified assertion`,
     )
+  }
+  const bound = directionalBound(row)
+  if (bound !== undefined) {
+    if (!Number.isFinite(row.actual) || !Number.isFinite(bound)) {
+      throw new Error(
+        `report: row "${row.component}" has a non-finite actual (${String(row.actual)}) or bound (${String(bound)})`,
+      )
+    }
+    return (row.direction === 'min' ? row.actual >= bound : row.actual <= bound) ? 'PASS' : 'FAIL'
   }
   return withinBand(row.actual, row.expected, row.tolerancePct) ? 'PASS' : 'FAIL'
 }
@@ -55,7 +79,9 @@ const COLUMNS: readonly { key: keyof Cells; header: string; align: 'left' | 'rig
 ]
 
 function fmtValue(v: number, unit: ComponentRow['unit']): string {
-  return unit === 'usd' ? `$${v.toFixed(4)}` : Math.round(v).toLocaleString('en-US')
+  if (unit === 'usd') return `$${v.toFixed(4)}`
+  if (unit === 'pct') return `${v.toFixed(1)}%`
+  return Math.round(v).toLocaleString('en-US')
 }
 
 function fmtDelta(actual: number, expected: number, unit: ComponentRow['unit']): string {
@@ -74,11 +100,18 @@ function renderCells(row: ComponentRow, status: RowStatus): Cells {
     status: row.note === undefined ? status : `${status}  ${row.note}`,
   }
   if (row.expected === undefined) return { ...base, expected: '—', delta: '—', band: '—' }
+  const bound = directionalBound(row)
+  const band =
+    bound !== undefined
+      ? `${row.direction === 'min' ? '≥' : '≤'}${fmtValue(bound, row.unit)}`
+      : row.tolerancePct === undefined
+        ? '—'
+        : `±${String(row.tolerancePct)}%`
   return {
     ...base,
     expected: fmtValue(row.expected, row.unit),
     delta: fmtDelta(row.actual, row.expected, row.unit),
-    band: row.tolerancePct === undefined ? '—' : `±${String(row.tolerancePct)}%`,
+    band,
   }
 }
 
