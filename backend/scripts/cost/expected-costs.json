@@ -10,7 +10,7 @@
   "s4.character_integration.claude-opus-5": { "usd": 0.3245, "count": 1, "tolerancePct": 25 },
   "s4.secret_tripwire.claude-haiku-4-5-20251001": { "usd": 0.0105, "count": 1, "tolerancePct": 25 },
   "s4.session_prep.claude-opus-5": { "usd": 0.5119, "count": 1, "tolerancePct": 30 },
-  "s5.total_usd": { "usd": 1.5567, "tolerancePct": 45 },
+  "s5.total_usd": { "usd": 2.3175, "tolerancePct": 45 },
   "s5.input_gate.claude-sonnet-5": { "usd": 0.0096, "count": 1, "tolerancePct": 35 },
   "s5.concept_intake.claude-opus-5": { "usd": 0.0335, "count": 1, "tolerancePct": 35 },
   "s5.concept_intake.claude-sonnet-5": { "usd": 0.0095, "count": 1, "tolerancePct": 35 },
@@ -22,5 +22,6 @@
   "s5.world_introduction.claude-opus-5": { "usd": 0.2188, "count": 1, "tolerancePct": 35 },
   "s5.entity_consolidation.claude-sonnet-5": { "usd": 0.046, "count": 1, "tolerancePct": 45 },
   "s5.starting_situation.claude-sonnet-5": { "usd": 0.0788, "count": 1, "tolerancePct": 35 },
+  "s5.coherence_pass.claude-sonnet-5": { "usd": 0.8655, "count": 1, "tolerancePct": 45 },
   "s5.random_tables.claude-haiku-4-5-20251001": { "usd": 0.0172, "count": 1, "tolerancePct": 45 }
 }

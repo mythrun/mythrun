@@ -1,4 +1,6 @@
-// Per MYT-52 T12 / design §3.6 + §D5. Stage 7 non-streaming handler.
+// Per MYT-52 T12 / design §3.6 + §D5. Stage 7 handler (§1.3 loop-scoped
+// since myth-5ei5j — the wrapper streams internally; the handler contract
+// is unchanged).
 //
 // Data-layer-repo-unification: the handler now takes a pool-bound `Repo`
 // (NOT a mid-tx PoolClient) and runs cost-cap reads + inventory load + the
@@ -18,6 +20,7 @@ import type { Pool } from 'pg'
 import pino from 'pino'
 import { generateObject } from '../../../ai.js'
 import { runCoherencePassStage } from '../coherence-pass.js'
+import { parkEligibleClass } from '../../world-gen-processor.js'
 import type { PipelineEvent } from '../../../../contract/pipeline-events.js'
 import type { VocabularyRegistry } from '../../../schemas/vocabulary-registry.js'
 import { guardTestDatabase } from '../../../../db/__tests__/guard-db.js'
@@ -382,6 +385,41 @@ describe('runCoherencePassStage', () => {
     expect(prompt).toContain(seed.relR)
     expect(prompt).toContain('rivalry')
     expect(prompt).not.toContain('{{worldDump}}')
+  })
+
+  // ── §1.3 loop arming (myth-5ei5j / first myth-9rccn wiring) ───────────────
+
+  it('arms the §1.3 attempt loop with the coherence stage budget (myth-5ei5j)', async () => {
+    // Sonnet 5 adaptive thinking pushed this call's generation past the
+    // non-streaming dispatcher's 300s headers ceiling (24-32k thinking tokens
+    // over the full world dump; 4:18-5:28 measured wall on a 50-entity world).
+    // stageBudgetMs arms the wrapper loop AND switches transport to streaming;
+    // the values are pinned as literals so a silent WORLD_GEN_STAGE_BUDGETS
+    // edit fails here and a deliberate re-size updates both.
+    const seed = await seedWorld()
+    mockPatches([], { inputTokens: 14000, outputTokens: 50 })
+    await run(seed)
+    const firstArg = mockGenerateObject.mock.calls[0]?.[0] as
+      | { stageBudgetMs?: number; expectedHealthyDurationMs?: number; maxOutputTokens?: number }
+      | undefined
+    expect(firstArg?.stageBudgetMs).toBe(20 * 60_000)
+    expect(firstArg?.expectedHealthyDurationMs).toBe(8 * 60_000)
+    expect(firstArg?.maxOutputTokens).toBe(64_000)
+  })
+
+  it('surfaces a connectivity-classed wrapper failure unwrapped — park-eligible (myth-4hw7i)', async () => {
+    // The chain: the armed loop attaches llmFailureClass to surfaced
+    // connectivity failures (ai.test.ts loop pins), and world-gen-processor
+    // parks stage errors carrying connectivity/rate-limit (its park pins).
+    // This covers the remaining link — the stage rethrows the wrapper's error
+    // UNWRAPPED, so the park predicate still sees the attached class.
+    const seed = await seedWorld()
+    const connectivityErr = Object.assign(new Error('fetch failed'), {
+      llmFailureClass: 'connectivity',
+    })
+    mockGenerateObject.mockRejectedValueOnce(connectivityErr)
+    await expect(run(seed)).rejects.toBe(connectivityErr)
+    expect(parkEligibleClass(connectivityErr)).toBe('connectivity')
   })
 
   // ── tier-aware SSE emission (myth-exac T16) ───────────────────────────────

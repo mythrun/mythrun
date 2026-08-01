@@ -2,11 +2,11 @@
 //
 // Stage 7 of world gen — coherence pass. Per MYT-52 design §3.6 + §D5.
 //
-// Non-streaming Sonnet call: reads full world state, identifies
-// contradictions / typos / role conflicts / dangling references, emits
-// a list of patches keyed by REAL UUID. The patch list parses + validates
-// before any client writes; the apply path is purely mechanical (no LLM
-// nondeterminism after the model returns).
+// Sonnet call, §1.3 loop-scoped (streaming transport — myth-5ei5j): reads
+// full world state, identifies contradictions / typos / role conflicts /
+// dangling references, emits a list of patches keyed by REAL UUID. The patch
+// list parses + validates before any client writes; the apply path is purely
+// mechanical (no LLM nondeterminism after the model returns).
 //
 // Dispatch contract (data-layer unification): the handler receives the
 // pool-bound `repo`, NOT a mid-transaction PoolClient. It owns the standard
@@ -56,6 +56,7 @@ import type { PipelineEvent } from '../../../contract/pipeline-events.js'
 import type { AccessLevel } from '../../../repo/facts.js'
 import type { StageDispatchResult } from '../world-gen-processor.js'
 import { renderVocabularyRegistry } from '../vocabulary-renderer.js'
+import { WORLD_GEN_STAGE_BUDGETS } from '../stage-budgets.js'
 import type { VocabularyRegistry } from '../../schemas/vocabulary-registry.js'
 import { renderWorldDump, type WorldInventory } from '../world-dump.js'
 import {
@@ -787,16 +788,22 @@ export async function runCoherencePassStage(
     () => renderVocabularyRegistry(args.vocabularyRegistry),
   )
 
+  // myth-5ei5j: the §1.3 loop MUST stay armed here (stageBudgetMs → streaming
+  // transport). Non-streaming, this call's headers arrive only when generation
+  // completes — and Sonnet 5's thinking-dominated generation over the full
+  // world dump (4-6+ min on 50-entity worlds) outlives the non-streaming
+  // dispatcher's 300s headers ceiling deterministically. The loop owns
+  // attempts (SDK maxRetries is forced to 0 while armed).
   const result = await generateObject({
     model: SONNET,
     schema: CoherenceOutputSchema,
     prompt,
-    maxRetries: 1,
     callSite: 'coherence-pass',
     providerOptions: {
       mythrun: { stage: 'coherence_pass', worldId: args.worldId, campaignId: args.campaignId },
     },
     schemaName: 'CoherenceOutputSchema',
+    ...WORLD_GEN_STAGE_BUDGETS.coherence_pass,
   })
 
   const output: CoherenceOutput = result.output
