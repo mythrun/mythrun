@@ -1,0 +1,58 @@
+digraph cost_measurement {
+  // The cost-assertion harness. A scenario driver exercises the real stack
+  // over HTTP/WS, bounded by a measurement window that closes on drained-queue
+  // quiescence. The runner then reads the raw pino NDJSON both process legs
+  // wrote, keeps the llm.call lines that fall inside the window AND carry a
+  // scope id, prices each one against the billing rate table, and asserts the
+  // per-component totals against pinned bands. Nothing here runs in CI: the
+  // runs cost real dollars and are invoked on demand or weekly on staging.
+  rankdir=LR;
+  compound=true;
+  nodesep=0.35;
+  ranksep=0.7;
+
+  subgraph cluster_drive {
+    label="drive  (real stack, real Anthropic)";
+    style="dashed";
+    color="ember";
+    fontcolor="ember";
+
+    driver [label="scenario driver\ns1: 10 scripted WS turns\ns4: finalize → integration → prep\ns5: full world-gen"];
+    quiesce [label="quiescence\nwaiting+active+delayed == 0\nacross the scenario's queues\nheld for a settle interval"];
+  }
+
+  window [label="measurement window\nfromMs before the first turn\ntoMs after the queues drain", color="ember", fontcolor="ember"];
+
+  subgraph cluster_capture {
+    label="capture";
+    style="dashed";
+
+    logs   [label="backend/logs/\ndev-<date>.log  (API leg)\ndev-worker-<date>.log\nraw pino NDJSON"];
+    extract [label="extract.ts\nin-window AND in-scope\nby sessionId / campaignId\ndrops-and-flags foreign stages"];
+  }
+
+  usd [label="usd.ts\nbase = in − cacheRead − cacheWrite\nreads 0.1x · writes 1.25x\nrates from billing/model-pricing", color="ember", fontcolor="ember"];
+
+  subgraph cluster_assert {
+    label="assert";
+    style="dashed";
+
+    manifest [label="expected-costs.json\npinned bands from 3+ baselines\nper-entry tolerance\ncache arms (span-conditional)"];
+    report   [label="report.ts\none-page table\nactual vs expected, deltas\nPASS / FAIL / INFO"];
+  }
+
+  exit [label="exit code\n0 green · 1 red +\ncost_smoke.failed line"];
+
+  driver -> quiesce;
+  quiesce -> window;
+  driver -> logs [label="stage-stamped\nllm.call lines", style=dashed];
+  window -> extract;
+  logs -> extract;
+  extract -> usd;
+  usd -> report;
+  manifest -> report;
+  report -> exit;
+
+  reassert [label="--reassert\nreplays a saved window\nzero spend", shape=note];
+  reassert -> extract [style=dotted];
+}

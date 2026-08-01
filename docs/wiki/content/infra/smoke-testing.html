@@ -2,6 +2,7 @@
 <!-- source: infra/modules/auth/variables.tf -->
 <!-- source: infra/modules/auth/outputs.tf -->
 <!-- source: infra/environments/staging/main.tf -->
+<!-- source: backend/scripts/cost/ -->
 <!-- source: infra/modules/bootstrap-db/main.tf -->
 <!-- source: infra/modules/bootstrap-db/variables.tf -->
 <!-- source: infra/modules/bootstrap-db/outputs.tf -->
@@ -11,19 +12,20 @@
 <!-- source: backend/scripts/smoke/ws-transport.ts -->
 <!-- source: backend/scripts/smoke/ws-transport.sh -->
 <!-- source: package.json -->
-<!-- source-hash: sha256:0352a3aba8c4e18b462ed41d7cd3692c74acb67fe68dae4bd65179cd4edd2ea3 -->
-<!-- last-ticket: MYT-85 -->
+<!-- source-hash: sha256:fb131de7110cb144f68b6d4514b40b8974b5572ecd3efa8f5ba68be12db1929c -->
+<!-- last-ticket: myth-y8scg -->
 
 <h1>Smoke testing</h1>
 
 <p class="lead">
-  How we exercise the deployed staging API end-to-end. Three smokes today: the narrow
+  How we exercise the deployed staging API end-to-end. Four smokes today &mdash; three that prove the stack is alive, one that measures what it spends. The narrow
   <code>check-username</code> smoke (one bash script, one Cognito user) that proves the cognitive
   stack is reachable; the multi-campaign prep-pipeline smoke (one TypeScript driver, four Cognito
   users, one in-VPC ECS task family) that exercises the full prep flow under burst concurrency; and
   the <a href="#the-ws-transport-smoke">WS-transport smoke</a> (a laptop-runnable script that
-  round-trips the live WebSocket session through the CloudFront <code>/ws/*</code> proxy). All three
-  share the same provisioning shape: native Cognito users created by Terraform, credentials in
+  round-trips the live WebSocket session through the CloudFront <code>/ws/*</code> proxy); and the
+  <a href="#the-weekly-cost-smoke">weekly cost smoke</a>, the only one on a schedule, which asserts
+  live spend against pinned bands. They share the same provisioning shape: native Cognito users created by Terraform, credentials in
   Secrets Manager, and an operator-facing one-command entry point.
 </p>
 
@@ -137,16 +139,16 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Why the smokes aren't yet on a cron</strong> &mdash; all three are manual today (<code
-    >pnpm smoke:staging</code
-  >, <code>pnpm smoke:ws-transport</code>, and the prep-pipeline run-task command). The original
-  blocker was that an unwatched green/red signal is operational noise, and there was nowhere for a
-  failure to page. That half is now built: the
+  <strong>Why the liveness smokes still aren't on a cron</strong> &mdash; the three liveness smokes
+  are manual today (<code>pnpm smoke:staging</code>, <code>pnpm smoke:ws-transport</code>, and the
+  prep-pipeline run-task command). The original blocker was that an unwatched green/red signal is
+  operational noise with nowhere for a failure to page. That half is now built: the
   <a href="index.html#alerting-and-spend">alerting layer</a> exists, both alerts topics are wired,
-  and the serving module already turns structured log events into alarms. What is still missing is
-  the schedule and the failure signal a scheduled run would emit. Until that lands the scripts stay
-  where any human or agent can run them on demand: pre-deploy, post-deploy, after a flaky-feeling
-  outage, or during a billing-rate change to verify spend is what we expect.
+  and the serving module already turns structured log events into alarms. The
+  <a href="#the-weekly-cost-smoke">cost smoke</a> below is the first to carry both halves &mdash; a
+  schedule and a structured failure line &mdash; and is the pattern the others follow when their turn
+  comes. Until then the scripts stay where any human or agent can run them on demand: pre-deploy,
+  post-deploy, after a flaky-feeling outage, or during a billing-rate change.
 </aside>
 
 <h2>The prep-pipeline smoke (MYT-55)</h2>
@@ -318,6 +320,30 @@
   default campaign id; override with <code>SMOKE_CAMPAIGN_ID</code>). It auths as the same Cognito
   smoke owner the narrow smoke uses, so it needs no new provisioning — just the one-time setup of a
   persistent active session for its campaign.
+</aside>
+
+<h2>The weekly cost smoke</h2>
+
+<p>
+  The newest member of the family measures money rather than liveness. A
+  <code>mythrun-staging-smoke-cost</code> task definition runs the
+  <a href="../runtime/cost-measurement.html">cost-measurement harness</a> against staging on an
+  EventBridge schedule — Sunday 04:00 UTC — so a caching regression or a prompt that quietly doubled
+  in size surfaces within a week instead of at the next billing surprise. It mirrors the existing
+  run-task family exactly: its own execution and task roles scoped to the smoke user's secrets, its
+  own log group, and the serving ECS security group rather than the bootstrap one (the scenario
+  drivers need the Redis path). On failure the runner exits non-zero and emits a
+  <code>cost_smoke.failed</code> line, which is what a metric filter on that log group will key off.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>It ships with the schedule switched off</strong> — the rule is created but disabled behind
+  <code>cost_smoke_schedule_enabled</code>, which defaults to false, because the harness cannot yet
+  complete unattended on staging: it reads capture from local log files rather than CloudWatch, it
+  authenticates with the dev-sub bypass rather than a real Cognito exchange, and the deploy
+  workflow's task-definition rotation still points only at the prep-pipeline family. Arming a weekly
+  job that is guaranteed to fail would teach everyone to ignore it, so the wiring lands first and the
+  flag flips once the runner has a staging mode. The manual invocation path works today.
 </aside>
 
 <h2>Bootstrap-db <code>--seed-smoke-credits</code> mode</h2>

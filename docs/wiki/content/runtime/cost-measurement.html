@@ -1,0 +1,205 @@
+<!-- source: backend/scripts/cost/ -->
+<!-- source: backend/src/billing/model-pricing.ts -->
+<!-- source: backend/scripts/dev-logged.sh -->
+<!-- source-hash: sha256:e4c059c743a15ed06f5c2dd0c78bc33cf7f1adca26e9610a8294fef5c1fcf40c -->
+<!-- last-ticket: myth-yw23u -->
+
+<h1>Cost measurement</h1>
+
+<p class="lead">
+  The harness that answers "what does a turn actually cost?" with a number nobody has to trust. A
+  scenario driver exercises the real stack against the real Anthropic API, a measurement window
+  closes when the queues drain, and every <code>llm.call</code> line inside that window is priced
+  against the billing rate table and asserted against a pinned band. It exists because the cheap
+  alternatives — reading token counts off a dashboard, or pricing the SDK's <code>inputTokens</code>
+  directly — are wrong by three to five times on a cached call, and because a caching optimization
+  that silently stops working looks exactly like one that never worked.
+</p>
+
+<!-- @diagram: runtime/cost-measurement -->
+
+<h2>How it fits together</h2>
+
+<p>
+  <code>pnpm cost:smoke &lt;s1|s2|s4|s5&gt;</code> runs one scenario end to end: a liveness gate, a
+  drive, a capture, an assertion pass, and a one-page report. The four scenarios cover the money
+  paths — <strong>S-1</strong> scripts ten player turns over a real WebSocket session,
+  <strong>S-2</strong> re-asserts S-1's window for cache health rather than re-driving it,
+  <strong>S-4</strong> walks character-finalize through integration into session prep, and
+  <strong>S-5</strong> generates a world. Runs are serial and on demand. None of this is wired into
+  pre-push or CI: a full suite costs a few dollars of live spend, and a gate that bills money on
+  every push is a gate people learn to skip.
+</p>
+
+<h3>The window is the measurement</h3>
+
+<p>
+  A scenario's cost is "every LLM call this scenario caused", which is a harder boundary than it
+  looks. Work continues after the last user-visible event: in a measured 10-turn session the Slow
+  Thinker's final evaluation landed 64 seconds after the last frame reached the client. So the window
+  does not close on the driver finishing — it closes on <em>drained-queue quiescence</em>, when
+  waiting, active, and delayed all read zero across the queues that scenario touches, held for a
+  settle interval. The opening edge matters as much: <code>fromMs</code> is stamped after the
+  scenario's setup work (a world, a session prep) and before the first measured turn, so setup spend
+  that a real player would not pay per-turn stays outside the numbers.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Each scenario derives its own queue set</strong> — copying S-1's list into a new scenario
+  is the obvious shortcut and it under-measures. S-1 omits the reconcile and analysis queues
+  correctly, because those fire only from the farewell path and a scripted session never ends that
+  way. A scenario that <em>does</em> end its session and inherits that list would drop two Opus calls
+  from its totals and still report a confident PASS.
+</aside>
+
+<h3>Capture reads the logs, not the database</h3>
+
+<p>
+  The dev stack tees raw pino NDJSON to <code>backend/logs/dev-&lt;date&gt;.log</code> (API leg) and
+  <code>dev-worker-&lt;date&gt;.log</code> (worker leg), which is what the harness reads. Both legs
+  are merged, lines outside the window are dropped, and what remains is filtered by scope: a line
+  counts only if it carries the run's <code>sessionId</code> or <code>campaignId</code>. That filter
+  is why the
+  <a href="./llm.html#mythruncontext-rides-through-provideroptionsmythrun">call-site stamps</a> are
+  load-bearing rather than nice-to-have — an unstamped call does not fail the filter loudly, it
+  simply never appears.
+</p>
+
+<p>
+  Two escape hatches keep that strictness honest. Lines that fall inside a session window but carry a
+  <em>foreign</em> stage — the structured-output repair path re-stamps a retry with the parent
+  world-gen stage while keeping the session id — are dropped <em>and reported</em>, never silently
+  filtered. And the genuinely id-less calls, the preview-time concept synthesis that runs before any
+  campaign row exists, are captured by a separate stage-and-window-only pass that cannot double-count
+  against the scoped one.
+</p>
+
+<h3>Pricing, and why it is not a multiplication</h3>
+
+<p>
+  The SDK reports <code>inputTokens</code> as a sum of fresh input, cache reads, and cache writes.
+  Pricing that number against the input rate is the intuitive move and it overstates a healthy Fast
+  Thinker line by 3.7×. The derivation the harness uses instead:
+</p>
+
+<pre><code>base    = inputTokens − cacheReadTokens − cacheWriteTokens   @ input rate
+reads   = cacheReadTokens                                    @ 0.1 × input rate
+writes  = cacheWriteTokens                                   @ 1.25 × input rate
+output  = outputTokens                                       @ output rate</code></pre>
+
+<p>
+  Rates come from <code>billing/model-pricing.ts</code> and nowhere else, so the harness and the
+  credit ledger can never disagree about what a model costs. An unknown model throws rather than
+  guessing, and a negative base — which would mean the SDK's sum semantics had changed underneath us
+  — throws too.
+</p>
+
+<h3>Bands, not numbers</h3>
+
+<p>
+  <code>expected-costs.json</code> holds a per-component entry with a tolerance, seeded from three to
+  five live baselines rather than a single run. The tolerances are wide where reality is wide: Fast
+  Thinker cost per turn carries ±35% because prose length genuinely varies (output tokens nearly
+  doubled between two otherwise-identical runs), while the S-4 prep path sits inside a much tighter
+  ceiling because three runs landed within 4.7% of each other. Dollar figures are only ever pinned
+  from runs the harness itself measured — never from a planning document — because a band seeded from
+  an estimate asserts the estimate, not the system.
+</p>
+
+<p>
+  Cache health is asserted separately, as violations rather than dollars: on S-2, every Slow Thinker
+  evaluation, gate, and tripwire call must show cache reads, with narrow accommodations for the first
+  cold write of a session and for gaps that outlive the five-minute cache TTL. The gate and tripwire
+  arms additionally carry the measured token size of their stable span, because a prompt cache only
+  engages above a model-specific minimum — 4,096 tokens on Haiku. The gate's span measures 4,753,
+  which is roughly 650 tokens of headroom: if a future prompt trim shortens the playbook, caching
+  stops silently, so the arm is written to log rather than fail when the span drops under the floor.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Assert the mean of a scenario, not a single call</strong> — per-call cost is dominated by
+  model nondeterminism, so a per-call assertion would flap constantly and get muted. Scenario means
+  over a fixed script are stable enough to hold a band, and a real regression (a cache breakpoint
+  that stopped matching, a prompt that doubled) moves the mean well outside it.
+</aside>
+
+<h2>Operating this piece</h2>
+
+<h3>Run a cost smoke locally</h3>
+
+<ol>
+  <li>Start the dev stack with <code>pnpm dev</code> — the log capture the harness reads comes from
+    that wrapper, so a stack started any other way produces an empty capture.</li>
+  <li>From <code>backend/</code>, run <code>pnpm cost:smoke s1</code> (or <code>s2</code> /
+    <code>s4</code> / <code>s5</code>). Expect a few dollars of real spend for a full sweep.</li>
+  <li>Leave the stack alone while it runs. Editing anything under <code>backend/src/</code> restarts
+    a watch-mode server mid-run and kills the in-flight session.</li>
+  <li>Read the report table: PASS/FAIL per component, plus INFO rows for components that are
+    captured but not yet banded.</li>
+</ol>
+
+<h3>Re-check a manifest edit without paying again</h3>
+
+<ol>
+  <li>A successful drive saves its window and scope ids under
+    <code>backend/logs/cost-smoke/</code>.</li>
+  <li>Run <code>pnpm cost:smoke &lt;scenario&gt; --reassert</code> to replay that saved window
+    through extraction and assertion with no LLM calls at all.</li>
+  <li>Use this whenever you are tuning tolerances — re-driving to test a band edit is pure waste.</li>
+</ol>
+
+<h3>Re-pin a band after an intentional change</h3>
+
+<ol>
+  <li>Run the affected scenario three times and record the actuals.</li>
+  <li>Update the entry in <code>backend/scripts/cost/expected-costs.json</code> — the mean for
+    cost-shaped rows, a ceiling with headroom for rows where the spread is small.</li>
+  <li><code>--reassert</code> the saved window to confirm the new band accepts the observed run.</li>
+  <li>Say in the commit message what changed and why the old band no longer describes the system.</li>
+</ol>
+
+<h2>Integration points</h2>
+
+<p>
+  The lines this harness reads are produced by the
+  <a href="./llm.html">LLM client</a>'s logging middleware, and priced with the same table the
+  <a href="../auth-billing/billing-metering.html">billing metering</a> path uses. The caching this
+  harness proves lives in the <a href="./slow-thinker.html">Slow Thinker</a> and
+  <a href="./scribe.html">Scribe</a> prompts. A weekly unattended run is wired on staging and
+  described in <a href="../infra/smoke-testing.html">smoke testing</a>; it emits a
+  <code>cost_smoke.failed</code> line on either failure path so a metric filter can catch it.
+</p>
+
+<h2>Appendix: scenarios</h2>
+
+<table>
+  <thead>
+    <tr><th>Scenario</th><th>Drives</th><th>Asserts</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>s1</code></td>
+      <td>10 scripted player turns over a real WS session</td>
+      <td>FT $/turn, ST $/eval, ST eval count</td>
+    </tr>
+    <tr>
+      <td><code>s2</code></td>
+      <td>nothing — re-asserts S-1's window</td>
+      <td>FT cache-read share; zero cache violations on ST eval, gate, tripwire</td>
+    </tr>
+    <tr>
+      <td><code>s4</code></td>
+      <td>character finalize → integration → session prep</td>
+      <td>per-stage and total prep cost</td>
+    </tr>
+    <tr>
+      <td><code>s5</code></td>
+      <td>a full world generation</td>
+      <td>per-stage world-gen cost</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Source</h2>
+
+<p><code>backend/scripts/cost/</code></p>

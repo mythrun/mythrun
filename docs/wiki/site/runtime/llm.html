@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html" class="active">LLM client</a></li><li><a href="../runtime/llm-outage-resilience.html">LLM outage resilience</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html" class="active">LLM client</a></li><li><a href="../runtime/llm-outage-resilience.html">LLM outage resilience</a></li><li><a href="../runtime/cost-measurement.html">Cost measurement</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › LLM client</div>
         <article>
@@ -36,8 +36,9 @@
   <code>LlmContentFilteredError</code>), and a file-based prompt loader. The
   <code>streamObject</code> / <code>generateObject</code> wrappers also accept an optional
   <code>maxOutputTokens</code> ceiling so a long-prose call can lift the SDK default before it
-  truncates, and — MYT-72 — an optional <code>redactRawText</code> flag (<code>generateObject</code>
-  only) for a call whose raw output reasons over secrets. Consumers include the onboarding profanity
+  truncates, an optional <code>redactRawText</code> flag (<code>generateObject</code>
+  only) for a call whose raw output reasons over secrets, and a <code>blocks</code> option that
+  splits a prompt into cacheable spans. Consumers include the onboarding profanity
   classifier, the world-gen input gate, the paint-job validator, the world-gen stage handlers
   (concept_intake, world_color, vocabulary_intake, world_and_factions, locations_and_npcs,
   entity_relationships, world_introduction, entity_consolidation, starting_situation, random_tables,
@@ -356,8 +357,8 @@
   records start-to-finish wall time, pulls token counts and finish reason out of the SDK result, and
   emits a single <code>event: 'llm.call'</code> log line at info level with
   <code
-    >{ model, inputTokens, outputTokens, totalTokens, latencyMs, finishReason, sessionId?, userId?
-    }</code
+    >{ model, mode, inputTokens, outputTokens, totalTokens, cacheReadTokens?, cacheWriteTokens?,
+    latencyMs, finishReason, sessionId?, userId? }</code
   >. On failure it emits <code>event: 'llm.error'</code> at error level with the original error
   preserved as <code>err</code>, then runs the original through <code>mapToMythrunError</code>
   before rethrowing.
@@ -392,6 +393,17 @@
 </p>
 
 <p>
+  The two cache counters are what make the line priceable at all. The SDK's
+  <code>inputTokens</code> is a <em>sum</em> — fresh input plus cache reads plus cache writes — so
+  pricing it directly against the input rate overstates a healthy cached call by 3–5×. Anything
+  deriving dollars from these lines subtracts first: base input is
+  <code>inputTokens − cacheReadTokens − cacheWriteTokens</code>, reads bill at a tenth of the input
+  rate, writes at 1.25×. The
+  <a href="./cost-measurement.html">cost-measurement harness</a> is the one place that derivation
+  lives.
+</p>
+
+<p>
   <code>MythrunContext</code> rides through <code>providerOptions.mythrun</code> on every outgoing
   call. Five fields are read: <code>sessionId</code>, <code>userId</code>, <code>worldId</code>,
   <code>campaignId</code>, and <code>stage</code>. The middleware reads them out of the params
@@ -409,6 +421,27 @@
   (<code>'world-gen.intro'</code>, <code>'campaign-setup.factions'</code>, etc.) gives the
   spend-attribution writer enough discriminator to split costs across world creation, campaign
   bring-up, and live-play turns without changing schemas later.
+</aside>
+
+<p>
+  Those fields are only useful if <em>every</em> call site sets them, and for a long time most did
+  not. The cost-harness work closed that: each of the ~30 call sites across
+  <code>src/llm/</code> and <code>src/session/</code> now stamps a stable <code>stage</code> label
+  plus whichever ids are genuinely in scope — <code>sessionId</code> on the per-turn calls,
+  <code>campaignId</code> (and <code>worldId</code> where it exists) on the prep and world-gen
+  stages. A call-versus-stamp sweep over both trees is what found the last holdouts: the paint-job
+  validator's Opus generator and Sonnet judge, the retcon author, and the combat outcome table, none
+  of which had ever been attributable. Two call sites stay deliberately id-less —
+  <code>synthesizeConcept</code> and <code>reviseConcept</code> run at preview time, before any
+  campaign row exists to point at.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>An unstamped call is worse than an unmeasured one</strong> — a line with no ids does not
+  merely go uncounted, it goes uncounted <em>silently</em>: cost tooling scopes by id, so an
+  unattributable call simply vanishes from the totals and every derived number looks plausibly
+  smaller. That is why the sweep compares LLM-call count against stamp count per module rather than
+  spot-checking, and why the harness reports what it dropped instead of quietly filtering.
 </aside>
 
 <h2 id="streaming-via-wrapstream">Streaming via <code>wrapStream</code></h2>
@@ -730,6 +763,50 @@
   <code>area/name</code> directory shape (<code>auth/profanity</code>,
   <code>fast-thinker/turn</code>, etc.) keeps them organized as the cognitive-tier modules grow.
 </aside>
+
+<h2 id="prompt-blocks-and-cache-breakpoints">Prompt blocks and cache breakpoints</h2>
+
+<p>
+  A flat <code>prompt</code> string is one opaque payload, and Anthropic's prompt cache needs to be
+  told where the reusable part of a prompt ends. The <code>blocks</code> option is that seam. In
+  place of <code>prompt</code> / <code>system</code>, a call site can pass an ordered list of
+  <code>{ role, text, cacheBreakpoint? }</code> pieces; <code>ai.ts</code> compiles them into the
+  SDK's message form and attaches <code>providerOptions.anthropic.cacheControl</code> to exactly the
+  blocks that asked for it. Everything above a breakpoint becomes a cacheable prefix: written once,
+  then read back at a tenth of the input price on every subsequent call that shares those bytes.
+</p>
+
+<p>
+  The compiler is strict about the shapes that would otherwise fail at the wire. Blocks and
+  <code>prompt</code>/<code>system</code> together throw, as do more than four breakpoints (the
+  provider's ceiling), a block list with no user-role entry, and a system block sitting after a user
+  block — that last one is subtle, because the provider quietly accepts it by switching on a
+  model-gated beta header that then 400s on Haiku and Sonnet. Legacy flat-prompt callers are
+  untouched: their requests are byte-identical to what they sent before the seam existed, pinned by
+  snapshots captured against the pre-seam code.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Breakpoints belong on messages, not on the call</strong> — passing
+  <code>cacheControl</code> at the top level of <code>providerOptions.anthropic</code> looks like it
+  should work and is not rejected, but the installed provider maps it to a different feature
+  (whole-prompt auto-caching) rather than a prefix boundary. Nothing errors; the cache just does
+  something other than what the call site meant. Compiling breakpoints down to per-message
+  annotations inside the wrapper keeps that mistake unavailable to call sites.
+</aside>
+
+<p>
+  Caching only pays when the cached span is genuinely stable, which makes prompt <em>ordering</em> a
+  cost decision. Templates that want caching are written stable-first: instructions, rosters, and
+  playbooks above the breakpoint; per-turn state below it. A single volatile byte above the boundary
+  silently zeroes every hit — no error, just full price — so the templates that were reordered for
+  caching carry tests pinning the compiled prefix byte-identical across assemblies that vary every
+  volatile input. Two more constraints shape where this is worth doing: a cached prefix must clear
+  the model's minimum cacheable length (4,096 tokens on Haiku, 1,024 on Sonnet and Opus), and the
+  entry lives for five minutes from the moment its call is <em>processed</em>, not from when it
+  finished. See the <a href="./slow-thinker.html">Slow Thinker</a> and
+  <a href="./scribe.html">Scribe</a> for the three prompts currently annotated this way.
+</p>
 
 <h2 id="the-first-call-site-classifyprofanity">The first call site: <code>classifyProfanity</code></h2>
 
@@ -1357,7 +1434,7 @@
       </main>
       <aside class="wiki-toc">
         <div class="wiki-toc-label">On this page</div>
-        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#tier-named-model-constants">Tier-named model constants</a></li><li style="padding-left:0"><a href="#logging-error-normalization-as-middleware">Logging + error normalization, as middleware</a></li><li style="padding-left:0"><a href="#streaming-via-wrapstream">Streaming via wrapStream</a></li><li style="padding-left:0"><a href="#stream-text-with-tools">The Fast Thinker tool loop: streamTextWithTools</a></li><li style="padding-left:0"><a href="#concurrency-and-rate-limits">Concurrency and rate-limit ceilings</a></li><li style="padding-left:0"><a href="#the-error-taxonomy">The error taxonomy</a></li><li style="padding-left:0"><a href="#the-prompt-loader">The prompt loader</a></li><li style="padding-left:0"><a href="#the-first-call-site-classifyprofanity">The first call site: classifyProfanity</a></li><li style="padding-left:0"><a href="#the-session-prep-generation-stage">The session-prep generation stage</a></li><li style="padding-left:0"><a href="#configuration-anthropic-api-key">Configuration: ANTHROPIC_API_KEY</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-new-call-site">Add a new structured-output call site</a></li><li style="padding-left:12px"><a href="#thread-session-context">Thread session / user context into the log line</a></li><li style="padding-left:12px"><a href="#rotate-the-anthropic-key">Rotate the Anthropic API key</a></li><li style="padding-left:12px"><a href="#diagnose-an-llm-error-spike">Diagnose an llm.error log spike</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:12px"><a href="#pinned-model-ids">Pinned model IDs</a></li><li style="padding-left:12px"><a href="#log-shape">Log shape</a></li><li style="padding-left:12px"><a href="#http-status-mapping">HTTP status mapping</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:0"><a href="#tier-named-model-constants">Tier-named model constants</a></li><li style="padding-left:0"><a href="#logging-error-normalization-as-middleware">Logging + error normalization, as middleware</a></li><li style="padding-left:0"><a href="#streaming-via-wrapstream">Streaming via wrapStream</a></li><li style="padding-left:0"><a href="#stream-text-with-tools">The Fast Thinker tool loop: streamTextWithTools</a></li><li style="padding-left:0"><a href="#concurrency-and-rate-limits">Concurrency and rate-limit ceilings</a></li><li style="padding-left:0"><a href="#the-error-taxonomy">The error taxonomy</a></li><li style="padding-left:0"><a href="#the-prompt-loader">The prompt loader</a></li><li style="padding-left:0"><a href="#prompt-blocks-and-cache-breakpoints">Prompt blocks and cache breakpoints</a></li><li style="padding-left:0"><a href="#the-first-call-site-classifyprofanity">The first call site: classifyProfanity</a></li><li style="padding-left:0"><a href="#the-session-prep-generation-stage">The session-prep generation stage</a></li><li style="padding-left:0"><a href="#configuration-anthropic-api-key">Configuration: ANTHROPIC_API_KEY</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#add-a-new-call-site">Add a new structured-output call site</a></li><li style="padding-left:12px"><a href="#thread-session-context">Thread session / user context into the log line</a></li><li style="padding-left:12px"><a href="#rotate-the-anthropic-key">Rotate the Anthropic API key</a></li><li style="padding-left:12px"><a href="#diagnose-an-llm-error-spike">Diagnose an llm.error log spike</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-surface">Appendix: surface</a></li><li style="padding-left:12px"><a href="#files">Files</a></li><li style="padding-left:12px"><a href="#pinned-model-ids">Pinned model IDs</a></li><li style="padding-left:12px"><a href="#log-shape">Log shape</a></li><li style="padding-left:12px"><a href="#http-status-mapping">HTTP status mapping</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
       </aside>
     </div>
     <script src="../helper.js"></script>

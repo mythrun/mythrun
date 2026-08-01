@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/llm-outage-resilience.html">LLM outage resilience</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html" class="active">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/llm-outage-resilience.html">LLM outage resilience</a></li><li><a href="../runtime/cost-measurement.html">Cost measurement</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html" class="active">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Slow Thinker</div>
         <article>
@@ -448,6 +448,23 @@
   >. Everything else evaluates — fail toward oversight.
 </p>
 
+<p>
+  The gate's template was already written stable-first, so making it cacheable took no content change
+  at all — only an annotation: the assembly now hands the LLM client a breakpoint after the playbook
+  span and leaves the bytes exactly as they were. Its stable span measures 4,753 tokens against
+  Haiku's 4,096-token minimum cacheable prefix, roughly 650 tokens of headroom. That number is worth
+  remembering before anyone shortens the playbook to save input: below the floor the cache stops
+  engaging entirely, and a trim that looks like a saving would cost more than it saves.
+</p>
+
+<p>
+  How often the gate actually skips is also worth stating, because it is easy to over-model. Measured
+  across three scripted sessions on current code, the Opus evaluation runs about
+  <strong>0.6 times per turn</strong>, not once per turn — six evaluations over ten turns is typical.
+  Any cost or latency estimate built on one evaluation per turn is high by roughly 40% before any
+  optimization is applied.
+</p>
+
 <aside class="wiki-rationale">
   <strong>The gate holds secrets freely because its output is consumed by code only</strong> — the
   gate is ST-side infrastructure: its verdict reaches no player and no FT, exactly like the
@@ -568,6 +585,33 @@
   <a href="./llm.html">LLM client</a>'s <code>generateObject</code>. The output schema is the
   channel's leak bound:
 </p>
+
+<p>
+  That assembly is ordered for the prompt cache, not for reading convenience. The template is written
+  stable-first — the instruction head, then the roster and the <code>sd_playbook</code>, then a
+  breakpoint, and only below it the parts that change every turn: the running summary, both standing
+  slots, the exchange window, and the wind-down and converge banners. The call passes those pieces to
+  the LLM client as <a href="./llm.html#prompt-blocks-and-cache-breakpoints">blocks</a> with two
+  breakpoints, so everything above the boundary is written to Anthropic's cache once and read back at
+  a tenth of the input price on every later evaluation in the session. Before this, the director's
+  cache reads were flatly zero. Measured on a ten-turn session, evaluation cost fell 28%.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Why 28% and not the 90% the cache discount implies</strong> — the discount applies to the
+  cached input span, and this call is output-dominated: about two-thirds of an evaluation's cost is
+  the Opus tokens it writes, including adaptive thinking. Caching cannot touch that. It is worth
+  knowing before sizing any future estimate off "input is ~90% off": on the director, input is the
+  smaller half of the bill.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A volatile byte above the breakpoint is a silent, total loss</strong> — a cache prefix
+  matches or it does not, so one per-turn value left in the stable span means zero hits, at full
+  price, with no error anywhere. The reorder therefore ships with a test that assembles the prompt
+  twice with every volatile input different and asserts the compiled prefix is byte-identical, and
+  the boundary itself rides a per-process random sentinel so no player-typed text can forge one.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>On Opus 5 the director thinks, whether or not anyone asked it to</strong> — omitting the

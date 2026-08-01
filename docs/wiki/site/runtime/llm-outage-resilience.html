@@ -22,7 +22,7 @@
       <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
     </header>
     <div class="wiki-shell">
-      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/llm-outage-resilience.html" class="active">LLM outage resilience</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/llm-outage-resilience.html" class="active">LLM outage resilience</a></li><li><a href="../runtime/cost-measurement.html">Cost measurement</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
       <main class="wiki-content">
         <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › LLM outage resilience</div>
         <article>
@@ -429,6 +429,32 @@
   stream cannot be transparently re-driven, and a naive retry would double-publish partials. Their
   retry unit is the whole stage, via parking.
 </p>
+
+<p>
+  Which calls arm the loop is now a table rather than a per-call-site decision.
+  <code>WORLD_GEN_STAGE_BUDGETS</code> maps a world-gen stage to its
+  <code>{ stageBudgetMs, expectedHealthyDurationMs, maxOutputTokens }</code>, and a call site spreads
+  its entry into the options. <code>coherence_pass</code> is the first stage wired — 20-minute
+  budget, 8-minute healthy duration, a 64k output ceiling — and the remaining stages follow the same
+  one-line shape.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Non-streaming transport hides a slow call until it is a dead call</strong> — the coherence
+  pass was the last large-output stage still on the non-streaming path, where response headers arrive
+  only once generation <em>completes</em>. Time-to-headers therefore equals total generation time,
+  and the non-streaming dispatcher's 300-second headers ceiling becomes a hard cap on how long the
+  model is allowed to think. That was survivable until the Sonnet 5 bump turned on adaptive thinking:
+  the same call started spending 24–32k thinking tokens over the full world dump, running 4:18–5:28
+  with ±34% run-to-run variance, and every sufficiently large world then died at the second-to-last
+  stage after burning the ten stages before it. Replaying the exact failing request proved the point:
+  through a plain client with a generous ceiling it returned 200 with headers at 258 seconds, and
+  through the streaming path headers arrived in under a minute with a valid result at 328. The fix
+  was not a longer non-streaming timeout — that would blind hang detection everywhere — but arming
+  the budget loop, which switches this call to streaming internally. A secondary benefit: pre-header
+  failures on the streaming path classify as <em>connectivity</em> rather than an ambiguous abort, so
+  a genuinely transient failure here now parks and resumes instead of failing the whole world.
+</aside>
 
 <h2 id="the-sitewide-verdict-a-redis-state-machine">The sitewide verdict: a Redis state machine</h2>
 

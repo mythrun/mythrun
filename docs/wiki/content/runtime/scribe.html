@@ -14,8 +14,8 @@
 <!-- source: backend/src/llm/prompts/session/retcon-author.txt -->
 <!-- source: backend/src/llm/schemas/world-delta.ts -->
 <!-- source: docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md -->
-<!-- source-hash: sha256:893c9e9499d29cb56ee491c7c96e9d7a1f251055a4ade6b56ef3b7b42bbc4304 -->
-<!-- last-ticket: myth-g4hf3 -->
+<!-- source-hash: sha256:45c8ed4e523fd05f09d0f5eab75d1c8ca7ba1158312662ed6a55ab251a0a4fbb -->
+<!-- last-ticket: myth-28q91 -->
 
 <h1>Scribe</h1>
 
@@ -206,6 +206,28 @@
   <code>why</code> field and no <code>.refine</code> on the schema: the first would carry the
   secret, and the second lets the repair chain author a "valid" tree and defeat the gate.
 </p>
+
+<p>
+  The tripwire fires on every turn, so its prompt was reordered to be cacheable: the instruction
+  head, the secrets, the public context, and the consistency context now sit above a
+  <a href="./llm.html#prompt-blocks-and-cache-breakpoints">cache breakpoint</a>, with the one part
+  that changes each turn — the prose being checked — below it. Nothing was rewritten; the sections
+  were permuted, and the handful of instructions that referred to material "below" still point at the
+  right place. Its stable span is 9,514 tokens, comfortably above Haiku's 4,096-token minimum, and
+  the per-turn cost of the gate and tripwire together dropped 64%.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Reordering a classifier's prompt is a behavioral change until proven otherwise</strong> —
+  this template decides whether a secret leaked, and models are sensitive to what they read first.
+  So the reorder shipped behind a parity gate rather than a code review: a byte-level proof that the
+  new template is a pure permutation of the old, a verdict-parity harness running both orderings
+  through the real assembly path across the severity lattice (grounded, dice-grounded, consistency,
+  seeded reveal) and diffing outcomes, and the existing constructed-state scenarios re-run unchanged.
+  A live run afterwards confirmed the distribution held. The offline harness deliberately cannot
+  prove Haiku is order-blind — only that our assembly is — which is why the live confirmation was
+  treated as load-bearing rather than a formality.
+</aside>
 
 <h3 id="severity-not-a-boolean">Severity, not a boolean</h3>
 

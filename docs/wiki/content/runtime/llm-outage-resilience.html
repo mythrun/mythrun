@@ -8,7 +8,7 @@
 <!-- source: backend/migrations/038_llm_resume_stamps.sql -->
 <!-- source: backend/src/routes/llm-health.ts -->
 <!-- source: docs/superpowers/specs/2026-07-30-llm-outage-resilience-design.md -->
-<!-- source-hash: sha256:aee892153fa40dd45ac8f5de0b26feb21ee94893d1fb7560d56708fa4cd39e44 -->
+<!-- source-hash: sha256:132063e33d98283d08ec0bbb2c673a7ac702d07a64b2952099c3a938abb0ba50 -->
 
 <h1>LLM outage resilience</h1>
 
@@ -156,6 +156,32 @@
   stream cannot be transparently re-driven, and a naive retry would double-publish partials. Their
   retry unit is the whole stage, via parking.
 </p>
+
+<p>
+  Which calls arm the loop is now a table rather than a per-call-site decision.
+  <code>WORLD_GEN_STAGE_BUDGETS</code> maps a world-gen stage to its
+  <code>{ stageBudgetMs, expectedHealthyDurationMs, maxOutputTokens }</code>, and a call site spreads
+  its entry into the options. <code>coherence_pass</code> is the first stage wired — 20-minute
+  budget, 8-minute healthy duration, a 64k output ceiling — and the remaining stages follow the same
+  one-line shape.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Non-streaming transport hides a slow call until it is a dead call</strong> — the coherence
+  pass was the last large-output stage still on the non-streaming path, where response headers arrive
+  only once generation <em>completes</em>. Time-to-headers therefore equals total generation time,
+  and the non-streaming dispatcher's 300-second headers ceiling becomes a hard cap on how long the
+  model is allowed to think. That was survivable until the Sonnet 5 bump turned on adaptive thinking:
+  the same call started spending 24–32k thinking tokens over the full world dump, running 4:18–5:28
+  with ±34% run-to-run variance, and every sufficiently large world then died at the second-to-last
+  stage after burning the ten stages before it. Replaying the exact failing request proved the point:
+  through a plain client with a generous ceiling it returned 200 with headers at 258 seconds, and
+  through the streaming path headers arrived in under a minute with a valid result at 328. The fix
+  was not a longer non-streaming timeout — that would blind hang detection everywhere — but arming
+  the budget loop, which switches this call to streaming internally. A secondary benefit: pre-header
+  failures on the streaming path classify as <em>connectivity</em> rather than an ambiguous abort, so
+  a genuinely transient failure here now parks and resumes instead of failing the whole world.
+</aside>
 
 <h2>The sitewide verdict: a Redis state machine</h2>
 

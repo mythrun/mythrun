@@ -22,6 +22,7 @@ export const structure: Section[] = [
       { slug: 'index', title: 'Overview' },
       { slug: 'llm', title: 'LLM client' },
       { slug: 'llm-outage-resilience', title: 'LLM outage resilience' },
+      { slug: 'cost-measurement', title: 'Cost measurement' },
       { slug: 'dev-tool', title: 'Dev tool' },
       { slug: 'worker', title: 'Worker' },
       { slug: 'redis-reconnect', title: 'Redis reconnection' },

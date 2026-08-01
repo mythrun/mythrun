@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cost measurement · Mythrun Wiki</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..900;1,8..60,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body data-section="runtime" data-page="cost-measurement">
+    <header class="wiki-header">
+      <a href="../index.html" class="wiki-lockup">
+        <img src="../assets/lockup-horizontal-primary.svg" alt="Mythrun" />
+        <span class="wiki-label">wiki</span>
+      </a>
+      <nav class="wiki-topnav"><a href="../infra/index.html">Infra</a><a href="../runtime/index.html" class="active">Runtime</a><a href="../data/index.html">Data</a><a href="../auth-billing/index.html">Auth & Billing</a><a href="../world-campaign/index.html">World & Campaign</a><a href="../combat/index.html">Combat</a><a href="../frontend/index.html">Frontend</a><a href="../reference/index.html">Reference</a></nav>
+    </header>
+    <div class="wiki-shell">
+      <aside class="wiki-sidebar"><ul><li><a href="../runtime/index.html">Overview</a></li><li><a href="../runtime/llm.html">LLM client</a></li><li><a href="../runtime/llm-outage-resilience.html">LLM outage resilience</a></li><li><a href="../runtime/cost-measurement.html" class="active">Cost measurement</a></li><li><a href="../runtime/dev-tool.html">Dev tool</a></li><li><a href="../runtime/worker.html">Worker</a></li><li><a href="../runtime/redis-reconnect.html">Redis reconnection</a></li><li><a href="../runtime/world-gen.html">World gen</a></li><li><a href="../runtime/character-creation.html">Character creation</a></li><li><a href="../runtime/character-integration.html">Character integration</a></li><li><a href="../runtime/session-prep.html">Session prep</a></li><li><a href="../runtime/pipeline-status.html">Pipeline status</a></li><li><a href="../runtime/session-transport.html">Session transport</a></li><li><a href="../runtime/session-turn.html">Session turn</a></li><li><a href="../runtime/fast-thinker.html">Fast Thinker</a></li><li><a href="../runtime/character-ledger.html">Character ledger</a></li><li><a href="../runtime/slow-thinker.html">Slow Thinker</a></li><li><a href="../runtime/scribe.html">Scribe</a></li><li><a href="../runtime/session-reconcile.html">End-of-session reconciliation</a></li><li><a href="../runtime/transcript-search.html">Transcript search</a></li><li><a href="../runtime/dm-trigger.html">DM trigger</a></li></ul></aside>
+      <main class="wiki-content">
+        <div class="wiki-crumbs"><a href="../index.html">Wiki</a> › Runtime › Cost measurement</div>
+        <article>
+<h1>Cost measurement</h1>
+
+<p class="lead">
+  The harness that answers "what does a turn actually cost?" with a number nobody has to trust. A
+  scenario driver exercises the real stack against the real Anthropic API, a measurement window
+  closes when the queues drain, and every <code>llm.call</code> line inside that window is priced
+  against the billing rate table and asserted against a pinned band. It exists because the cheap
+  alternatives — reading token counts off a dashboard, or pricing the SDK's <code>inputTokens</code>
+  directly — are wrong by three to five times on a cached call, and because a caching optimization
+  that silently stops working looks exactly like one that never worked.
+</p>
+
+<figure class="wiki-diagram">
+  
+<svg width="1952pt" height="326pt"
+ viewBox="14.00 14.00 1938.00 311.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18.4 307.4)">
+<title>cost_measurement</title>
+<polygon fill="#efe9dc" stroke="none" points="-4,4 -4,-293 1919.38,-293 1919.38,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_drive</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-dasharray="5,2" points="8,-190 8,-281 551.43,-281 551.43,-190 8,-190"/>
+<text xml:space="preserve" text-anchor="middle" x="279.71" y="-267.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">drive &#160;(real stack, real Anthropic)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_capture</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="612.33,-103 612.33,-194 1099.65,-194 1099.65,-103 612.33,-103"/>
+<text xml:space="preserve" text-anchor="middle" x="855.99" y="-180.1" font-family="Courier,monospace" font-size="11.00">capture</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_assert</title>
+<polygon fill="#efe9dc" stroke="black" stroke-dasharray="5,2" points="1177.06,-8 1177.06,-99 1687.48,-99 1687.48,-8 1177.06,-8"/>
+<text xml:space="preserve" text-anchor="middle" x="1432.27" y="-85.1" font-family="Courier,monospace" font-size="11.00">assert</text>
+</g>
+<!-- driver -->
+<g id="node1" class="node">
+<title>driver</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="283.92,-260.04 8,-260.04 8,-189.96 283.92,-189.96 283.92,-260.04"/>
+<text xml:space="preserve" text-anchor="middle" x="145.96" y="-241.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">scenario driver</text>
+<text xml:space="preserve" text-anchor="middle" x="145.96" y="-228.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">s1: 10 scripted WS turns</text>
+<text xml:space="preserve" text-anchor="middle" x="145.96" y="-215.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">s4: finalize → integration → prep</text>
+<text xml:space="preserve" text-anchor="middle" x="145.96" y="-201.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">s5: full world&#45;gen</text>
+</g>
+<!-- quiesce -->
+<g id="node2" class="node">
+<title>quiesce</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="551.43,-260.04 334.92,-260.04 334.92,-189.96 551.43,-189.96 551.43,-260.04"/>
+<text xml:space="preserve" text-anchor="middle" x="443.17" y="-241.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">quiescence</text>
+<text xml:space="preserve" text-anchor="middle" x="443.17" y="-228.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">waiting+active+delayed == 0</text>
+<text xml:space="preserve" text-anchor="middle" x="443.17" y="-215.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">across the scenario&#39;s queues</text>
+<text xml:space="preserve" text-anchor="middle" x="443.17" y="-201.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">held for a settle interval</text>
+</g>
+<!-- driver&#45;&gt;quiesce -->
+<g id="edge1" class="edge">
+<title>driver&#45;&gt;quiesce</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M284.63,-225C298.32,-225 312.12,-225 325.56,-225"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="325.52,-227.45 332.52,-225 325.52,-222.55 325.52,-227.45"/>
+</g>
+<!-- logs -->
+<g id="node4" class="node">
+<title>logs</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="809.04,-173.04 612.33,-173.04 612.33,-102.96 809.04,-102.96 809.04,-173.04"/>
+<text xml:space="preserve" text-anchor="middle" x="710.68" y="-154.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">backend/logs/</text>
+<text xml:space="preserve" text-anchor="middle" x="710.68" y="-141.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">dev&#45;&lt;date&gt;.log &#160;(API leg)</text>
+<text xml:space="preserve" text-anchor="middle" x="710.68" y="-128.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">dev&#45;worker&#45;&lt;date&gt;.log</text>
+<text xml:space="preserve" text-anchor="middle" x="710.68" y="-114.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">raw pino NDJSON</text>
+</g>
+<!-- driver&#45;&gt;logs -->
+<g id="edge3" class="edge">
+<title>driver&#45;&gt;logs</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="5,2" d="M222.99,-189.39C256.54,-175.39 296.93,-160.82 334.92,-153 424.12,-134.65 527.71,-131.87 603.35,-133.13"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="603.11,-135.57 610.15,-133.26 603.2,-130.68 603.11,-135.57"/>
+<text xml:space="preserve" text-anchor="middle" x="443.17" y="-168" font-family="Courier,monospace" font-size="10.00">stage&#45;stamped</text>
+<text xml:space="preserve" text-anchor="middle" x="443.17" y="-156" font-family="Courier,monospace" font-size="10.00">llm.call lines</text>
+</g>
+<!-- window -->
+<g id="node3" class="node">
+<title>window</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="818.94,-254.44 602.43,-254.44 602.43,-197.56 818.94,-197.56 818.94,-254.44"/>
+<text xml:space="preserve" text-anchor="middle" x="710.68" y="-235.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">measurement window</text>
+<text xml:space="preserve" text-anchor="middle" x="710.68" y="-222.7" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">fromMs before the first turn</text>
+<text xml:space="preserve" text-anchor="middle" x="710.68" y="-209.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">toMs after the queues drain</text>
+</g>
+<!-- quiesce&#45;&gt;window -->
+<g id="edge2" class="edge">
+<title>quiesce&#45;&gt;window</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M552.17,-225.41C565.72,-225.46 579.63,-225.51 593.31,-225.56"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="592.96,-228.01 599.97,-225.59 592.98,-223.11 592.96,-228.01"/>
+</g>
+<!-- extract -->
+<g id="node5" class="node">
+<title>extract</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1099.65,-173.04 869.94,-173.04 869.94,-102.96 1099.65,-102.96 1099.65,-173.04"/>
+<text xml:space="preserve" text-anchor="middle" x="984.8" y="-154.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">extract.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="984.8" y="-141.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">in&#45;window AND in&#45;scope</text>
+<text xml:space="preserve" text-anchor="middle" x="984.8" y="-128.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">by sessionId / campaignId</text>
+<text xml:space="preserve" text-anchor="middle" x="984.8" y="-114.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">drops&#45;and&#45;flags foreign stages</text>
+</g>
+<!-- window&#45;&gt;extract -->
+<g id="edge4" class="edge">
+<title>window&#45;&gt;extract</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M809.93,-196.85C812.97,-195.9 815.98,-194.94 818.94,-194 836.3,-188.47 854.62,-182.43 872.49,-176.44"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="873.09,-178.83 878.94,-174.27 871.52,-174.18 873.09,-178.83"/>
+</g>
+<!-- logs&#45;&gt;extract -->
+<g id="edge5" class="edge">
+<title>logs&#45;&gt;extract</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M809.54,-138C826.17,-138 843.63,-138 860.8,-138"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="860.39,-140.45 867.39,-138 860.39,-135.55 860.39,-140.45"/>
+</g>
+<!-- usd -->
+<g id="node6" class="node">
+<title>usd</title>
+<polygon fill="#efe9dc" stroke="#8a5a3c" stroke-width="1.5" points="1433.17,-173.04 1150.65,-173.04 1150.65,-102.96 1433.17,-102.96 1433.17,-173.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1291.91" y="-154.5" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">usd.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1291.91" y="-141.3" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">base = in − cacheRead − cacheWrite</text>
+<text xml:space="preserve" text-anchor="middle" x="1291.91" y="-128.1" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">reads 0.1x · writes 1.25x</text>
+<text xml:space="preserve" text-anchor="middle" x="1291.91" y="-114.9" font-family="Courier,monospace" font-size="11.00" fill="#8a5a3c">rates from billing/model&#45;pricing</text>
+</g>
+<!-- extract&#45;&gt;usd -->
+<g id="edge6" class="edge">
+<title>extract&#45;&gt;usd</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1100.28,-138C1113.72,-138 1127.59,-138 1141.42,-138"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1141.2,-140.45 1148.2,-138 1141.2,-135.55 1141.2,-140.45"/>
+</g>
+<!-- report -->
+<g id="node8" class="node">
+<title>report</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1687.48,-78.04 1484.17,-78.04 1484.17,-7.96 1687.48,-7.96 1687.48,-78.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1585.83" y="-59.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">report.ts</text>
+<text xml:space="preserve" text-anchor="middle" x="1585.83" y="-46.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">one&#45;page table</text>
+<text xml:space="preserve" text-anchor="middle" x="1585.83" y="-33.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">actual vs expected, deltas</text>
+<text xml:space="preserve" text-anchor="middle" x="1585.83" y="-19.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">PASS / FAIL / INFO</text>
+</g>
+<!-- usd&#45;&gt;report -->
+<g id="edge7" class="edge">
+<title>usd&#45;&gt;report</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1422.93,-102.25C1426.39,-101.17 1429.81,-100.09 1433.17,-99 1449.58,-93.7 1466.85,-87.72 1483.62,-81.68"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1484.35,-84.03 1490.1,-79.34 1482.69,-79.42 1484.35,-84.03"/>
+</g>
+<!-- manifest -->
+<g id="node7" class="node">
+<title>manifest</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1406.77,-78.04 1177.06,-78.04 1177.06,-7.96 1406.77,-7.96 1406.77,-78.04"/>
+<text xml:space="preserve" text-anchor="middle" x="1291.91" y="-59.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">expected&#45;costs.json</text>
+<text xml:space="preserve" text-anchor="middle" x="1291.91" y="-46.3" font-family="Courier,monospace" font-size="11.00" fill="#231b12">pinned bands from 3+ baselines</text>
+<text xml:space="preserve" text-anchor="middle" x="1291.91" y="-33.1" font-family="Courier,monospace" font-size="11.00" fill="#231b12">per&#45;entry tolerance</text>
+<text xml:space="preserve" text-anchor="middle" x="1291.91" y="-19.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cache arms (span&#45;conditional)</text>
+</g>
+<!-- manifest&#45;&gt;report -->
+<g id="edge8" class="edge">
+<title>manifest&#45;&gt;report</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1407.45,-43C1429.73,-43 1453.03,-43 1475.15,-43"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1475.07,-45.45 1482.07,-43 1475.07,-40.55 1475.07,-45.45"/>
+</g>
+<!-- exit -->
+<g id="node9" class="node">
+<title>exit</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="1915.38,-71.44 1738.48,-71.44 1738.48,-14.56 1915.38,-14.56 1915.38,-71.44"/>
+<text xml:space="preserve" text-anchor="middle" x="1826.93" y="-52.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">exit code</text>
+<text xml:space="preserve" text-anchor="middle" x="1826.93" y="-39.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">0 green · 1 red +</text>
+<text xml:space="preserve" text-anchor="middle" x="1826.93" y="-26.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">cost_smoke.failed line</text>
+</g>
+<!-- report&#45;&gt;exit -->
+<g id="edge9" class="edge">
+<title>report&#45;&gt;exit</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" d="M1688.23,-43C1701.8,-43 1715.7,-43 1729.19,-43"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="1729.17,-45.45 1736.17,-43 1729.17,-40.55 1729.17,-45.45"/>
+</g>
+<!-- reassert -->
+<g id="node10" class="node">
+<title>reassert</title>
+<polygon fill="#efe9dc" stroke="#231b12" stroke-width="1.5" points="793.14,-78.44 622.23,-78.44 622.23,-21.56 799.14,-21.56 799.14,-72.44 793.14,-78.44"/>
+<polyline fill="none" stroke="#231b12" stroke-width="1.5" points="793.14,-78.44 793.14,-72.44"/>
+<polyline fill="none" stroke="#231b12" stroke-width="1.5" points="799.14,-72.44 793.14,-72.44"/>
+<text xml:space="preserve" text-anchor="middle" x="710.68" y="-59.9" font-family="Courier,monospace" font-size="11.00" fill="#231b12">&#45;&#45;reassert</text>
+<text xml:space="preserve" text-anchor="middle" x="710.68" y="-46.7" font-family="Courier,monospace" font-size="11.00" fill="#231b12">replays a saved window</text>
+<text xml:space="preserve" text-anchor="middle" x="710.68" y="-33.5" font-family="Courier,monospace" font-size="11.00" fill="#231b12">zero spend</text>
+</g>
+<!-- reassert&#45;&gt;extract -->
+<g id="edge10" class="edge">
+<title>reassert&#45;&gt;extract</title>
+<path fill="none" stroke="#231b12" stroke-width="1.2" stroke-dasharray="1,5" d="M799.66,-78.45C820.45,-85.17 842.96,-92.45 864.86,-99.54"/>
+<polygon fill="#231b12" stroke="#231b12" stroke-width="1.2" points="864.08,-101.86 871.5,-101.68 865.59,-97.2 864.08,-101.86"/>
+</g>
+</g>
+</svg>
+
+  <button type="button" class="wiki-diagram-expand" aria-label="Expand diagram" title="Expand diagram">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 2h5v2H4v3H2V2zm12 0v5h-2V4H9V2h5zm0 12H9v-2h3v-3h2v5zM2 14V9h2v3h3v2H2z" fill="currentColor"/></svg>
+  </button>
+</figure>
+
+<h2 id="how-it-fits-together">How it fits together</h2>
+
+<p>
+  <code>pnpm cost:smoke &lt;s1|s2|s4|s5&gt;</code> runs one scenario end to end: a liveness gate, a
+  drive, a capture, an assertion pass, and a one-page report. The four scenarios cover the money
+  paths — <strong>S-1</strong> scripts ten player turns over a real WebSocket session,
+  <strong>S-2</strong> re-asserts S-1's window for cache health rather than re-driving it,
+  <strong>S-4</strong> walks character-finalize through integration into session prep, and
+  <strong>S-5</strong> generates a world. Runs are serial and on demand. None of this is wired into
+  pre-push or CI: a full suite costs a few dollars of live spend, and a gate that bills money on
+  every push is a gate people learn to skip.
+</p>
+
+<h3 id="the-window-is-the-measurement">The window is the measurement</h3>
+
+<p>
+  A scenario's cost is "every LLM call this scenario caused", which is a harder boundary than it
+  looks. Work continues after the last user-visible event: in a measured 10-turn session the Slow
+  Thinker's final evaluation landed 64 seconds after the last frame reached the client. So the window
+  does not close on the driver finishing — it closes on <em>drained-queue quiescence</em>, when
+  waiting, active, and delayed all read zero across the queues that scenario touches, held for a
+  settle interval. The opening edge matters as much: <code>fromMs</code> is stamped after the
+  scenario's setup work (a world, a session prep) and before the first measured turn, so setup spend
+  that a real player would not pay per-turn stays outside the numbers.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Each scenario derives its own queue set</strong> — copying S-1's list into a new scenario
+  is the obvious shortcut and it under-measures. S-1 omits the reconcile and analysis queues
+  correctly, because those fire only from the farewell path and a scripted session never ends that
+  way. A scenario that <em>does</em> end its session and inherits that list would drop two Opus calls
+  from its totals and still report a confident PASS.
+</aside>
+
+<h3 id="capture-reads-the-logs-not-the-database">Capture reads the logs, not the database</h3>
+
+<p>
+  The dev stack tees raw pino NDJSON to <code>backend/logs/dev-&lt;date&gt;.log</code> (API leg) and
+  <code>dev-worker-&lt;date&gt;.log</code> (worker leg), which is what the harness reads. Both legs
+  are merged, lines outside the window are dropped, and what remains is filtered by scope: a line
+  counts only if it carries the run's <code>sessionId</code> or <code>campaignId</code>. That filter
+  is why the
+  <a href="./llm.html#mythruncontext-rides-through-provideroptionsmythrun">call-site stamps</a> are
+  load-bearing rather than nice-to-have — an unstamped call does not fail the filter loudly, it
+  simply never appears.
+</p>
+
+<p>
+  Two escape hatches keep that strictness honest. Lines that fall inside a session window but carry a
+  <em>foreign</em> stage — the structured-output repair path re-stamps a retry with the parent
+  world-gen stage while keeping the session id — are dropped <em>and reported</em>, never silently
+  filtered. And the genuinely id-less calls, the preview-time concept synthesis that runs before any
+  campaign row exists, are captured by a separate stage-and-window-only pass that cannot double-count
+  against the scoped one.
+</p>
+
+<h3 id="pricing-and-why-it-is-not-a-multiplication">Pricing, and why it is not a multiplication</h3>
+
+<p>
+  The SDK reports <code>inputTokens</code> as a sum of fresh input, cache reads, and cache writes.
+  Pricing that number against the input rate is the intuitive move and it overstates a healthy Fast
+  Thinker line by 3.7×. The derivation the harness uses instead:
+</p>
+
+<pre><code>base    = inputTokens − cacheReadTokens − cacheWriteTokens   @ input rate
+reads   = cacheReadTokens                                    @ 0.1 × input rate
+writes  = cacheWriteTokens                                   @ 1.25 × input rate
+output  = outputTokens                                       @ output rate</code></pre>
+
+<p>
+  Rates come from <code>billing/model-pricing.ts</code> and nowhere else, so the harness and the
+  credit ledger can never disagree about what a model costs. An unknown model throws rather than
+  guessing, and a negative base — which would mean the SDK's sum semantics had changed underneath us
+  — throws too.
+</p>
+
+<h3 id="bands-not-numbers">Bands, not numbers</h3>
+
+<p>
+  <code>expected-costs.json</code> holds a per-component entry with a tolerance, seeded from three to
+  five live baselines rather than a single run. The tolerances are wide where reality is wide: Fast
+  Thinker cost per turn carries ±35% because prose length genuinely varies (output tokens nearly
+  doubled between two otherwise-identical runs), while the S-4 prep path sits inside a much tighter
+  ceiling because three runs landed within 4.7% of each other. Dollar figures are only ever pinned
+  from runs the harness itself measured — never from a planning document — because a band seeded from
+  an estimate asserts the estimate, not the system.
+</p>
+
+<p>
+  Cache health is asserted separately, as violations rather than dollars: on S-2, every Slow Thinker
+  evaluation, gate, and tripwire call must show cache reads, with narrow accommodations for the first
+  cold write of a session and for gaps that outlive the five-minute cache TTL. The gate and tripwire
+  arms additionally carry the measured token size of their stable span, because a prompt cache only
+  engages above a model-specific minimum — 4,096 tokens on Haiku. The gate's span measures 4,753,
+  which is roughly 650 tokens of headroom: if a future prompt trim shortens the playbook, caching
+  stops silently, so the arm is written to log rather than fail when the span drops under the floor.
+</p>
+
+<aside class="wiki-rationale">
+  <strong>Assert the mean of a scenario, not a single call</strong> — per-call cost is dominated by
+  model nondeterminism, so a per-call assertion would flap constantly and get muted. Scenario means
+  over a fixed script are stable enough to hold a band, and a real regression (a cache breakpoint
+  that stopped matching, a prompt that doubled) moves the mean well outside it.
+</aside>
+
+<h2 id="operating-this-piece">Operating this piece</h2>
+
+<h3 id="run-a-cost-smoke-locally">Run a cost smoke locally</h3>
+
+<ol>
+  <li>Start the dev stack with <code>pnpm dev</code> — the log capture the harness reads comes from
+    that wrapper, so a stack started any other way produces an empty capture.</li>
+  <li>From <code>backend/</code>, run <code>pnpm cost:smoke s1</code> (or <code>s2</code> /
+    <code>s4</code> / <code>s5</code>). Expect a few dollars of real spend for a full sweep.</li>
+  <li>Leave the stack alone while it runs. Editing anything under <code>backend/src/</code> restarts
+    a watch-mode server mid-run and kills the in-flight session.</li>
+  <li>Read the report table: PASS/FAIL per component, plus INFO rows for components that are
+    captured but not yet banded.</li>
+</ol>
+
+<h3 id="re-check-a-manifest-edit-without-paying-again">Re-check a manifest edit without paying again</h3>
+
+<ol>
+  <li>A successful drive saves its window and scope ids under
+    <code>backend/logs/cost-smoke/</code>.</li>
+  <li>Run <code>pnpm cost:smoke &lt;scenario&gt; --reassert</code> to replay that saved window
+    through extraction and assertion with no LLM calls at all.</li>
+  <li>Use this whenever you are tuning tolerances — re-driving to test a band edit is pure waste.</li>
+</ol>
+
+<h3 id="re-pin-a-band-after-an-intentional-change">Re-pin a band after an intentional change</h3>
+
+<ol>
+  <li>Run the affected scenario three times and record the actuals.</li>
+  <li>Update the entry in <code>backend/scripts/cost/expected-costs.json</code> — the mean for
+    cost-shaped rows, a ceiling with headroom for rows where the spread is small.</li>
+  <li><code>--reassert</code> the saved window to confirm the new band accepts the observed run.</li>
+  <li>Say in the commit message what changed and why the old band no longer describes the system.</li>
+</ol>
+
+<h2 id="integration-points">Integration points</h2>
+
+<p>
+  The lines this harness reads are produced by the
+  <a href="./llm.html">LLM client</a>'s logging middleware, and priced with the same table the
+  <a href="../auth-billing/billing-metering.html">billing metering</a> path uses. The caching this
+  harness proves lives in the <a href="./slow-thinker.html">Slow Thinker</a> and
+  <a href="./scribe.html">Scribe</a> prompts. A weekly unattended run is wired on staging and
+  described in <a href="../infra/smoke-testing.html">smoke testing</a>; it emits a
+  <code>cost_smoke.failed</code> line on either failure path so a metric filter can catch it.
+</p>
+
+<h2 id="appendix-scenarios">Appendix: scenarios</h2>
+
+<table>
+  <thead>
+    <tr><th>Scenario</th><th>Drives</th><th>Asserts</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>s1</code></td>
+      <td>10 scripted player turns over a real WS session</td>
+      <td>FT $/turn, ST $/eval, ST eval count</td>
+    </tr>
+    <tr>
+      <td><code>s2</code></td>
+      <td>nothing — re-asserts S-1's window</td>
+      <td>FT cache-read share; zero cache violations on ST eval, gate, tripwire</td>
+    </tr>
+    <tr>
+      <td><code>s4</code></td>
+      <td>character finalize → integration → session prep</td>
+      <td>per-stage and total prep cost</td>
+    </tr>
+    <tr>
+      <td><code>s5</code></td>
+      <td>a full world generation</td>
+      <td>per-stage world-gen cost</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="source">Source</h2>
+
+<p><code>backend/scripts/cost/</code></p>
+</article>
+        <footer class="wiki-page-footer"></footer>
+      </main>
+      <aside class="wiki-toc">
+        <div class="wiki-toc-label">On this page</div>
+        <ul><li style="padding-left:0"><a href="#how-it-fits-together">How it fits together</a></li><li style="padding-left:12px"><a href="#the-window-is-the-measurement">The window is the measurement</a></li><li style="padding-left:12px"><a href="#capture-reads-the-logs-not-the-database">Capture reads the logs, not the database</a></li><li style="padding-left:12px"><a href="#pricing-and-why-it-is-not-a-multiplication">Pricing, and why it is not a multiplication</a></li><li style="padding-left:12px"><a href="#bands-not-numbers">Bands, not numbers</a></li><li style="padding-left:0"><a href="#operating-this-piece">Operating this piece</a></li><li style="padding-left:12px"><a href="#run-a-cost-smoke-locally">Run a cost smoke locally</a></li><li style="padding-left:12px"><a href="#re-check-a-manifest-edit-without-paying-again">Re-check a manifest edit without paying again</a></li><li style="padding-left:12px"><a href="#re-pin-a-band-after-an-intentional-change">Re-pin a band after an intentional change</a></li><li style="padding-left:0"><a href="#integration-points">Integration points</a></li><li style="padding-left:0"><a href="#appendix-scenarios">Appendix: scenarios</a></li><li style="padding-left:0"><a href="#source">Source</a></li></ul>
+      </aside>
+    </div>
+    <script src="../helper.js"></script>
+  </body>
+</html>

@@ -57,8 +57,8 @@
 <!-- source: docs/superpowers/specs/2026-05-14-myt-52-streaming-stages-design.md -->
 <!-- source: docs/superpowers/specs/2026-05-16-myth-exac-streaming-narrow-snapshot-design.md -->
 <!-- source: docs/specs/2026-04-13-world-campaign-pipeline.md -->
-<!-- source-hash: sha256:c9c39606cc09203e0bcdb634f1b74e8f51b509cb1b3858fe052861c29a4259b6 -->
-<!-- last-ticket: MYT-102 -->
+<!-- source-hash: sha256:2470d0a6a4e18148b61d85b3f053bfe442a99a55b71b595644cbbce3e111b215 -->
+<!-- last-ticket: myth-5ei5j -->
 
 <h1>World gen</h1>
 
@@ -73,7 +73,7 @@
   <code>entity_relationships</code> Sonnet), an Opus <code>world_introduction</code> stage that
   writes the world's opening page (the reveal's front door), a
   <code>entity_consolidation</code> stage (Sonnet) that materializes any phantom entities stage 4
-  declared as placeholders, and a final non-streaming Sonnet <code>coherence_pass</code>. Two
+  declared as placeholders, and a final Sonnet <code>coherence_pass</code>. Two
   non-prose structured stages ride alongside these: a <code>world_color</code> stage runs
   immediately after <code>concept_intake</code> and picks the world's two-colour cover identity (a
   Sonnet pick, contrast-guarded in code — see
@@ -1373,12 +1373,25 @@
 <h3>Coherence pass and its cap-fire exception</h3>
 
 <p>
-  Stage 7 (<code>coherence_pass</code>) is non-streaming Sonnet plus a mechanical apply path. The
+  Stage 7 (<code>coherence_pass</code>) is a budgeted Sonnet call plus a mechanical apply path. The
   Sonnet call reads a compact dump of the world (entities, prose, facts, relationships) and returns
   a list of discriminated-union patches. All patches identify their targets by NAME — the apply step
   resolves each name against an inventory loaded once at stage entry, so the LLM never sees a UUID.
   Patches fall into three categories: fixes, adds, and deletes.
 </p>
+
+<aside class="wiki-rationale">
+  <strong>This stage carries a budget because its input is the whole world</strong> — it is the only
+  call that reads everything the previous ten stages produced (~95k tokens on a fifty-entity world),
+  and on Sonnet 5 it answers with 24–32k tokens of adaptive thinking before writing a patch. It ran
+  non-streaming until the resulting 4–6 minute generations began outliving the non-streaming
+  transport's headers ceiling, which killed every large world at the second-to-last stage. It now
+  spreads its entry from <code>WORLD_GEN_STAGE_BUDGETS</code> — arming the
+  <a href="./llm-outage-resilience.html#wrapper-owned-attempts">wrapper-owned attempt loop</a>, which
+  drives streaming transport internally and makes a transient failure here park and resume rather
+  than fail the world. It is also, for the same reason, the most expensive single call in a world
+  generation, and most of that cost is thinking nobody ever reads.
+</aside>
 
 <p><strong>Fix patches</strong> update an existing row in place. Five kinds:</p>
 
