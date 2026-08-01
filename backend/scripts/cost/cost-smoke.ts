@@ -31,6 +31,7 @@ import { loadManifest } from './lib/manifest.js'
 import { renderReport, rowStatus } from './lib/report.js'
 import { callUsd } from './lib/usd.js'
 import { assertLiveStack } from './liveness.js'
+import { costSmokeFailedLine } from './failed-event.js'
 import { loadRun, saveRun, type CapturedRun } from './run-state.js'
 import { parseScenarioId, SCENARIOS, type ScenarioId } from './scenarios/registry.js'
 import { runS1 } from './scenarios/s1-driver.js'
@@ -56,6 +57,12 @@ function env(): RunnerEnv {
     devSub: process.env.S1_DEV_SUB ?? 'dev-user-1',
     workerHealthUrl: process.env.COST_SMOKE_WORKER_HEALTH_URL ?? 'http://localhost:3001/health',
   }
+}
+
+/** For the crash handler only: the crash may BE the strict parse throwing,
+ *  so the failure line's scenario field degrades to 'unknown' instead. */
+function parseScenarioIdLenient(raw: string | undefined): string {
+  return raw === 's1' || raw === 's2' || raw === 's4' || raw === 's5' ? raw : 'unknown'
 }
 
 function parseTurnsFlag(argv: readonly string[]): number | undefined {
@@ -186,14 +193,29 @@ async function main(): Promise<void> {
   ].join('\n')
   process.stdout.write(`\n${header}\n\n${captureSummary(calls, dropped, stageOnly)}\n\n`)
 
-  // 5-6. Assemble + report + exit code.
+  // 5-6. Assemble + report + exit code. A red smoke ALSO emits the
+  // structured cost_smoke.failed line (spec §1.3 — the weekly run's alarm
+  // signal), alongside the human-readable report.
   const rows = scenario.assemble({ run, calls, dropped, stageOnly, manifest })
   process.stdout.write(`${renderReport(rows)}\n`)
-  const failed = rows.some((r) => rowStatus(r) === 'FAIL')
-  process.exit(failed ? 1 : 0)
+  const failedComponents = rows.filter((r) => rowStatus(r) === 'FAIL').map((r) => r.component)
+  if (failedComponents.length > 0) {
+    process.stdout.write(
+      `${costSmokeFailedLine({ scenario: id, reason: 'assertion_failed', failedComponents })}\n`,
+    )
+    process.exit(1)
+  }
+  process.exit(0)
 }
 
 main().catch((err: unknown) => {
+  process.stdout.write(
+    `${costSmokeFailedLine({
+      scenario: parseScenarioIdLenient(process.argv[2]),
+      reason: 'crashed',
+      error: err,
+    })}\n`,
+  )
   process.stderr.write(`${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`)
   process.exit(1)
 })

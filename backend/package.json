@@ -6,7 +6,8 @@
   "files": [
     "dist",
     "src",
-    "scripts/smoke"
+    "scripts/smoke",
+    "scripts/cost"
   ],
   "scripts": {
     "dev": "bash scripts/dev-logged.sh",
