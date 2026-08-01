@@ -50,8 +50,14 @@ export function resolveIncludes(text: string, stack: readonly string[] = []): st
  * Replace `{{var}}` occurrences in `template` with values from `vars`.
  * Unmatched placeholders are left as-is so a missing variable surfaces
  * visibly in the rendered output (and on inspection of the LLM call).
+ *
+ * Exported because the cache-annotated prompts (st-gate, secret-tripwire) split
+ * their template at a breakpoint and must interpolate each span independently —
+ * `loadPrompt` only renders whole templates. Same single-pass semantics either
+ * way: replacement content is never rescanned, so an interpolated value cannot
+ * mint a placeholder.
  */
-function interpolate(template: string, vars: Record<string, string>): string {
+export function interpolateVars(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (match: string, key: string) => {
     if (!Object.prototype.hasOwnProperty.call(vars, key)) return match
     return vars[key] ?? match
@@ -68,7 +74,7 @@ function interpolate(template: string, vars: Record<string, string>): string {
  * template (the file contents are not re-checked).
  */
 export function loadPrompt(area: string, name: string, vars?: Record<string, string>): string {
-  return interpolate(resolveIncludes(readRaw(`${area}/${name}`)), vars ?? {})
+  return interpolateVars(resolveIncludes(readRaw(`${area}/${name}`)), vars ?? {})
 }
 
 export function _resetPromptCacheForTests(): void {

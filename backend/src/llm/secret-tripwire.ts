@@ -17,7 +17,7 @@
 // st-lookup-vet.ts.
 
 import { generateObject, type LanguageModelUsage, type PromptBlocks } from './ai.js'
-import { loadPrompt } from './prompts.js'
+import { interpolateVars, loadPrompt } from './prompts.js'
 import {
   SecretTripwireResultSchema,
   type SecretTripwireResult,
@@ -79,17 +79,6 @@ export interface SecretTripwireOutput {
 // scribe read when play starts inside the TTL.
 const TRIPWIRE_VOLATILE_MARKER = 'Player-facing prose this turn:'
 
-/** `{{var}}` interpolation over one template span — same semantics as
- *  prompts.ts (single pass, unmatched placeholders left as-is, replacement
- *  content never rescanned). Local because the split must interpolate each
- *  half independently and prompts.ts only renders whole templates. */
-function fill(span: string, vars: Record<string, string>): string {
-  return span.replace(/\{\{(\w+)\}\}/g, (match: string, key: string) => {
-    if (!Object.prototype.hasOwnProperty.call(vars, key)) return match
-    return vars[key] ?? match
-  })
-}
-
 /** Cuts the raw template at the volatile marker, which must appear EXACTLY
  *  once: zero is template drift, and a second occurrence would make a
  *  first-occurrence cut silently move the cache breakpoint. Exported for the
@@ -119,8 +108,8 @@ function tripwireBlocks(input: SecretTripwireInput): PromptBlocks {
     diceOutcomes: input.diceOutcomes ?? '(none this turn)',
   }
   return [
-    { role: 'user', text: fill(head, vars), cacheBreakpoint: true },
-    { role: 'user', text: fill(tail, vars) },
+    { role: 'user', text: interpolateVars(head, vars), cacheBreakpoint: true },
+    { role: 'user', text: interpolateVars(tail, vars) },
   ]
 }
 

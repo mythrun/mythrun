@@ -12,7 +12,7 @@
 // only decides whether the Opus call happens, never what it concludes.
 
 import { generateObject, type LanguageModelUsage, type PromptBlocks } from './ai.js'
-import { loadPrompt } from './prompts.js'
+import { interpolateVars, loadPrompt } from './prompts.js'
 import { StGateResultSchema, type StGateResult } from './schemas/st-gate.js'
 import { ST_GATE_MODEL, ST_GATE_TIMEOUT_MS } from '../session/st-config.js'
 
@@ -45,17 +45,6 @@ export interface StGateOutput {
 // cost harness's S-2 arm is span-conditional for the same reason.
 const GATE_VOLATILE_MARKER = '## Running summary'
 
-/** `{{var}}` interpolation over one template span — same semantics as
- *  prompts.ts (single pass, unmatched placeholders left as-is, replacement
- *  content never rescanned). Local because the split must interpolate each
- *  half independently and prompts.ts only renders whole templates. */
-function fill(span: string, vars: Record<string, string>): string {
-  return span.replace(/\{\{(\w+)\}\}/g, (match: string, key: string) => {
-    if (!Object.prototype.hasOwnProperty.call(vars, key)) return match
-    return vars[key] ?? match
-  })
-}
-
 /** Cuts the raw template at the volatile marker, which must appear EXACTLY
  *  once: zero is template drift, and a second occurrence would make a
  *  first-occurrence cut silently move the cache breakpoint. Exported for the
@@ -83,8 +72,8 @@ function gateBlocks(input: StGateInput): PromptBlocks {
     recent_exchanges: input.recentExchanges,
   }
   return [
-    { role: 'user', text: fill(head, vars), cacheBreakpoint: true },
-    { role: 'user', text: fill(tail, vars) },
+    { role: 'user', text: interpolateVars(head, vars), cacheBreakpoint: true },
+    { role: 'user', text: interpolateVars(tail, vars) },
   ]
 }
 
