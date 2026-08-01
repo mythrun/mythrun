@@ -478,6 +478,319 @@ output "smoke_prep_pipeline_run_task_command" {
   )
 }
 
+# ======== Smoke Cost Task + Weekly Schedule (cost-wave1 §1.3) ========
+# Second member of the `mythrun-staging-smoke-*` run-task family: the weekly
+# cost-assertion smoke (backend/scripts/cost/cost-smoke.ts, scenario s1).
+# Mirrors the smoke-prep-pipeline pattern above exactly (dedicated exec role +
+# dedicated task role + dedicated log group + dedicated task definition,
+# backend image, run-task invocation) plus NEW wiring the family didn't have:
+# an EventBridge weekly schedule.
+#
+# THE SCHEDULE SHIPS DISARMED (var.cost_smoke_schedule_enabled = false).
+# The runner cannot complete against staging as-built — see the variable's
+# description for the precondition list. The task definition + schedule land
+# now so the backend-side staging mode has a fixed infra target; arming is a
+# tfvars flip once the preconditions clear.
+#
+# Failure path: the runner exits non-zero on any FAILed assertion row (a
+# stopped task with exit code 1) and emits a `cost_smoke.failed` structured
+# log line on BOTH failure paths — assertion-red and crash (ec767930) — so
+# the dedicated log group below is metric-filter-ready as-is. No alarms
+# here — alarm wiring rides the standing alarm bead.
+
+resource "aws_cloudwatch_log_group" "smoke_cost" {
+  name              = "/ecs/mythrun-${var.environment}-smoke-cost"
+  retention_in_days = local.log_retention_days
+
+  tags = { Name = "mythrun-${var.environment}-smoke-cost" }
+}
+
+# Task-execution role: ECR pull + log ship + start-time `secrets` reads.
+# Same trust document as the prep-pipeline exec role (shape shared, roles
+# deliberately separate — per-task blast-radius isolation like bootstrap-db).
+resource "aws_iam_role" "smoke_cost_task_execution" {
+  name               = "mythrun-${var.environment}-smoke-cost-exec"
+  assume_role_policy = data.aws_iam_policy_document.smoke_prep_pipeline_task_execution_trust.json
+
+  tags = { Name = "mythrun-${var.environment}-smoke-cost-exec" }
+}
+
+resource "aws_iam_role_policy_attachment" "smoke_cost_task_execution_managed" {
+  role       = aws_iam_role.smoke_cost_task_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+# Start-time secrets: DB password (fixture seeding / drained-queue quiescence
+# hit Postgres directly) + Redis auth token (reset-session-state extends the
+# fixture reset to Redis; staging ElastiCache is AUTH + TLS).
+data "aws_iam_policy_document" "smoke_cost_task_execution_secrets" {
+  statement {
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = [
+      aws_secretsmanager_secret.bootstrap_secrets["rds-password"].arn,
+      data.terraform_remote_state.shared.outputs.redis_auth_secret_arn,
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "smoke_cost_task_execution_secrets" {
+  name   = "secrets-access"
+  role   = aws_iam_role.smoke_cost_task_execution.id
+  policy = data.aws_iam_policy_document.smoke_cost_task_execution_secrets.json
+}
+
+# Task role: in-container AWS SDK calls. Scope matches the prep-pipeline
+# smoke's: the 4 smoke-user credential secrets, for the staging-auth arm the
+# drivers grow (dev-sub bypass is structurally impossible against staging —
+# AUTH_MODE=real + NODE_ENV=production — so the staging driver authenticates
+# like prep-pipeline.ts does: secret → Cognito InitiateAuth → bearer token).
+resource "aws_iam_role" "smoke_cost_task_role" {
+  name = "mythrun-${var.environment}-smoke-cost-task"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+
+  tags = { Name = "mythrun-${var.environment}-smoke-cost-task" }
+}
+
+resource "aws_iam_role_policy" "smoke_cost_task_role_policy" {
+  name = "smoke-credentials-access"
+  role = aws_iam_role.smoke_cost_task_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["secretsmanager:GetSecretValue"]
+      Resource = values(module.auth.smoke_test_credentials_secret_arns)
+    }]
+  })
+}
+
+# Task definition. Sizing + image + tag mechanism mirror smoke-prep-pipeline
+# (cpu/memory sized for LLM-driven scenario runs; `:placeholder` swapped for
+# the real digest by CI's task-def rotation — which TODAY only rotates the
+# prep-pipeline family; see var.cost_smoke_schedule_enabled precondition 2).
+#
+# Env surface = the family's baseline (API base, Cognito, smoke-user secret
+# ids, DB_* + DB_PASSWORD) plus the cost runner's own knobs (S1_*). Vars the
+# runner reads TODAY but that have no meaningful staging value are left unset
+# on purpose so the as-built runner fails fast and loud at its liveness gate
+# ($0 spend) rather than half-running:
+#   - S1_DEV_SUB: dev-bypass identity; staging is real-auth (see task role).
+#   - COST_SMOKE_WORKER_HEALTH_URL: the deployed worker's :3001 health server
+#     is container-local (ECS healthCheck CMD probe) — not reachable from
+#     another task; the staging liveness arm needs its own worker probe.
+# The runner also composes nothing: it expects DATABASE_URL / REDIS_BATCH_URL /
+# REDIS_REALTIME_URL whole. ECS `secrets` cannot interpolate a password into a
+# URL, so the staging arm must compose them at startup from DB_* / REDIS_* +
+# the injected secrets — the exact pattern prep-pipeline.ts already uses.
+resource "aws_ecs_task_definition" "smoke_cost" {
+  family                   = "mythrun-${var.environment}-smoke-cost"
+  cpu                      = "1024"
+  memory                   = "2048"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+
+  execution_role_arn = aws_iam_role.smoke_cost_task_execution.arn
+  task_role_arn      = aws_iam_role.smoke_cost_task_role.arn
+
+  container_definitions = jsonencode([{
+    name      = "smoke"
+    image     = "${data.terraform_remote_state.shared.outputs.ecr_repository_url}:placeholder"
+    essential = true
+    # Same invocation shape as the prep-pipeline smoke: tsx from the deployed
+    # payload's node_modules (backend/package.json `files` ships scripts/cost
+    # since ec767930).
+    #
+    # --turns 10, not the runner's 12-turn default: Wave 1 pinned S-1 at 10
+    # turns because the 12-turn shape structurally brushes the gross-token
+    # SESSION_TOKEN_BUDGET (the OPT-9 defect) and the manifest's eval-count
+    # band was measured on the 10-turn shape. Drop the flag when OPT-9 lands
+    # and the manifest re-pins at 12 (T5 report, baseline rationale).
+    command          = ["node_modules/.bin/tsx", "scripts/cost/cost-smoke.ts", "s1", "--turns", "10"]
+    workingDirectory = "/app"
+
+    environment = [
+      { name = "AWS_REGION", value = data.aws_region.current.region },
+      # The runner's own base/WS endpoints (defaults are localhost).
+      { name = "S1_BASE_URL", value = "https://${var.environment}-api.mythrun.com" },
+      { name = "S1_WS_URL", value = "wss://${var.environment}-api.mythrun.com" },
+      # Cognito surface for the staging-auth driver arm — same keys as the
+      # prep-pipeline smoke task.
+      { name = "COGNITO_USER_POOL_ID", value = module.auth.user_pool_id },
+      { name = "COGNITO_CLIENT_ID", value = module.auth.app_client_id },
+      { name = "SMOKE_OWNER_SECRET_ID", value = "mythrun/${var.environment}/smoke-test-owner-credentials" },
+      { name = "SMOKE_PLAYER_1_SECRET_ID", value = "mythrun/${var.environment}/smoke-test-player_1-credentials" },
+      { name = "SMOKE_PLAYER_2_SECRET_ID", value = "mythrun/${var.environment}/smoke-test-player_2-credentials" },
+      { name = "SMOKE_PLAYER_3_SECRET_ID", value = "mythrun/${var.environment}/smoke-test-player_3-credentials" },
+      # DB + Redis connection inputs for startup composition (see block
+      # comment). Values mirror the serving task defs.
+      { name = "DB_HOST", value = data.terraform_remote_state.shared.outputs.rds_endpoint },
+      { name = "DB_PORT", value = tostring(data.terraform_remote_state.shared.outputs.rds_port) },
+      { name = "DB_USER", value = "mythrun_${var.environment}" },
+      { name = "DB_NAME", value = "mythrun_${var.environment}" },
+      { name = "REDIS_HOST", value = data.terraform_remote_state.shared.outputs.redis_endpoint },
+      { name = "REDIS_PORT", value = tostring(data.terraform_remote_state.shared.outputs.redis_port) },
+    ]
+
+    secrets = [
+      { name = "DB_PASSWORD", valueFrom = aws_secretsmanager_secret.bootstrap_secrets["rds-password"].arn },
+      { name = "REDIS_AUTH_TOKEN", valueFrom = data.terraform_remote_state.shared.outputs.redis_auth_secret_arn },
+    ]
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.smoke_cost.name
+        awslogs-region        = data.aws_region.current.region
+        awslogs-stream-prefix = "ecs"
+      }
+    }
+  }])
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = { Name = "mythrun-${var.environment}-smoke-cost" }
+}
+
+# EventBridge weekly schedule — Sunday 04:00 UTC (Saturday evening US, before
+# the Sunday-morning working window: a red run is waiting at the start of the
+# week, and a live run's ~$2-4 spend + staging load sits in dead hours).
+resource "aws_cloudwatch_event_rule" "smoke_cost_weekly" {
+  name                = "mythrun-${var.environment}-smoke-cost-weekly"
+  description         = "Weekly cost-assertion smoke (cost-wave1 spec §1.3): runs scenario s1 via ECS run-task."
+  schedule_expression = "cron(0 4 ? * SUN *)"
+  state               = var.cost_smoke_schedule_enabled ? "ENABLED" : "DISABLED"
+
+  tags = { Name = "mythrun-${var.environment}-smoke-cost-weekly" }
+}
+
+# Invocation role for EventBridge → ecs:RunTask. Dedicated (not the task
+# roles — different principal, different action surface).
+data "aws_iam_policy_document" "smoke_cost_events_trust" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["events.amazonaws.com"]
+    }
+
+    # Confused-deputy hardening, same posture as this file's other
+    # service-principal grants (SNS topic policy): only rules in THIS
+    # account, and specifically the weekly rule, can wield the role.
+    # aws:SourceArn is documented + populated for events.amazonaws.com
+    # AssumeRole calls (unlike the CloudWatch→SNS case noted below). No
+    # reference cycle: the rule doesn't reference the role — only the
+    # event TARGET references both.
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = [aws_cloudwatch_event_rule.smoke_cost_weekly.arn]
+    }
+  }
+}
+
+resource "aws_iam_role" "smoke_cost_events" {
+  name               = "mythrun-${var.environment}-smoke-cost-events"
+  assume_role_policy = data.aws_iam_policy_document.smoke_cost_events_trust.json
+
+  tags = { Name = "mythrun-${var.environment}-smoke-cost-events" }
+}
+
+data "aws_iam_policy_document" "smoke_cost_events" {
+  # Both ARN forms: the target passes a REVISIONLESS task-definition ARN (so
+  # each run picks up the latest ACTIVE revision after CI rotations); IAM
+  # evaluation differs across that resolution, and granting only `:*` has
+  # bitten revisionless RunTask calls before.
+  statement {
+    actions = ["ecs:RunTask"]
+    resources = [
+      "arn:aws:ecs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:task-definition/mythrun-${var.environment}-smoke-cost",
+      "arn:aws:ecs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:task-definition/mythrun-${var.environment}-smoke-cost:*",
+    ]
+    condition {
+      test     = "StringEquals"
+      variable = "ecs:cluster"
+      values = [
+        "arn:aws:ecs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:cluster/${data.terraform_remote_state.shared.outputs.ecs_cluster_name}",
+      ]
+    }
+  }
+
+  statement {
+    actions = ["iam:PassRole"]
+    resources = [
+      aws_iam_role.smoke_cost_task_execution.arn,
+      aws_iam_role.smoke_cost_task_role.arn,
+    ]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "smoke_cost_events" {
+  name   = "run-cost-smoke-task"
+  role   = aws_iam_role.smoke_cost_events.id
+  policy = data.aws_iam_policy_document.smoke_cost_events.json
+}
+
+resource "aws_cloudwatch_event_target" "smoke_cost_weekly" {
+  rule     = aws_cloudwatch_event_rule.smoke_cost_weekly.name
+  arn      = "arn:aws:ecs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:cluster/${data.terraform_remote_state.shared.outputs.ecs_cluster_name}"
+  role_arn = aws_iam_role.smoke_cost_events.arn
+
+  ecs_target {
+    launch_type = "FARGATE"
+    task_count  = 1
+    # Revisionless ARN so the schedule launches the latest ACTIVE revision
+    # (i.e. the CI-rotated image), not the revision current at apply time.
+    task_definition_arn = aws_ecs_task_definition.smoke_cost.arn_without_revision
+
+    # SG: the SERVING tasks' SG, not the bootstrap SG the prep-pipeline smoke
+    # borrows. The cost drivers reset campaign-scoped Redis keys between runs
+    # (reset-session-state), and only the ECS SG holds 6379 egress — the Redis
+    # SG's inbound admits it alone. It also already carries 443 + 5432, so the
+    # bootstrap SG's surface is a strict subset. Its ALB-ingress rule is inert
+    # here (this task registers with no target group).
+    network_configuration {
+      subnets          = data.terraform_remote_state.shared.outputs.private_subnet_ids
+      security_groups  = [data.terraform_remote_state.shared.outputs.ecs_sg_id]
+      assign_public_ip = false
+    }
+  }
+}
+
+# Paste-ready manual invocation, mirroring smoke_prep_pipeline_run_task_command
+# (same eval-wrapping caveat). Uses the same ECS SG as the schedule target.
+output "smoke_cost_run_task_command" {
+  description = "Paste-ready: aws ecs run-task command to invoke the weekly cost smoke's task on demand. Invoke via `eval`. Tail logs via: aws logs tail /ecs/mythrun-staging-smoke-cost --follow"
+  value = format(
+    "aws ecs run-task --cluster %s --task-definition %s --launch-type FARGATE --network-configuration 'awsvpcConfiguration={subnets=[%s],securityGroups=[%s],assignPublicIp=DISABLED}'",
+    data.terraform_remote_state.shared.outputs.ecs_cluster_name,
+    aws_ecs_task_definition.smoke_cost.family,
+    join(",", data.terraform_remote_state.shared.outputs.private_subnet_ids),
+    data.terraform_remote_state.shared.outputs.ecs_sg_id,
+  )
+}
+
 # ======== GitHub Actions IAM Role (staging-scoped) ========
 # Trust policy hardens against:
 #   - missing audience (aud must be sts.amazonaws.com)
@@ -799,6 +1112,24 @@ data "aws_iam_policy_document" "gh_actions_staging" {
     resources = [
       aws_iam_role.smoke_prep_pipeline_task_execution.arn,
       aws_iam_role.smoke_prep_pipeline_task_role.arn,
+    ]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+
+  # Same again for the smoke-cost family (cost-wave1 §1.3): CI's task-def
+  # rotation must gain a job for `mythrun-staging-smoke-cost` (today it only
+  # rotates prep-pipeline), and RegisterTaskDefinition on the new revision
+  # requires PassRole on the roles it references. Granted ahead of the
+  # workflow change so that change is workflow-only.
+  statement {
+    actions = ["iam:PassRole"]
+    resources = [
+      aws_iam_role.smoke_cost_task_execution.arn,
+      aws_iam_role.smoke_cost_task_role.arn,
     ]
     condition {
       test     = "StringEquals"

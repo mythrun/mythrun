@@ -60,3 +60,32 @@ variable "cognito_idps_enabled" {
   type        = bool
   default     = false
 }
+
+variable "cost_smoke_schedule_enabled" {
+  description = <<-EOT
+    Cost-wave1 §1.3 (T8). false (the default) creates the weekly cost-smoke
+    EventBridge rule DISABLED: the task definition, roles, log group, and
+    schedule wiring all exist and are manually invocable, but nothing fires
+    on its own. Arming it today would buy a red task every Sunday, because
+    the runner cannot complete against staging as-built:
+
+      1. deploy.yml's task-def rotation only rotates the prep-pipeline
+         family, so this family's image stays `:placeholder` (not a real
+         tag; RunTask dies at image pull).
+      2. cost-smoke.ts has no staging mode: its liveness gate + NDJSON
+         capture read local dev log FILES (staging logs to CloudWatch:
+         /mythrun/staging/{api,worker}), its drivers authenticate via the
+         dev-sub bypass (staging is AUTH_MODE=real), expect whole
+         DATABASE_URL / REDIS_*_URL values (staging injects parts + secrets;
+         compose at startup like prep-pipeline.ts), and probe a worker
+         health URL that staging does not expose across tasks.
+
+    (A third blocker — the image not carrying scripts/cost — was closed by
+    ec767930, which also landed the runner's cost_smoke.failed emission.)
+
+    Flip to true (tfvars) and apply once both land. Failures before the
+    drive phase spend $0 — the runner's liveness gate precedes any LLM call.
+  EOT
+  type        = bool
+  default     = false
+}
