@@ -36,6 +36,26 @@ resource "aws_budgets_budget" "monthly_cost" {
   limit_unit   = "USD"
   time_unit    = "MONTHLY"
 
+  # Credits and refunds are excluded, so the budget tracks what the
+  # infrastructure actually COSTS rather than what we are net-billed. Promotional
+  # credit would otherwise mask a runaway ramp completely — spend could double
+  # with the budget reading flat, and the alarm would arrive the month the credit
+  # runs out instead of the week the ramp started. This matches the live budget;
+  # it was configured in the console before this resource was written, and is
+  # declared here so an apply stops silently reverting it. `metrics` is required
+  # by the provider whenever filter_expression is set, and UnblendedCost is what
+  # the live budget measures.
+  metrics = ["UnblendedCost"]
+
+  filter_expression {
+    not {
+      dimensions {
+        key    = "RECORD_TYPE"
+        values = ["Credit", "Refund"]
+      }
+    }
+  }
+
   # Three notifications, matching what is live. They are deliberately layered
   # rather than redundant:
   #
