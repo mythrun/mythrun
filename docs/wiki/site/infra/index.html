@@ -157,6 +157,15 @@
 </p>
 
 <aside class="wiki-rationale">
+  <strong>It measures cost, not the invoice</strong> — the budget excludes Credit and Refund record
+  types, so it tracks what the infrastructure actually costs rather than what we are net-billed.
+  With credit applied, a net-billed budget reads flat while real spend doubles, and the alarm
+  arrives the month the credit runs out instead of the week the ramp started. The exclusion lived
+  only in the console until the resource was imported, which meant an apply would have silently
+  reverted it; it is declared in Terraform now.
+</aside>
+
+<aside class="wiki-rationale">
   <strong>Budgets, not an alarm on <code>AWS/Billing EstimatedCharges</code></strong> — that metric
   doesn't exist in this account. It is published only once the &ldquo;Receive Billing Alerts&rdquo;
   account preference is switched on, and only ever into <code>us-east-1</code>. Budgets needs no
