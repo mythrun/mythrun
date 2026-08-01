@@ -14,12 +14,13 @@
 //   SMOKE_ACCESS_TOKEN, SMOKE_CAMPAIGN_ID. Same-origin paths (mirrors the browser):
 //   REST + WS both ride staging.mythrun.com (the /api/* and /ws/* CloudFront behaviors).
 
+import { pathToFileURL } from 'node:url'
 import { WebSocket } from 'ws'
 
 const FRONTEND = process.env.SMOKE_FRONTEND_BASE ?? 'https://staging.mythrun.com'
 const IDLE_HOLD_MS = 75_000 // > 2 * 30s heartbeat
 
-interface Frame {
+export interface Frame {
   readonly type: string
 }
 interface ActiveResp {
@@ -57,13 +58,15 @@ async function rest<T>(method: string, path: string, token: string): Promise<T> 
 
 /** Open a socket and resolve with the FIRST frame (or reject on error / a close
  *  before any frame). The browser WS API can't read the handshake status, but the
- *  Node `ws` client surfaces a pre-upgrade non-101 as an `error` with the status. */
-function connectFirstFrame(
+ *  Node `ws` client surfaces a pre-upgrade non-101 as an `error` with the status.
+ *  Exported for reuse (cost scenario drivers); `wsBase` defaults to this smoke's
+ *  staging FRONTEND so the direct-run behavior is unchanged. */
+export function connectFirstFrame(
   sessionId: string,
   ticket: string,
   lastSeq: number | null,
+  wsBase: string = FRONTEND.replace(/^http/, 'ws'),
 ): Promise<{ socket: WebSocket; first: Frame }> {
-  const wsBase = FRONTEND.replace(/^http/, 'ws')
   const url =
     `${wsBase}/ws/session/${sessionId}?ticket=${encodeURIComponent(ticket)}` +
     (lastSeq === null ? '' : `&lastSeq=${String(lastSeq)}`)
@@ -129,4 +132,9 @@ async function main(): Promise<void> {
   process.exit(0)
 }
 
-main().catch((err: unknown) => fail(err instanceof Error ? (err.stack ?? err.message) : String(err)))
+// Direct-run guard: `connectFirstFrame` is imported by the cost scenario
+// drivers, and a bare top-level main() would run the staging smoke on import.
+const entry = process.argv[1]
+if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
+  main().catch((err: unknown) => fail(err instanceof Error ? (err.stack ?? err.message) : String(err)))
+}
