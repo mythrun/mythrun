@@ -88,7 +88,11 @@ describe('runCharacterConceptStage', () => {
     await runCharacterConceptStage(ARGS)
     const callOpts = mockGenerateText.mock.calls[0]?.[0] as unknown as {
       prompt: string
+      providerOptions?: unknown
     }
+    expect(callOpts.providerOptions).toMatchObject({
+      mythrun: { stage: 'character_concept', worldId: 'w-1', campaignId: 'c-1' },
+    })
     expect(callOpts.prompt).toContain('Veil')
     expect(callOpts.prompt).toContain('a road-weary cleric')
     expect(callOpts.prompt).not.toContain('{{worldName}}')

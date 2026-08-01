@@ -50,7 +50,7 @@ function scriptedRng(...values: number[]): Rng {
 }
 
 function makeDeps(overrides: Partial<ResolveCombatDeps> = {}): ResolveCombatDeps {
-  return { worldTone: 'grim and rain-soaked', ...overrides }
+  return { worldTone: 'grim and rain-soaked', sessionId: 'session-1', ...overrides }
 }
 
 const ENEMIES: readonly CombatEnemy[] = [
@@ -218,7 +218,11 @@ describe('resolveCombat', () => {
     const callOpts = mockGenerateText.mock.calls[0]?.[0] as unknown as {
       prompt: string
       abortSignal: AbortSignal
+      providerOptions?: unknown
     }
+    expect(callOpts.providerOptions).toMatchObject({
+      mythrun: { stage: 'ft_combat_outcome', sessionId: 'session-1' },
+    })
     // Prompt-var contract: the enemy roster, public party projection, and world
     // tone flowed in. Public projection is ONLY level + HP (no secret fields).
     expect(callOpts.prompt).toContain('Goblin')

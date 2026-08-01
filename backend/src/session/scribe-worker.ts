@@ -295,6 +295,7 @@ async function handleBreach(
     breach: secretRef,
     secret: sdPlaybook,
     recentNarrative: prose,
+    sessionId,
   })
   if (retcon.repairAttempted) {
     deps.logger.warn({ campaignId }, 'scribe: retcon repairAttempted — fail-soft (re-fires next turn)')

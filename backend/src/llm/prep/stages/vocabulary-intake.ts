@@ -38,6 +38,8 @@ function computeCostUsd(usage: { inputTokens: number; outputTokens: number }): n
 
 export interface VocabularyIntakeArgs {
   readonly worldId: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun only. */
+  readonly campaignId: string
   readonly worldName: string
   readonly concept: string
   readonly tone: string
@@ -76,6 +78,9 @@ export async function runVocabularyIntakeStage(
     schema: VocabularyIntakeOutputSchema,
     schemaName: 'VocabularyIntakeOutputSchema',
     callSite: 'vocabulary-intake',
+    providerOptions: {
+      mythrun: { stage: 'vocabulary_intake', worldId: args.worldId, campaignId: args.campaignId },
+    },
     prompt,
     maxRetries: 3,
   })

@@ -169,7 +169,11 @@ async function main(): Promise<void> {
     //     No rng/abortSignal → the REAL engine roll. assertOutcome checks every
     //     identity (DC band, tier ∈ four, total === capability + roll, tier↔band
     //     match, envelope↔tier match, matched prose non-trivial).
-    const outcome = await resolveCombat({ worldTone: WORLD_TONE }, ENEMIES, PARTY)
+    const outcome = await resolveCombat(
+      { worldTone: WORLD_TONE, sessionId: 'myt-75-combat-outcome-smoke' },
+      ENEMIES,
+      PARTY,
+    )
     assertOutcome(outcome, capability)
     log(`loop ${String(i + 1)}/${String(LOOPS)} — resolver: real d20 + real Haiku → matched tier`, {
       dc: outcome.dc,

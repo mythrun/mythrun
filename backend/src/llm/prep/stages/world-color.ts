@@ -74,6 +74,8 @@ function computeCostUsd(usage: { inputTokens: number; outputTokens: number }): n
 
 export interface WorldColorArgs {
   readonly worldId: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun only. */
+  readonly campaignId: string
   readonly worldName: string
   readonly concept: string
   readonly tone: string
@@ -131,6 +133,9 @@ export async function runWorldColorStage(
       schema: WorldColorPairSchema,
       schemaName: 'WorldColorPairSchema',
       callSite: 'world-color',
+      providerOptions: {
+        mythrun: { stage: 'world_color', worldId: args.worldId, campaignId: args.campaignId },
+      },
       prompt: buildPrompt(args, rejected),
       maxRetries: 3,
     })

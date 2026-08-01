@@ -160,6 +160,7 @@ export async function runCharacterIntegrationStage(
     worldVocabulary,
     preIntegrationNotes: meta.preIntegrationNotes,
     startingSituationProse: meta.startingSituationProse,
+    campaignId: args.campaignId,
   })
 
   // 6. Worker-side invariant validation + PC↔PC mirror.
@@ -215,6 +216,8 @@ interface CallIntegrationLlmArgs {
   readonly worldVocabulary: string
   readonly preIntegrationNotes: string | null
   readonly startingSituationProse: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun only. */
+  readonly campaignId: string
 }
 
 async function callIntegrationLlm(
@@ -239,7 +242,9 @@ async function callIntegrationLlm(
     callSite: 'character-integration',
     schemaName: 'IntegrationResultSchema',
     repairStrategy: 'sonnet',
-    providerOptions: { mythrun: { stage: 'character_integration' } },
+    providerOptions: {
+      mythrun: { stage: 'character_integration', campaignId: args.campaignId },
+    },
   })
   return { output: result.output, usage: result.usage }
 }

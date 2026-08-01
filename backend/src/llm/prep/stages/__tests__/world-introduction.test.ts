@@ -61,6 +61,7 @@ function makeRepo(): FakeRepo {
 
 const baseArgs = {
   worldId: 'wld-1',
+  campaignId: 'camp-1',
   worldName: 'Ashfall',
   tone: 'grim, mercantile',
   themes: 'debt, power',
@@ -80,6 +81,12 @@ describe('runWorldIntroductionStage', () => {
     // The ['known'] filter is in the reads, not the prompt — every slice read is
     // known-tier-scoped.
     expect(repo.entities.listByWorld).toHaveBeenCalledWith('wld-1', { accessLevels: ['known'] })
+    const introCall = vi.mocked(ai.generateText).mock.calls[0]?.[0] as unknown as {
+      providerOptions?: unknown
+    }
+    expect(introCall.providerOptions).toMatchObject({
+      mythrun: { stage: 'world_introduction', worldId: 'wld-1', campaignId: 'camp-1' },
+    })
     const factsCall = repo.facts.listByEntities.mock.calls[0] as [readonly string[], { accessLevels: string[] }]
     expect(factsCall[1]).toEqual({ accessLevels: ['known'] })
     const relCall = repo.relationships.listAmong.mock.calls[0] as [readonly string[], string[]]

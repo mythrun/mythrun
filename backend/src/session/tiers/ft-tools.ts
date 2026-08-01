@@ -1090,6 +1090,7 @@ export function buildFtTools(deps: FtToolDeps, rng?: Rng): ToolSet {
         const outcome = await resolveCombat(
           {
             worldTone: deps.worldTone,
+            sessionId: deps.sessionId,
             ...(rng !== undefined ? { rng } : {}),
             ...(abortSignal !== undefined ? { abortSignal } : {}),
             ...(combatLogger !== undefined ? { logger: combatLogger } : {}),

@@ -77,6 +77,7 @@ describe('synthesizeConcept', () => {
     >
     expect(callArgs.prompt).toContain('UNIQUE_TITLE_X')
     expect(callArgs.prompt).toContain('UNIQUE_REASON_Y')
+    expect(callArgs.providerOptions).toMatchObject({ mythrun: { stage: 'concept_intake' } })
   })
 
   // Standing rule: no .max() on LLM prose fields — an over-length generation

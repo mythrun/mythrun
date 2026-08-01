@@ -348,6 +348,13 @@ describe('runCharacterSheetStage', () => {
       worldEra: 'e',
     })
 
+    const sheetCall = mockGenerateText.mock.calls[0]?.[0] as unknown as {
+      prompt?: string
+      providerOptions?: unknown
+    }
+    expect(sheetCall.providerOptions).toMatchObject({
+      mythrun: { stage: 'character_sheet', worldId, campaignId },
+    })
     const prompt = mockGenerateText.mock.calls[0]?.[0]?.prompt as string | undefined
     expect(prompt).toContain('level-5')
     // No unrendered placeholder leaks through.

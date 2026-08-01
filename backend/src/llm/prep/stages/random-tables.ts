@@ -50,6 +50,8 @@ const RandomTablesSchema = z.object({
 
 export interface RandomTablesArgs {
   readonly worldId: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun only. */
+  readonly campaignId: string
   readonly worldName: string
   readonly tone: string
   readonly themes: string
@@ -100,6 +102,9 @@ export async function runRandomTablesStage(
     prompt,
     maxRetries: 3,
     callSite: 'random-tables',
+    providerOptions: {
+      mythrun: { stage: 'random_tables', worldId: args.worldId, campaignId: args.campaignId },
+    },
     schemaName: 'RandomTablesSchema',
   })
 

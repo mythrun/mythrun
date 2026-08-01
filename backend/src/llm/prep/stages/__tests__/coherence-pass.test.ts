@@ -164,6 +164,7 @@ describe('runCoherencePassStage', () => {
     const result = await runCoherencePassStage(repo, {
       logger,
       worldId: seed.worldId,
+      campaignId: 'camp-1',
       vocabularyRegistry: opts.vocabularyRegistry ?? EMPTY_REGISTRY,
       // The per-entity synthKey map mirrors the synthKeys minted by stages 2/3.
       synthKeyByEntityId: {
@@ -240,7 +241,7 @@ describe('runCoherencePassStage', () => {
     const logger = silentLogger()
     const warnSpy = vi.spyOn(logger, 'warn')
     const result = await runCoherencePassStage(repo, {
-      logger, worldId: seed.worldId, vocabularyRegistry: EMPTY_REGISTRY,
+      logger, worldId: seed.worldId, campaignId: 'camp-1', vocabularyRegistry: EMPTY_REGISTRY,
       synthKeyByEntityId: { [seed.entityA]: 'world_and_factions/regions/0' }, bypassAccessFilter: false,
     })
 
@@ -297,7 +298,7 @@ describe('runCoherencePassStage', () => {
     const logger = silentLogger()
     const warnSpy = vi.spyOn(logger, 'warn')
     const result = await runCoherencePassStage(repo, {
-      logger, worldId: seed.worldId, vocabularyRegistry: EMPTY_REGISTRY,
+      logger, worldId: seed.worldId, campaignId: 'camp-1', vocabularyRegistry: EMPTY_REGISTRY,
       synthKeyByEntityId: {}, bypassAccessFilter: false,
     })
 
@@ -367,7 +368,12 @@ describe('runCoherencePassStage', () => {
     const seed = await seedWorld()
     mockPatches([], { inputTokens: 14000, outputTokens: 50 })
     await run(seed)
-    const firstArg = mockGenerateObject.mock.calls[0]?.[0] as { prompt: string } | undefined
+    const firstArg = mockGenerateObject.mock.calls[0]?.[0] as
+      | { prompt: string; providerOptions?: unknown }
+      | undefined
+    expect(firstArg?.providerOptions).toMatchObject({
+      mythrun: { stage: 'coherence_pass', worldId: seed.worldId, campaignId: 'camp-1' },
+    })
     const prompt = firstArg?.prompt ?? ''
     expect(prompt).toContain(seed.entityA)
     expect(prompt).toContain('weathered fishing village')
@@ -534,7 +540,7 @@ describe('runCoherencePassStage', () => {
     const logger = silentLogger()
     const warnSpy = vi.spyOn(logger, 'warn')
     const result = await runCoherencePassStage(repo, {
-      logger, worldId: seed.worldId, vocabularyRegistry: EMPTY_REGISTRY, synthKeyByEntityId: {}, bypassAccessFilter: true,
+      logger, worldId: seed.worldId, campaignId: 'camp-1', vocabularyRegistry: EMPTY_REGISTRY, synthKeyByEntityId: {}, bypassAccessFilter: true,
     })
     expect(result.finalizedEvents.filter((e) => e.type === 'edge-removed' || e.type === 'edge-added')).toHaveLength(0)
     expect(await countRelationships(seed.worldId)).toBe(2) // no insert/delete
@@ -552,7 +558,7 @@ describe('runCoherencePassStage', () => {
     const logger = silentLogger()
     const warnSpy = vi.spyOn(logger, 'warn')
     const result = await runCoherencePassStage(repo, {
-      logger, worldId: seed.worldId, vocabularyRegistry: EMPTY_REGISTRY, synthKeyByEntityId: {}, bypassAccessFilter: true,
+      logger, worldId: seed.worldId, campaignId: 'camp-1', vocabularyRegistry: EMPTY_REGISTRY, synthKeyByEntityId: {}, bypassAccessFilter: true,
     })
     expect(result.finalizedEvents.filter((e) => e.type === 'edge-removed' || e.type === 'edge-added')).toHaveLength(0)
     expect(await countRelationships(seed.worldId)).toBe(2)
@@ -589,7 +595,7 @@ describe('runCoherencePassStage', () => {
     const logger = silentLogger()
     const warnSpy = vi.spyOn(logger, 'warn')
     const result = await runCoherencePassStage(repo, {
-      logger, worldId: seed.worldId, vocabularyRegistry: EMPTY_REGISTRY, synthKeyByEntityId: {}, bypassAccessFilter: false,
+      logger, worldId: seed.worldId, campaignId: 'camp-1', vocabularyRegistry: EMPTY_REGISTRY, synthKeyByEntityId: {}, bypassAccessFilter: false,
     })
     expect(await countRelationships(seed.worldId)).toBe(2)
     expect(warnSpy).toHaveBeenCalledWith(
@@ -608,7 +614,7 @@ describe('runCoherencePassStage', () => {
     const logger = silentLogger()
     const warnSpy = vi.spyOn(logger, 'warn')
     await runCoherencePassStage(repo, {
-      logger, worldId: seed.worldId, vocabularyRegistry: EMPTY_REGISTRY, synthKeyByEntityId: {}, bypassAccessFilter: false,
+      logger, worldId: seed.worldId, campaignId: 'camp-1', vocabularyRegistry: EMPTY_REGISTRY, synthKeyByEntityId: {}, bypassAccessFilter: false,
     })
     expect(await countRelationships(seed.worldId)).toBe(2) // no insert
     expect(warnSpy).toHaveBeenCalledWith(
@@ -671,7 +677,7 @@ describe('runCoherencePassStage', () => {
     const logger = silentLogger()
     const warnSpy = vi.spyOn(logger, 'warn')
     await runCoherencePassStage(repo, {
-      logger, worldId: seed.worldId, vocabularyRegistry: EMPTY_REGISTRY, synthKeyByEntityId: {}, bypassAccessFilter: false,
+      logger, worldId: seed.worldId, campaignId: 'camp-1', vocabularyRegistry: EMPTY_REGISTRY, synthKeyByEntityId: {}, bypassAccessFilter: false,
     })
     const count = await pool.query<{ n: string }>(`SELECT COUNT(*)::text AS n FROM facts WHERE entity_id = $1 AND topic = 'history'`, [seed.entityA])
     expect(Number(count.rows[0]?.n)).toBe(1) // no second history fact
@@ -700,7 +706,7 @@ describe('runCoherencePassStage', () => {
     const logger = silentLogger()
     const warnSpy = vi.spyOn(logger, 'warn')
     const result = await runCoherencePassStage(repo, {
-      logger, worldId: seed.worldId, vocabularyRegistry: EMPTY_REGISTRY, synthKeyByEntityId: {}, bypassAccessFilter: false,
+      logger, worldId: seed.worldId, campaignId: 'camp-1', vocabularyRegistry: EMPTY_REGISTRY, synthKeyByEntityId: {}, bypassAccessFilter: false,
     })
     expect(warnSpy).toHaveBeenCalledWith(
       expect.objectContaining({ stage: 'coherence_pass', kind: 'add_fact_by_name' }),
@@ -719,7 +725,7 @@ describe('runCoherencePassStage', () => {
     // relationships (the synth_key column), not from synthKeyByEntityId.
     const logger = silentLogger()
     const result = await runCoherencePassStage(repo, {
-      logger, worldId: seed.worldId, vocabularyRegistry: EMPTY_REGISTRY,
+      logger, worldId: seed.worldId, campaignId: 'camp-1', vocabularyRegistry: EMPTY_REGISTRY,
       synthKeyByEntityId: {
         [seed.entityA]: 'world_and_factions/regions/0',
         [seed.entityB]: 'locations_and_npcs/npcs/0',
@@ -756,7 +762,7 @@ describe('runCoherencePassStage', () => {
     const logger = silentLogger()
     const warnSpy = vi.spyOn(logger, 'warn')
     const result = await runCoherencePassStage(repo, {
-      logger, worldId: seed.worldId, vocabularyRegistry: EMPTY_REGISTRY, synthKeyByEntityId: {}, bypassAccessFilter: false,
+      logger, worldId: seed.worldId, campaignId: 'camp-1', vocabularyRegistry: EMPTY_REGISTRY, synthKeyByEntityId: {}, bypassAccessFilter: false,
     })
     const fact = await pool.query<{ n: string }>(`SELECT COUNT(*)::text AS n FROM facts WHERE id = $1`, [seed.factX])
     expect(Number(fact.rows[0]?.n)).toBe(1) // not deleted

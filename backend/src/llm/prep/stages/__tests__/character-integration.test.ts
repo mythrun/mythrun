@@ -319,6 +319,12 @@ describe('runCharacterIntegrationStage (MYT-54)', () => {
       ownerUserId,
     })
 
+    const integrationCall = mockGenerateText.mock.calls[0]?.[0] as unknown as {
+      providerOptions?: unknown
+    }
+    expect(integrationCall.providerOptions).toMatchObject({
+      mythrun: { stage: 'character_integration', campaignId },
+    })
     expect(result.characterIds).toHaveLength(3)
     expect(result.llmCostUsd).toBeGreaterThan(0)
 

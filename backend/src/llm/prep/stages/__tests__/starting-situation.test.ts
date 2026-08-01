@@ -56,6 +56,7 @@ const HOOKS = {
 
 const baseArgs = {
   worldId: 'wld-1',
+  campaignId: 'camp-1',
   worldName: 'Aelmoor',
   tone: 'misted, melancholy, watchful',
   themes: 'guardianship, secrets',
@@ -110,6 +111,9 @@ describe('runStartingSituationStage', () => {
       string,
       unknown
     >
+    expect(call.providerOptions).toMatchObject({
+      mythrun: { stage: 'starting_situation', worldId: 'wld-1', campaignId: 'camp-1' },
+    })
     const prompt = call.prompt as string
     expect(prompt).toContain('Aelmoor')
     expect(prompt).toContain('misted, melancholy, watchful')

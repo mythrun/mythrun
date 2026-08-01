@@ -41,6 +41,7 @@ const baseInput = {
   breach: 'The keeper cannot have been at the gate — the prose contradicts a core secret.',
   secret: 'SECRET: the keeper is the smuggler the party is hunting and was away that night.',
   recentNarrative: 'The party arrives at the gatehouse after dark, soaked through.',
+  sessionId: 'sess-ret-1',
 }
 
 function structuredError(rawText: string): LlmStructuredOutputError {
@@ -65,7 +66,13 @@ describe('runRetconAuthor', () => {
     expect(r.result).toEqual(okOutput)
     expect(r.repairAttempted).toBe(false)
     expect(r.usage.inputTokens).toBe(120)
-    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    const call = mockGenerateText.mock.calls[0]?.[0] as unknown as {
+      prompt: string
+      providerOptions?: unknown
+    }
+    expect(call.providerOptions).toMatchObject({
+      mythrun: { stage: 'retcon_author', sessionId: 'sess-ret-1' },
+    })
     expect(call.prompt).toContain(baseInput.breach)
     expect(call.prompt).toContain(baseInput.secret)
     expect(call.prompt).toContain(baseInput.prose)

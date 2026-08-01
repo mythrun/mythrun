@@ -39,6 +39,7 @@ function persistedRegistry(repo: ReturnType<typeof makeFakeRepo>): unknown {
 
 const ARGS = {
   worldId: 'w1',
+  campaignId: 'camp-1',
   worldName: 'Veil & Chalk',
   concept: 'A magical world focused on a wizarding academy...',
   tone: 'contemporary coming-of-age drama',
@@ -167,7 +168,13 @@ describe('runVocabularyIntakeStage', () => {
     const repo = makeFakeRepo()
     await runVocabularyIntakeStage(repo as unknown as Repo, ARGS)
 
-    const callOpts = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    const callOpts = mockGenerateText.mock.calls[0]?.[0] as unknown as {
+      prompt: string
+      providerOptions?: unknown
+    }
+    expect(callOpts.providerOptions).toMatchObject({
+      mythrun: { stage: 'vocabulary_intake', worldId: 'w1', campaignId: 'camp-1' },
+    })
     expect(callOpts.prompt).toContain('Veil & Chalk')
     expect(callOpts.prompt).toContain('A magical world focused on a wizarding academy')
     expect(callOpts.prompt).toContain('contemporary coming-of-age drama')

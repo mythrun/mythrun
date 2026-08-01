@@ -73,6 +73,9 @@ export function selectTier(total: number, dc: number): CombatTier {
 
 export interface ResolveCombatDeps {
   readonly worldTone: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun
+   *  only, NEVER the prompt. */
+  readonly sessionId: string
   readonly rng?: Rng
   readonly abortSignal?: AbortSignal
   readonly logger?: { warn: (o: unknown, m: string) => void }
@@ -133,6 +136,7 @@ async function fetchOutcomeTable(
         world_tone: deps.worldTone,
       }),
       callSite: 'ft-combat-outcome',
+      providerOptions: { mythrun: { stage: 'ft_combat_outcome', sessionId: deps.sessionId } },
       repairStrategy: 'haiku-then-sonnet',
       timeoutMs: SKILL_CHECK_TIMEOUT_MS,
       ...(deps.abortSignal !== undefined ? { abortSignal: deps.abortSignal } : {}),

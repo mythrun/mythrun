@@ -63,6 +63,7 @@ async function main(): Promise<void> {
   const t0 = Date.now()
   const { intro, cost } = await generateWorldIntroduction(repo, {
     worldId: WORLD_ID,
+    campaignId: 'myt-zaqxh-intro-smoke',
     worldName: summary.name,
     tone: summary.tone ?? '',
     themes: summary.themes ?? '',

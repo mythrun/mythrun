@@ -92,6 +92,8 @@ function computeCostUsd(usage: { inputTokens: number; outputTokens: number }): n
 export interface CoherencePassArgs {
   readonly logger: Pick<pino.Logger, 'warn' | 'info'>
   readonly worldId: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun only. */
+  readonly campaignId: string
   readonly vocabularyRegistry: VocabularyRegistry
   // Map from real entity/relationship UUID → synthKey assigned by stages
   // 2/3/4. Stage 7's `entity-updated` / `edge-removed` / `edge-added`
@@ -791,6 +793,9 @@ export async function runCoherencePassStage(
     prompt,
     maxRetries: 1,
     callSite: 'coherence-pass',
+    providerOptions: {
+      mythrun: { stage: 'coherence_pass', worldId: args.worldId, campaignId: args.campaignId },
+    },
     schemaName: 'CoherenceOutputSchema',
   })
 

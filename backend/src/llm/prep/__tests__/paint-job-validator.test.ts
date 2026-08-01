@@ -56,6 +56,8 @@ describe('validateAndGenerateConcept', () => {
     const result = await validateAndGenerateConcept({
       basePrompt: 'Generate a world',
       schema: TestSchema,
+      worldId: 'w-pjv-1',
+      campaignId: 'camp-pjv-1',
     })
     expect(result.draft.name).toBe('Aelmoor')
     expect(result.attempts).toBe(1)
@@ -76,17 +78,32 @@ describe('validateAndGenerateConcept', () => {
     mockGenerator({ name: 'Aelmoor', concept: 'a windswept archipelago' })
     mockJudge({ flagged: false, confidence: 0.95 })
 
-    await validateAndGenerateConcept({ basePrompt: 'Generate a world', schema: TestSchema })
+    await validateAndGenerateConcept({
+      basePrompt: 'Generate a world',
+      schema: TestSchema,
+      worldId: 'w-pjv-1',
+      campaignId: 'camp-pjv-1',
+    })
 
     // Calls 0,2,4 are generators; 1,3,5 are judges.
     const genCall = vi.mocked(ai.generateText).mock.calls.at(0)?.[0] as unknown as {
       model: unknown
+      providerOptions?: unknown
     }
     const judgeCall = vi.mocked(ai.generateText).mock.calls.at(1)?.[0] as unknown as {
       model: unknown
+      providerOptions?: unknown
     }
     expect(genCall.model).toBe(OPUS)
     expect(judgeCall.model).toBe(SONNET)
+    // Cost wave 1 §1.0: BOTH legs of the validator (generator + judge) carry
+    // the concept_intake stage + ids — otherwise S-5 misses the intake spend.
+    expect(genCall.providerOptions).toMatchObject({
+      mythrun: { stage: 'concept_intake', worldId: 'w-pjv-1', campaignId: 'camp-pjv-1' },
+    })
+    expect(judgeCall.providerOptions).toMatchObject({
+      mythrun: { stage: 'concept_intake', worldId: 'w-pjv-1', campaignId: 'camp-pjv-1' },
+    })
   })
 
   it('computes costUsd per-tier (Opus generator + Sonnet judge) and sums them', async () => {
@@ -109,6 +126,8 @@ describe('validateAndGenerateConcept', () => {
     const result = await validateAndGenerateConcept({
       basePrompt: 'Generate a world',
       schema: TestSchema,
+      worldId: 'w-pjv-1',
+      campaignId: 'camp-pjv-1',
     })
 
     const expectedCost =
@@ -156,6 +175,8 @@ describe('validateAndGenerateConcept', () => {
     const result = await validateAndGenerateConcept({
       basePrompt: 'Generate a world',
       schema: TestSchema,
+      worldId: 'w-pjv-1',
+      campaignId: 'camp-pjv-1',
     })
 
     const expectedCost =
@@ -195,6 +216,8 @@ describe('validateAndGenerateConcept', () => {
     const result = await validateAndGenerateConcept({
       basePrompt: 'Generate a world',
       schema: TestSchema,
+      worldId: 'w-pjv-1',
+      campaignId: 'camp-pjv-1',
     })
     expect(result.draft.name).toBe('Tidekeep')
     expect(result.attempts).toBe(3)
@@ -235,6 +258,8 @@ describe('validateAndGenerateConcept', () => {
       validateAndGenerateConcept({
         basePrompt: 'Generate a world',
         schema: TestSchema,
+        worldId: 'w-pjv-1',
+        campaignId: 'camp-pjv-1',
       }),
     ).rejects.toThrow(/concept_intake_paint_job_loop_exhausted/)
   })
@@ -256,6 +281,8 @@ describe('validateAndGenerateConcept', () => {
     await validateAndGenerateConcept({
       basePrompt: 'Generate a world',
       schema: TestSchema,
+      worldId: 'w-pjv-1',
+      campaignId: 'camp-pjv-1',
     })
 
     // Second generator call (index 2) prompt should NOT contain the failing draft text.
@@ -311,7 +338,7 @@ describe('validateAndGenerateConcept', () => {
     })
 
     await expect(
-      validateAndGenerateConcept({ basePrompt: 'Generate a world', schema: TestSchema }),
+      validateAndGenerateConcept({ basePrompt: 'Generate a world', schema: TestSchema, worldId: 'w-pjv-1', campaignId: 'camp-pjv-1' }),
     ).rejects.toThrow(/concept_intake_paint_job_loop_exhausted/)
   })
 
@@ -331,6 +358,8 @@ describe('validateAndGenerateConcept', () => {
     const result = await validateAndGenerateConcept({
       basePrompt: 'Generate a world',
       schema: TestSchema,
+      worldId: 'w-pjv-1',
+      campaignId: 'camp-pjv-1',
     })
     expect(result.draft.name).toBe('Saltmarch')
     expect(result.attempts).toBe(1)
@@ -354,6 +383,8 @@ describe('validateAndGenerateConcept', () => {
     const result = await validateAndGenerateConcept({
       basePrompt: 'Generate a world',
       schema: TestSchema,
+      worldId: 'w-pjv-1',
+      campaignId: 'camp-pjv-1',
     })
     expect(result.attempts).toBe(1)
     expect(result.adjacentFranchise).toBe('Harry Potter')
@@ -372,7 +403,7 @@ describe('validateAndGenerateConcept', () => {
     mockGenerator({ name: 'Hollowfen', concept: 'bog-witch fenland with no academy' })
     mockJudge({ flagged: false, confidence: 0.95 })
 
-    await validateAndGenerateConcept({ basePrompt: 'Generate a world', schema: TestSchema })
+    await validateAndGenerateConcept({ basePrompt: 'Generate a world', schema: TestSchema, worldId: 'w-pjv-1', campaignId: 'camp-pjv-1' })
 
     const secondGenCall = vi.mocked(ai.generateText).mock.calls.at(2)?.[0] as unknown as Record<
       string,
@@ -425,6 +456,8 @@ describe('validateAndGenerateConcept', () => {
     const result = await validateAndGenerateConcept({
       basePrompt: 'Generate a world',
       schema: TighterSchema,
+      worldId: 'w-pjv-1',
+      campaignId: 'camp-pjv-1',
     })
 
     expect(result.draft).toEqual({ name: 'RepairedName', concept: 'repaired concept text' })
@@ -444,6 +477,8 @@ describe('validateAndGenerateConcept', () => {
     const result = await validateAndGenerateConcept({
       basePrompt: 'Generate a world',
       schema: TestSchema,
+      worldId: 'w-pjv-1',
+      campaignId: 'camp-pjv-1',
     })
 
     expect(result.draft).toEqual({ name: 'DirectName', concept: 'direct concept' })
@@ -468,6 +503,8 @@ describe('validateAndGenerateConcept', () => {
       validateAndGenerateConcept({
         basePrompt: 'Generate a world',
         schema: TighterSchema,
+        worldId: 'w-pjv-1',
+        campaignId: 'camp-pjv-1',
       }),
     ).rejects.toThrow(/unparseable structured output/)
   })
@@ -483,6 +520,8 @@ describe('validateAndGenerateConcept', () => {
       validateAndGenerateConcept({
         basePrompt: 'Generate a world',
         schema: TestSchema,
+        worldId: 'w-pjv-1',
+        campaignId: 'camp-pjv-1',
       }),
     ).rejects.toThrow(/unparseable structured output/)
   })
@@ -496,6 +535,8 @@ describe('validateAndGenerateConcept', () => {
       validateAndGenerateConcept({
         basePrompt: 'Generate a world',
         schema: TestSchema,
+        worldId: 'w-pjv-1',
+        campaignId: 'camp-pjv-1',
       }),
     ).rejects.toThrow(/unparseable structured output/)
   })
@@ -509,6 +550,8 @@ describe('validateAndGenerateConcept', () => {
       validateAndGenerateConcept({
         basePrompt: 'Generate a world',
         schema: TestSchema,
+        worldId: 'w-pjv-1',
+        campaignId: 'camp-pjv-1',
       }),
     ).rejects.toThrow(/rate limited/)
     expect(vi.mocked(ai.generateText)).toHaveBeenCalledTimes(1)

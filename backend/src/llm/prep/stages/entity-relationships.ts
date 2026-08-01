@@ -367,7 +367,13 @@ export async function runEntityRelationshipsStage(
     callSite: 'entity-relationships',
     schemaName: 'EntityRelationshipsSchema',
     repairStrategy: 'haiku-then-sonnet',
-    providerOptions: { mythrun: { stage: 'entity_relationships' } },
+    providerOptions: {
+      mythrun: {
+        stage: 'entity_relationships',
+        worldId: args.worldId,
+        campaignId: args.campaignId,
+      },
+    },
   })
 
   await runStreamingStage<unknown>(stream.partialObjectStream, {

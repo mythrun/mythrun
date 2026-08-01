@@ -48,6 +48,7 @@ const baseInput = {
   secrets: '[SECRET-1]: the innkeeper is the exiled prince in hiding.',
   publicContext: 'The Rusty Anchor is a dockside inn. The innkeeper is watchful and taciturn.',
   sessionId: 'sess-trip-1',
+  campaignId: 'camp-trip-1',
 }
 
 function structuredError(rawText: string): LlmStructuredOutputError {
@@ -78,7 +79,7 @@ describe('runSecretTripwire', () => {
       providerOptions?: unknown
     }
     expect(call.providerOptions).toMatchObject({
-      mythrun: { stage: 'secret_tripwire', sessionId: 'sess-trip-1' },
+      mythrun: { stage: 'secret_tripwire', sessionId: 'sess-trip-1', campaignId: 'camp-trip-1' },
     })
     expect(call.prompt).toContain(
       'The innkeeper slides a tankard across the bar and eyes the door.',
@@ -149,6 +150,15 @@ describe('runSecretTripwire', () => {
     expect(r.result).toEqual(cleanOutput)
     // Primary (rejected) + one repair call.
     expect(mockGenerateText).toHaveBeenCalledTimes(2)
+    // Cost wave 1 §1.0: the repair call preserves the caller's ids — the
+    // repair-path providerOptions override swaps ONLY the stage (to a
+    // world-gen label the extractor drops-and-flags), never the ids.
+    const repairCall = mockGenerateText.mock.calls[1]?.[0] as unknown as {
+      providerOptions?: unknown
+    }
+    expect(repairCall.providerOptions).toMatchObject({
+      mythrun: { sessionId: 'sess-trip-1', campaignId: 'camp-trip-1' },
+    })
   })
 
   it('redactRawText: true — secret never reaches diagnostic or the WARN log on terminal failure', async () => {

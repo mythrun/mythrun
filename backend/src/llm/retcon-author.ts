@@ -31,6 +31,9 @@ export interface RetconAuthorInput {
   readonly secret: string
   /** Recent narration so the correction flows from what was just said. */
   readonly recentNarrative: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun
+   *  only, NEVER the prompt. */
+  readonly sessionId: string
   readonly abortSignal?: AbortSignal
 }
 
@@ -52,6 +55,7 @@ export async function runRetconAuthor(input: RetconAuthorInput): Promise<RetconA
       recentNarrative: input.recentNarrative,
     }),
     callSite: 'retcon-author',
+    providerOptions: { mythrun: { stage: 'retcon_author', sessionId: input.sessionId } },
     repairStrategy: 'haiku-then-sonnet',
     timeoutMs: SCRIBE_RETCON_TIMEOUT_MS,
     maxOutputTokens: SCRIBE_RETCON_MAX_OUTPUT_TOKENS,

@@ -57,6 +57,7 @@ describe('runConceptIntakeStage', () => {
     const repo = makeFakeRepo()
     const result = await runConceptIntakeStage(repo as unknown as Repo, {
       worldId: 'wld-1',
+      campaignId: 'camp-1',
       conceptText: 'lighthouse-keepers tending storm spirits',
       intentSummary: null,
       acceptedTitle: null,
@@ -120,6 +121,7 @@ describe('runConceptIntakeStage', () => {
     const repo = makeFakeRepo()
     await runConceptIntakeStage(repo as unknown as Repo, {
       worldId: 'wld-1',
+      campaignId: 'camp-1',
       conceptText: 'turtle city',
       intentSummary: null,
       acceptedTitle: 'The Delta of Three Turtles',
@@ -156,6 +158,7 @@ describe('runConceptIntakeStage', () => {
     const repo = makeFakeRepo()
     await runConceptIntakeStage(repo as unknown as Repo, {
       worldId: 'wld-1',
+      campaignId: 'camp-1',
       conceptText: 'turtle city',
       intentSummary: null,
       acceptedTitle: null,
@@ -184,6 +187,7 @@ describe('runConceptIntakeStage', () => {
     const repo = makeFakeRepo()
     await runConceptIntakeStage(repo as unknown as Repo, {
       worldId: 'wld-3',
+      campaignId: 'camp-1',
       conceptText: 'lighthouse-keepers tending storm spirits',
       intentSummary: null,
       acceptedTitle: null,
@@ -212,6 +216,7 @@ describe('runConceptIntakeStage', () => {
     const repo = makeFakeRepo()
     await runConceptIntakeStage(repo as unknown as Repo, {
       worldId: 'wld-2',
+      campaignId: 'camp-1',
       conceptText: 'storm-pact world',
       intentSummary: {
         aesthetics: ['salt-stained', 'lantern-lit'],

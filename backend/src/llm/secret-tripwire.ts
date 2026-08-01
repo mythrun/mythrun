@@ -54,6 +54,10 @@ export interface SecretTripwireInput {
    *  scribe leg AND the prep engine's opening vet); a prep-context line
    *  without sessionId is correct behavior. */
   readonly sessionId?: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — the PREP leg's attribution:
+   *  session-prep's opening vet has no session yet, but does have a campaign.
+   *  Rides providerOptions.mythrun only, NEVER the prompt. */
+  readonly campaignId?: string
   readonly abortSignal?: AbortSignal
 }
 
@@ -76,7 +80,13 @@ export async function runSecretTripwire(input: SecretTripwireInput): Promise<Sec
       diceOutcomes: input.diceOutcomes ?? '(none this turn)',
     }),
     callSite: 'secret-tripwire',
-    providerOptions: { mythrun: { stage: 'secret_tripwire', sessionId: input.sessionId } },
+    providerOptions: {
+      mythrun: {
+        stage: 'secret_tripwire',
+        sessionId: input.sessionId,
+        campaignId: input.campaignId,
+      },
+    },
     repairStrategy: 'haiku-then-sonnet',
     timeoutMs: SCRIBE_TRIPWIRE_TIMEOUT_MS,
     redactRawText: true,

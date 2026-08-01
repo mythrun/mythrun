@@ -228,6 +228,13 @@ describe('runEntityRelationshipsStage', () => {
       keyPrefix: 'test:',
     })
 
+    const streamCall = vi.mocked(ai.streamObject).mock.calls[0]?.[0] as unknown as {
+      providerOptions?: unknown
+    }
+    expect(streamCall.providerOptions).toMatchObject({
+      mythrun: { stage: 'entity_relationships', worldId: 'wld-1', campaignId: 'cmp-1' },
+    })
+
     // deleteByWorld called BEFORE insertMany (retry idempotency, design §D9)
     const deleteOrder = repo.relationships.deleteByWorld.mock.invocationCallOrder[0]
     const insertOrder = repo.relationships.insertMany.mock.invocationCallOrder[0]

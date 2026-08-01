@@ -94,6 +94,10 @@ export interface ValidateAndGenerateArgs<TDraft> {
   // logs (myth-t1qz). Defaults to 'WorldConceptDraft' when the caller
   // doesn't supply one.
   readonly schemaName?: string
+  /** Cost-harness scope ids (cost wave 1 §1.0) — ride providerOptions.mythrun
+   *  on BOTH legs (generator + judge) only, never the prompts. */
+  readonly worldId: string
+  readonly campaignId: string
 }
 
 // `totalUsage` is normalized to the SDK's canonical names
@@ -143,6 +147,9 @@ export async function validateAndGenerateConcept<TDraft>(
       prompt,
       maxRetries: 1,
       callSite: 'paint-job-validator/generator',
+      providerOptions: {
+        mythrun: { stage: 'concept_intake', worldId: args.worldId, campaignId: args.campaignId },
+      },
       schemaName: generatorSchemaName,
       repairStrategy: 'sonnet',
     })
@@ -156,6 +163,9 @@ export async function validateAndGenerateConcept<TDraft>(
       prompt: JUDGE_TEMPLATE.replace('{{draft}}', () => JSON.stringify(genResult.output, null, 2)),
       maxRetries: 3,
       callSite: 'paint-job-validator/judge',
+      providerOptions: {
+        mythrun: { stage: 'concept_intake', worldId: args.worldId, campaignId: args.campaignId },
+      },
       schemaName: 'PaintJobJudgementSchema',
     })
     judgeUsage = addUsage(judgeUsage, judgeResult.usage)

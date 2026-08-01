@@ -129,6 +129,9 @@ export async function runCharacterConceptStage(
     schema: CharacterConceptOutputSchema,
     schemaName: 'CharacterConceptOutputSchema',
     callSite: 'character-concept',
+    providerOptions: {
+      mythrun: { stage: 'character_concept', worldId: args.worldId, campaignId: args.campaignId },
+    },
     prompt,
     maxRetries: 3,
   })

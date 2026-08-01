@@ -43,6 +43,7 @@ const TABLES = {
 
 const baseArgs = {
   worldId: 'wld-1',
+  campaignId: 'camp-1',
   worldName: 'Aelmoor',
   tone: 'misted, melancholy',
   themes: 'guardianship, secrets',
@@ -141,6 +142,9 @@ describe('runRandomTablesStage', () => {
       string,
       unknown
     >
+    expect(call.providerOptions).toMatchObject({
+      mythrun: { stage: 'random_tables', worldId: 'wld-1', campaignId: 'camp-1' },
+    })
     const prompt = call.prompt as string
     expect(prompt).toContain('Aelmoor')
     expect(prompt).toContain('a lantern-age')

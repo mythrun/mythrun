@@ -96,6 +96,7 @@ export async function runBackfill(deps: BackfillDeps, args: Args): Promise<void>
     }
     const cost = await runWorldColorStage(deps.repo, {
       worldId: world.id,
+      campaignId: 'world-color-backfill',
       worldName: world.name,
       concept: world.concept,
       tone: world.tone ?? '',

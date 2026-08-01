@@ -144,6 +144,9 @@ export async function runCharacterSheetStage(
         schema: CharacterSheetOutputSchema,
         schemaName: 'CharacterSheetOutputSchema',
         callSite: 'character-sheet',
+        providerOptions: {
+          mythrun: { stage: 'character_sheet', worldId: args.worldId, campaignId: args.campaignId },
+        },
         prompt,
         maxRetries: 3,
       })

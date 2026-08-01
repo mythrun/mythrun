@@ -38,6 +38,8 @@ const WorldConceptSchema = z.object({
 
 export interface ConceptIntakeArgs {
   readonly worldId: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun only. */
+  readonly campaignId: string
   readonly conceptText: string
   readonly intentSummary: SynthesizerOutput['intentSummary'] | null
   /** The title the player already accepted on the preview screen (guided arm),
@@ -81,6 +83,8 @@ export async function runConceptIntakeStage(
     basePrompt: prompt,
     schema: WorldConceptSchema,
     schemaName: 'WorldConceptSchema',
+    worldId: args.worldId,
+    campaignId: args.campaignId,
   })
 
   // Persist in a short transaction (LLM call is already done — the

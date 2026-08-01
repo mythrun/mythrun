@@ -195,6 +195,12 @@ describe('runEntityConsolidationStage', () => {
 
     const result = await runEntityConsolidationStage(repo as unknown as Repo, args)
 
+    const consolidationCall = vi.mocked(ai.generateText).mock.calls[0]?.[0] as unknown as {
+      providerOptions?: unknown
+    }
+    expect(consolidationCall.providerOptions).toMatchObject({
+      mythrun: { stage: 'entity_consolidation', worldId: 'wld-1', campaignId: 'cmp-1' },
+    })
     // Ghost persisted with the correct created_in marker + name.
     expect(repo.entities.insert).toHaveBeenCalledTimes(1)
     const insertCall = repo.entities.insert.mock.calls[0]?.[0] as {

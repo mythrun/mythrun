@@ -39,6 +39,8 @@ const PROMPT_TEMPLATE = resolveIncludes(
 
 export interface WorldIntroductionArgs {
   readonly worldId: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun only. */
+  readonly campaignId: string
   readonly worldName: string
   readonly tone: string
   readonly themes: string
@@ -106,7 +108,9 @@ export async function generateWorldIntroduction(
     maxRetries: 0,
     callSite: 'world-introduction',
     repairStrategy: 'haiku-then-sonnet',
-    providerOptions: { mythrun: { stage: 'world_introduction' } },
+    providerOptions: {
+      mythrun: { stage: 'world_introduction', worldId: args.worldId, campaignId: args.campaignId },
+    },
   })
 
   // 3. Resolve the LLM's reference NAMES → real {entityId, name}; DROP dangling

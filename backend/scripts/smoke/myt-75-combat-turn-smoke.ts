@@ -584,7 +584,7 @@ async function runConstructedApply(
     { name: 'cutthroat', description: 'a road-worn bandit with a shortbow', count: 3 },
   ]
   // REAL Haiku outcome table + REAL d20.
-  const outcome = await resolveCombat({ worldTone: WORLD_TONE }, enemies, partyLedger.map((c) => ({
+  const outcome = await resolveCombat({ worldTone: WORLD_TONE, sessionId: 'myt-75-combat-turn-smoke' }, enemies, partyLedger.map((c) => ({
     level: c.level,
     hp: c.hitPoints,
     maxHp: c.maxHitPoints,

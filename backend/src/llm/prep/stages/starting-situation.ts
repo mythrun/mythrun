@@ -53,6 +53,8 @@ type LocationHook = z.infer<typeof locationHookSchema>
 // "(stage not implemented yet)" — see the prompt's header comment.
 export interface StartingSituationArgs {
   readonly worldId: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun only. */
+  readonly campaignId: string
   readonly worldName: string
   readonly tone: string
   readonly themes: string
@@ -92,6 +94,9 @@ export async function runStartingSituationStage(
     prompt,
     maxRetries: 3,
     callSite: 'starting-situation',
+    providerOptions: {
+      mythrun: { stage: 'starting_situation', worldId: args.worldId, campaignId: args.campaignId },
+    },
     schemaName: 'StartingSituationsSchema',
   })
   /* c8 ignore next 2 */
@@ -112,6 +117,13 @@ export async function runStartingSituationStage(
       prompt: retryPrompt,
       maxRetries: 3,
       callSite: 'starting-situation',
+      providerOptions: {
+        mythrun: {
+          stage: 'starting_situation',
+          worldId: args.worldId,
+          campaignId: args.campaignId,
+        },
+      },
       schemaName: 'StartingSituationsSchema',
     })
     /* c8 ignore next 2 */

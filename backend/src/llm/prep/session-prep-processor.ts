@@ -214,7 +214,7 @@ export async function processSessionPrepJob(
     // §6 — deterministically append the verbatim voice / atmosphere excerpts to
     // ft_context AFTER generation. NEVER paraphrased through the prep LLM.
     const ftContext = result.ft_context + buildReturningVoicesSection(priorSessionContext.latestHandoff)
-    const tripwire = await vetOpening(result.opening, result.sd_playbook, ftContext)
+    const tripwire = await vetOpening(result.opening, result.sd_playbook, ftContext, campaignId)
     await repo.sessionPreps.insert({
       campaignId,
       sessionNumber,
@@ -395,14 +395,18 @@ async function vetOpening(
   opening: string,
   sdPlaybook: string,
   ftContext: string,
+  campaignId: string,
 ): Promise<Awaited<ReturnType<typeof runSecretTripwire>>> {
   // The opening is the FIRST player-facing prose, so its grounding floor is the
   // very briefing (ft_context) it was generated alongside — a detail the opening
   // shares with the briefing is public, not a leak (myth-retprop).
+  // No sessionId: this is the PREP leg (the session doesn't exist yet);
+  // campaignId is the cost-harness attribution (cost wave 1 §1.0).
   const tripwire = await runSecretTripwire({
     prose: opening,
     secrets: sdPlaybook,
     publicContext: ftContext,
+    campaignId,
   })
   if (tripwire.result.severity !== 'none') {
     throw new Error(

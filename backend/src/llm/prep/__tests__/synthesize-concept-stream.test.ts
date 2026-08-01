@@ -87,6 +87,10 @@ describe('streamSynthesizeConcept', () => {
     expect(deltas).toEqual(['A tide', 'bound archive', '-city.'])
     expect(deltas.join('')).toBe(FINAL.concept)
     await expect(stream.output).resolves.toEqual(FINAL)
+    const streamCallOpts = mockStreamObject.mock.calls[0]?.[0] as unknown as {
+      providerOptions?: unknown
+    }
+    expect(streamCallOpts.providerOptions).toMatchObject({ mythrun: { stage: 'concept_intake' } })
   })
 
   it('skips non-growing / non-string concept partials without emitting', async () => {

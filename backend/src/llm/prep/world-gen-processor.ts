@@ -501,6 +501,7 @@ async function dispatchStage(
       // stage names the world itself.
       acceptedTitle: ctx.world.name === 'Untitled' ? null : ctx.world.name,
       worldId: ctx.world.id,
+      campaignId,
       conceptText: ctx.world.concept,
       intentSummary: null,
     })
@@ -513,6 +514,7 @@ async function dispatchStage(
      * coverage of this arg-marshaling comes from the live-LLM E2E smoke. */
     const cost = await runWorldColorStage(repo, {
       worldId: ctx.world.id,
+      campaignId,
       worldName: ctx.world.name,
       concept: ctx.world.concept,
       tone: ctx.world.tone ?? '',
@@ -531,6 +533,7 @@ async function dispatchStage(
      * feedback_dev_tool_e2e_smoke_required. */
     const cost = await runVocabularyIntakeStage(repo, {
       worldId: ctx.world.id,
+      campaignId,
       worldName: ctx.world.name,
       concept: ctx.world.concept,
       tone: ctx.world.tone ?? '',
@@ -609,6 +612,7 @@ async function dispatchStage(
     // world's public framing here.
     const cost = await runWorldIntroductionStage(repo, {
       worldId: ctx.world.id,
+      campaignId,
       worldName: ctx.world.name,
       tone: ctx.world.tone ?? '',
       themes: ctx.world.themes ?? '',
@@ -651,6 +655,7 @@ async function dispatchStage(
     const stage6Inputs = await loadStartingSituationInputs(deps.pool, ctx.world.id)
     const cost = await runStartingSituationStage(repo, {
       worldId: ctx.world.id,
+      campaignId,
       worldName: ctx.world.name,
       tone: ctx.world.tone ?? '',
       themes: ctx.world.themes ?? '',
@@ -666,6 +671,7 @@ async function dispatchStage(
   if (stage === 'random_tables') {
     const cost = await runRandomTablesStage(repo, {
       worldId: ctx.world.id,
+      campaignId,
       worldName: ctx.world.name,
       tone: ctx.world.tone ?? '',
       themes: ctx.world.themes ?? '',
@@ -687,6 +693,7 @@ async function dispatchStage(
     return runCoherencePassStage(repo, {
       logger: deps.logger,
       worldId: ctx.world.id,
+      campaignId,
       vocabularyRegistry: ctx.world.vocabularyRegistry,
       synthKeyByEntityId: {},
       // myth-exac T18: thread the per-world dev-bypass flag through coherence

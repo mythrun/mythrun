@@ -430,6 +430,7 @@ async function runInvitationCase(pool: Pool): Promise<void> {
     const t0 = Date.now()
     const cost = await runStartingSituationStage(repo, {
       worldId: WORLD_ID,
+      campaignId: 'myt-90-character-smoke',
       worldName: ctx.name,
       tone: ctx.tone ?? '',
       themes: ctx.themes ?? '',

@@ -94,6 +94,9 @@ async function runSynthesis(prompt: string, callSite: string): Promise<Synthesiz
     prompt,
     maxRetries: 3,
     callSite,
+    // Cost-harness stage label (cost wave 1 §1.0). Concept synthesis runs at
+    // preview time, BEFORE any campaign/world exists — stage-only is correct.
+    providerOptions: { mythrun: { stage: 'concept_intake' } },
     schemaName: 'SynthesizerOutput',
   })
   return { ...result.output, usage: result.usage }
@@ -188,6 +191,9 @@ function runSynthesisStream(
     prompt,
     maxRetries: 3,
     callSite,
+    // Cost-harness stage label (cost wave 1 §1.0). Same pre-campaign posture
+    // as runSynthesis: stage-only is correct.
+    providerOptions: { mythrun: { stage: 'concept_intake' } },
     schemaName: 'SynthesizerOutput',
     timeoutMs: STREAM_TIMEOUT_MS,
     ...(opts?.abortSignal !== undefined ? { abortSignal: opts.abortSignal } : {}),

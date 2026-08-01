@@ -56,6 +56,7 @@ describe('reviseConcept', () => {
     >
     expect(callArgs.prompt).toContain('a drowned city of black canals')
     expect(callArgs.prompt).toContain('less water, more forgetting')
+    expect(callArgs.providerOptions).toMatchObject({ mythrun: { stage: 'concept_intake' } })
     // myth-z3icr: the prior TITLE is in the prompt too — a revision cannot keep
     // a name it was never shown.
     expect(callArgs.prompt).toContain('The Black Canals')

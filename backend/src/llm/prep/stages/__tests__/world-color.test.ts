@@ -51,6 +51,7 @@ function persistedPair(repo: ReturnType<typeof makeColorRepo>): unknown {
 
 const ARGS = {
   worldId: 'w1',
+  campaignId: 'camp-1',
   worldName: 'The Salt Verses',
   concept: 'A drowned coast where tide-priests barter memory for safe passage.',
   tone: 'melancholy, hushed',
@@ -100,8 +101,14 @@ describe('runWorldColorStage', () => {
     const repo = makeColorRepo()
     await runWorldColorStage(repo as unknown as Repo, ARGS)
 
-    const first = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
+    const first = mockGenerateText.mock.calls[0]?.[0] as unknown as {
+      prompt: string
+      providerOptions?: unknown
+    }
     const second = mockGenerateText.mock.calls[1]?.[0] as unknown as { prompt: string }
+    expect(first.providerOptions).toMatchObject({
+      mythrun: { stage: 'world_color', worldId: 'w1', campaignId: 'camp-1' },
+    })
     // The first attempt has no rejection feedback; the re-roll lists the
     // rejected pair verbatim so the model avoids repeating it.
     expect(first.prompt).not.toContain('from=sienna-200, to=ochre-400')

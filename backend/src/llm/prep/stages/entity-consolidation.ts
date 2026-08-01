@@ -173,7 +173,13 @@ export async function runEntityConsolidationStage(
     maxRetries: 0,
     callSite: 'entity-consolidation',
     repairStrategy: 'haiku-then-sonnet',
-    providerOptions: { mythrun: { stage: 'entity_consolidation' } },
+    providerOptions: {
+      mythrun: {
+        stage: 'entity_consolidation',
+        worldId: args.worldId,
+        campaignId: args.campaignId,
+      },
+    },
   })
   const validatedTree: EntityConsolidationOutput = result.output
 

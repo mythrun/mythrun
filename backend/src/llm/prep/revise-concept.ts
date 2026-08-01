@@ -49,6 +49,9 @@ export async function reviseConcept(
     prompt: buildPrompt(prior, changeNote),
     maxRetries: 3,
     callSite: 'revise-concept',
+    // Cost-harness stage label (cost wave 1 §1.0). Rework runs at preview
+    // time, same pre-campaign posture as synthesize-concept: stage-only.
+    providerOptions: { mythrun: { stage: 'concept_intake' } },
     schemaName: 'SynthesizerOutput',
   })
   return SynthesizerOutput.parse(result.output)
