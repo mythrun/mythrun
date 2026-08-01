@@ -43,6 +43,7 @@ describe('runStNarrativeProgress', () => {
       sdPlaybook: 'SECRET-PLAYBOOK',
       runningSummary: 'SUMMARY',
       recentExchanges: 'EXCHANGES',
+      sessionId: 'sess-prog-1',
     })
 
     expect(r.result).toEqual({ basis: 'two of three goals landed', progress: 0.6 })
@@ -54,7 +55,7 @@ describe('runStNarrativeProgress', () => {
     expect(call.prompt).toContain('SUMMARY')
     expect(call.prompt).toContain('EXCHANGES')
     expect(call.providerOptions).toMatchObject({
-      mythrun: { stage: 'st_narrative_progress' },
+      mythrun: { stage: 'st_narrative_progress', sessionId: 'sess-prog-1' },
     })
   })
 
@@ -69,6 +70,7 @@ describe('runStNarrativeProgress', () => {
       sdPlaybook: 'p',
       runningSummary: '',
       recentExchanges: 'e',
+      sessionId: 'sess-prog-1',
     })
 
     expect(r.usage.inputTokens).toBe(11)
@@ -81,7 +83,12 @@ describe('runStNarrativeProgress', () => {
       usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
     } as never)
 
-    await runStNarrativeProgress({ sdPlaybook: 'p', runningSummary: '', recentExchanges: 'e' })
+    await runStNarrativeProgress({
+      sdPlaybook: 'p',
+      runningSummary: '',
+      recentExchanges: 'e',
+      sessionId: 'sess-prog-1',
+    })
 
     const call = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
     // The measured axis is the PREP'S ARC, not the scene and not the budget.

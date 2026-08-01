@@ -37,6 +37,9 @@ export interface StLookupVetInput {
   readonly resolverDegraded: boolean
   readonly sdPlaybook: string
   readonly worldTone: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun
+   *  only, NEVER the prompt. */
+  readonly sessionId: string
   readonly abortSignal?: AbortSignal
 }
 
@@ -62,7 +65,7 @@ export async function runStLookupVet(input: StLookupVetInput): Promise<StLookupV
       world_tone: input.worldTone,
     }),
     callSite: 'st-lookup-vet',
-    providerOptions: { mythrun: { stage: 'st_lookup_vet' } },
+    providerOptions: { mythrun: { stage: 'st_lookup_vet', sessionId: input.sessionId } },
     repairStrategy: 'haiku-then-sonnet',
     timeoutMs: ST_LOOKUP_VET_TIMEOUT_MS,
     maxOutputTokens: ST_LOOKUP_VET_MAX_OUTPUT_TOKENS,

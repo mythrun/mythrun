@@ -57,6 +57,9 @@ export interface AuditedFastThinkerDeps {
   readonly inner: FastThinker
   /** The injected audit classifier (production: `auditTurn`; tests: a stub). */
   readonly audit: TurnAuditFn
+  /** Cost-harness scope id (cost wave 1 §1.0) — threaded into the audit
+   *  input's providerOptions.mythrun only, NEVER the serialized prompt. */
+  readonly sessionId: string
   /** The config gate. `false` short-circuits the audit entirely — attempt 1 is
    *  returned with no audit call. The worker threads `TURN_AUDIT_ENABLED`. */
   readonly enabled: boolean
@@ -149,6 +152,7 @@ export class BufferingTurnEmitter implements TurnEmitter {
 export class AuditedFastThinker implements FastThinker {
   private readonly inner: FastThinker
   private readonly audit: TurnAuditFn
+  private readonly sessionId: string
   private readonly enabled: boolean
   private readonly logger: AuditLogger | undefined
   private readonly onFailOpen: ((audit: { class: TurnAuditClass }) => void) | undefined
@@ -159,6 +163,7 @@ export class AuditedFastThinker implements FastThinker {
   constructor(deps: AuditedFastThinkerDeps) {
     this.inner = deps.inner
     this.audit = deps.audit
+    this.sessionId = deps.sessionId
     this.enabled = deps.enabled
     this.logger = deps.logger
     this.onFailOpen = deps.onFailOpen
@@ -190,7 +195,7 @@ export class AuditedFastThinker implements FastThinker {
     }
 
     const batch = extractBatch(ctx.ftHistory)
-    const firstAudit = await this.classify(buildInput(ctx, first, batch), 'attempt-1')
+    const firstAudit = await this.classify(buildInput(ctx, first, batch, this.sessionId), 'attempt-1')
     // Audit call failed, or the narration is clean → keep attempt 1.
     if (firstAudit === null || firstAudit.class === 'clean') {
       await releaseFirst()
@@ -223,7 +228,7 @@ export class AuditedFastThinker implements FastThinker {
     // prose; the worker's whole-turn-replace push repairs the live client).
     const retryBuffer = buffered ? new BufferingTurnEmitter() : null
     const retry = await this.inner.render({ ...ctx, correctiveInstruction }, retryBuffer ?? this.retryEmitter)
-    const retryAudit = await this.classify(buildInput(ctx, retry, batch), 'retry')
+    const retryAudit = await this.classify(buildInput(ctx, retry, batch, this.sessionId), 'retry')
     if (retryAudit !== null && retryAudit.class === 'clean') {
       this.logger?.info?.(
         { event: 'ft_turn_audit_corrected', originalClass: firstAudit.class },
@@ -349,12 +354,18 @@ function extractBatch(history: readonly ConversationMessage[]): Batch {
 }
 
 /** Assemble the public audit input from the context + the rendered assistant. */
-function buildInput(ctx: FtTurnContext, assistant: AssistantMessage, batch: Batch): TurnAuditInput {
+function buildInput(
+  ctx: FtTurnContext,
+  assistant: AssistantMessage,
+  batch: Batch,
+  sessionId: string,
+): TurnAuditInput {
   return {
     narration: joinNarration(assistant),
     submittingMessage: batch.message,
     roster: ctx.participants,
     actingCharacters: batch.acting,
+    sessionId,
   }
 }
 

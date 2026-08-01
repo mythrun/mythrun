@@ -208,6 +208,7 @@ export async function processStEvalJob(
         // running summary (which carries the whole session) plus a look at
         // where the table is standing right now.
         recentExchanges: formatExchanges(history, ST_GATE_EXCHANGE_WINDOW),
+        sessionId,
       })
     : NO_CONVERGE
   usageToWrite += probe.tokens
@@ -221,6 +222,7 @@ export async function processStEvalJob(
         sdPlaybook,
         runningSummary: summary,
         recentExchanges: formatExchanges(history, ST_GATE_EXCHANGE_WINDOW),
+        sessionId,
       })
       usageToWrite += usageTokens(gate.usage)
       const skip = !gate.result.needed && gate.result.confidence >= ST_GATE_CONFIDENCE_FLOOR
@@ -267,6 +269,7 @@ export async function processStEvalJob(
       // it should start aiming the session at a resting point, and it phrases
       // that as craft (the direction the FT eventually reads carries no reason).
       converge: probe.converge,
+      sessionId,
     })
   } catch (err) {
     // Terminal eval failure → no direction this cycle (BullMQ retry handles

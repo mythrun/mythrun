@@ -42,6 +42,7 @@ const INPUT: TurnAuditInput = {
   submittingMessage: 'Junie: I ask Venn where Coss would go next.',
   roster: ['Tally', 'Junie', 'Venn'],
   actingCharacters: ['Junie'],
+  sessionId: 'sess-audit-1',
 }
 
 describe('auditTurn', () => {
@@ -79,7 +80,9 @@ describe('auditTurn', () => {
       providerOptions?: unknown
     }
     expect(callOpts.model).toBe(TURN_AUDIT_MODEL)
-    expect(callOpts.providerOptions).toMatchObject({ mythrun: { stage: 'turn_audit' } })
+    expect(callOpts.providerOptions).toMatchObject({
+      mythrun: { stage: 'turn_audit', sessionId: 'sess-audit-1' },
+    })
     expect(callOpts.output).toBeDefined()
     // The narration, submitting message, and roster all land in the prompt.
     expect(callOpts.prompt).toContain('What\'s in the hold, Trask?')
@@ -96,7 +99,12 @@ describe('auditTurn', () => {
       usage: HAIKU_USAGE,
     } as never)
 
-    await auditTurn({ narration: 'The lantern gutters and dies.', submittingMessage: '', roster: ['Tally'] })
+    await auditTurn({
+      narration: 'The lantern gutters and dies.',
+      submittingMessage: '',
+      roster: ['Tally'],
+      sessionId: 'sess-audit-1',
+    })
 
     const callOpts = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
     expect(callOpts.prompt).toContain('player-less turn')
@@ -111,7 +119,12 @@ describe('auditTurn', () => {
       usage: HAIKU_USAGE,
     } as never)
 
-    await auditTurn({ narration: 'The hall stands empty.', submittingMessage: 'x', roster: [] })
+    await auditTurn({
+      narration: 'The hall stands empty.',
+      submittingMessage: 'x',
+      roster: [],
+      sessionId: 'sess-audit-1',
+    })
 
     const callOpts = mockGenerateText.mock.calls[0]?.[0] as unknown as { prompt: string }
     expect(callOpts.prompt).toContain('Party roster: (none)')

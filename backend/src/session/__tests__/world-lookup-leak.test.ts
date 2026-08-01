@@ -153,7 +153,7 @@ function spyVet(
 
 function makeDeps(vet: WorldFactLookupVet, overrides: Partial<WorldFactLookupDeps> = {}): WorldFactLookupDeps {
   return {
-    gateDeps: { worldTone: 'grim and rain-soaked' },
+    gateDeps: { worldTone: 'grim and rain-soaked', sessionId: 'session-1' },
     vet,
     worldTone: 'grim and rain-soaked',
     ...overrides,
@@ -401,6 +401,7 @@ describe('MYT-72 T10a — enforced-ignorance leak matrix', () => {
         resolverDegraded: false,
         sdPlaybook: `SECRET PLAYBOOK: ${SECRET}`,
         worldTone: 'grim and rain-soaked',
+        sessionId: 'session-1',
       })
     } catch (err) {
       caught = err
@@ -520,7 +521,9 @@ describe('MYT-72 T10a — enforced-ignorance leak matrix', () => {
 
     // Force a low roll (3 + History +5 = 8 < 25 → fail) via injected rng.
     const result = await runWorldFactLookup(
-      makeDeps(vet, { gateDeps: { worldTone: 'grim and rain-soaked', rng: () => 3 } }),
+      makeDeps(vet, {
+        gateDeps: { worldTone: 'grim and rain-soaked', sessionId: 'session-1', rng: () => 3 },
+      }),
       baseInput(resolve),
     )
 

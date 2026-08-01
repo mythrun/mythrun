@@ -47,6 +47,7 @@ const baseInput = {
   prose: 'The innkeeper slides a tankard across the bar and eyes the door.',
   secrets: '[SECRET-1]: the innkeeper is the exiled prince in hiding.',
   publicContext: 'The Rusty Anchor is a dockside inn. The innkeeper is watchful and taciturn.',
+  sessionId: 'sess-trip-1',
 }
 
 function structuredError(rawText: string): LlmStructuredOutputError {
@@ -76,7 +77,9 @@ describe('runSecretTripwire', () => {
       prompt: string
       providerOptions?: unknown
     }
-    expect(call.providerOptions).toMatchObject({ mythrun: { stage: 'secret_tripwire' } })
+    expect(call.providerOptions).toMatchObject({
+      mythrun: { stage: 'secret_tripwire', sessionId: 'sess-trip-1' },
+    })
     expect(call.prompt).toContain(
       'The innkeeper slides a tankard across the bar and eyes the door.',
     )

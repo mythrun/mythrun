@@ -46,6 +46,9 @@ export interface ConvergeProbeContext {
   readonly sdPlaybook: string
   readonly runningSummary: string
   readonly recentExchanges: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — threaded into the progress
+   *  call's providerOptions.mythrun only, NEVER the prompt. */
+  readonly sessionId: string
 }
 
 /**
@@ -68,6 +71,7 @@ export async function probeConvergence(
       sdPlaybook: ctx.sdPlaybook,
       runningSummary: ctx.runningSummary,
       recentExchanges: ctx.recentExchanges,
+      sessionId: ctx.sessionId,
     })
     const converge = isConverging(mechanical, probe.result.progress)
     deps.logger.info(

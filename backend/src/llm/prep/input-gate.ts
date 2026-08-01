@@ -56,6 +56,11 @@ export interface InputGateArgs {
   /** External cancellation (e.g. the SSE client disconnected) — combined with
    *  the call timeout inside generateObject. Absent = timeout-only, unchanged. */
   readonly abortSignal?: AbortSignal
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun
+   *  only, NEVER the prompt. OPTIONAL: the gate's current callers are all
+   *  prep/campaign-creation routes; a prep-context line without sessionId is
+   *  correct behavior. Session-context callers thread it. */
+  readonly sessionId?: string
 }
 
 const PRIMARY_THRESHOLD = 0.85
@@ -79,7 +84,7 @@ export async function runInputGate(args: InputGateArgs): Promise<InputGateVerdic
     prompt,
     maxRetries: 3,
     callSite: 'input-gate',
-    providerOptions: { mythrun: { stage: 'input_gate' } },
+    providerOptions: { mythrun: { stage: 'input_gate', sessionId: args.sessionId } },
     schemaName: 'InputGateSchema',
     // exactOptionalPropertyTypes: only pass the key when a signal exists.
     ...(args.abortSignal !== undefined ? { abortSignal: args.abortSignal } : {}),

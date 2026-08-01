@@ -404,6 +404,7 @@ export async function processScribeJob(
       publicContext: ftContext,
       consistencyContext: split.consistency,
       diceOutcomes: formatDiceOutcomes(job.data.skillChecks ?? []),
+      sessionId: job.data.sessionId,
     })
   } catch (err) {
     deps.logger.warn({ err, campaignId }, 'scribe: tripwire failed; no breach check this turn')

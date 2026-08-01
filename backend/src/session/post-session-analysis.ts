@@ -170,6 +170,7 @@ export async function processPostSessionAnalysisJob(
     sdPlaybook,
     participants: participants.map((p) => p.name).join(', '),
     closingNarration: farewell.join('\n\n'),
+    sessionId,
   })
 
   // 4. Verify the handoff's verbatim excerpts against the transcript; drop any

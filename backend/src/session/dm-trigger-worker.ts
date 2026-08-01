@@ -164,7 +164,7 @@ export async function processDmTriggerJob(
 
   // 3. Decide (in order). Each branch resolves to a TriggerDecision (open a turn)
   //    or a re-arm (auto sit-back). The enqueue-with-drain-guard is step 4.
-  const decision = await decide(deps, { campaignId, batch, sinceLastActivity })
+  const decision = await decide(deps, { campaignId, sessionId: session.id, batch, sinceLastActivity })
   if (decision === null) return
 
   // 4. Drain guard + enqueue. If a turn is in flight, do NOT enqueue — the
@@ -201,9 +201,14 @@ export async function processDmTriggerJob(
  *  auto sit-back branch re-arms the debounce here before returning null). */
 async function decide(
   deps: DmTriggerProcessorDeps,
-  args: { campaignId: string; batch: readonly TriggerMessage[]; sinceLastActivity: number },
+  args: {
+    campaignId: string
+    sessionId: string
+    batch: readonly TriggerMessage[]
+    sinceLastActivity: number
+  },
 ): Promise<{ trigger: TriggerDecision; reason: string } | null> {
-  const { campaignId, batch, sinceLastActivity } = args
+  const { campaignId, sessionId, batch, sinceLastActivity } = args
 
   // Dead-air ceiling — total silence ≥ DEAD_AIR_MS forces a proactive step-in,
   // skipping the classifier. The non-empty batch (step 2) is the no-monologue
@@ -239,6 +244,7 @@ async function decide(
     turnsSinceLastDmBeat: batch.length,
     secondsSinceLastDmBeat: Math.floor(sinceLastActivity / 1000),
     sceneGrounding: grounding,
+    sessionId,
   })
 
   if (c.shouldRespond) {

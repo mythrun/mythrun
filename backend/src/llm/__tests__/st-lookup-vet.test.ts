@@ -44,6 +44,7 @@ const baseInput = {
   resolverDegraded: false,
   sdPlaybook: 'SECRET: the duke financed the rebuild to hide a smuggling tunnel.',
   worldTone: 'weathered river-town realism',
+  sessionId: 'sess-vet-1',
 }
 
 function structuredError(rawText: string): LlmStructuredOutputError {
@@ -72,7 +73,9 @@ describe('runStLookupVet', () => {
       prompt: string
       providerOptions?: unknown
     }
-    expect(call.providerOptions).toMatchObject({ mythrun: { stage: 'st_lookup_vet' } })
+    expect(call.providerOptions).toMatchObject({
+      mythrun: { stage: 'st_lookup_vet', sessionId: 'sess-vet-1' },
+    })
     expect(call.prompt).toContain('What do I remember about the old bridge?')
     expect(call.prompt).toContain('TIER known: the bridge was rebuilt two winters ago.')
     expect(call.prompt).toContain('weathered river-town realism')

@@ -99,6 +99,9 @@ export type WorldLookupGateResolution =
 
 export interface WorldLookupGateDeps {
   readonly worldTone: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun
+   *  only, NEVER the prompt. */
+  readonly sessionId: string
   readonly rng?: Rng
   readonly abortSignal?: AbortSignal
   readonly logger?: { warn: (o: Record<string, unknown>, m: string) => void }
@@ -201,7 +204,7 @@ async function fetchGateTable(
         topic: input.topic,
       }),
       callSite: 'world-lookup-gate',
-      providerOptions: { mythrun: { stage: 'world_lookup_gate' } },
+      providerOptions: { mythrun: { stage: 'world_lookup_gate', sessionId: deps.sessionId } },
       repairStrategy: 'haiku-then-sonnet',
       timeoutMs: WORLD_LOOKUP_GATE_TIMEOUT_MS,
       ...(deps.abortSignal !== undefined ? { abortSignal: deps.abortSignal } : {}),

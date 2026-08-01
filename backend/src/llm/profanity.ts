@@ -20,7 +20,14 @@ import { loadPrompt } from './prompts.js'
  * Routes through the canonical `generateObject` wrapper (myth-t1qz):
  * schema-repair fallback + structured diagnostic logging on failure.
  */
-export async function classifyProfanity(text: string): Promise<ProfanityResult> {
+export async function classifyProfanity(
+  text: string,
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun
+   *  only, NEVER the prompt. OPTIONAL: the classifier's current callers are all
+   *  auth/user routes; a non-session line without sessionId is correct
+   *  behavior. Session-context callers thread it. */
+  opts?: { readonly sessionId?: string },
+): Promise<ProfanityResult> {
   const result = await generateObject({
     model: HAIKU,
     schema: ProfanitySchema,
@@ -28,7 +35,7 @@ export async function classifyProfanity(text: string): Promise<ProfanityResult> 
     prompt: text,
     maxRetries: 3,
     callSite: 'username-profanity-classifier',
-    providerOptions: { mythrun: { stage: 'profanity_gate' } },
+    providerOptions: { mythrun: { stage: 'profanity_gate', sessionId: opts?.sessionId } },
     schemaName: 'ProfanitySchema',
   })
   return result.output

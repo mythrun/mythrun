@@ -22,6 +22,9 @@ export interface StGateInput {
   readonly sdPlaybook: string
   readonly runningSummary: string
   readonly recentExchanges: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun
+   *  only, NEVER the prompt. */
+  readonly sessionId: string
 }
 
 export interface StGateOutput {
@@ -40,7 +43,7 @@ export async function runStGate(input: StGateInput): Promise<StGateOutput> {
       recent_exchanges: input.recentExchanges,
     }),
     callSite: 'st-gate',
-    providerOptions: { mythrun: { stage: 'st_gate' } },
+    providerOptions: { mythrun: { stage: 'st_gate', sessionId: input.sessionId } },
     repairStrategy: 'haiku-then-sonnet',
     timeoutMs: ST_GATE_TIMEOUT_MS,
   })

@@ -71,6 +71,7 @@ function scriptedRng(...values: number[]): Rng {
 function makeDeps(overrides: Partial<WorldLookupGateDeps> = {}): WorldLookupGateDeps {
   return {
     worldTone: 'grim and rain-soaked',
+    sessionId: 'session-1',
     ...overrides,
   }
 }
@@ -273,7 +274,9 @@ describe('resolveWorldLookupGate', () => {
       abortSignal: AbortSignal
       providerOptions?: unknown
     }
-    expect(callOpts.providerOptions).toMatchObject({ mythrun: { stage: 'world_lookup_gate' } })
+    expect(callOpts.providerOptions).toMatchObject({
+      mythrun: { stage: 'world_lookup_gate', sessionId: 'session-1' },
+    })
     expect(callOpts.prompt).toContain('Vire, head archivist of the Ashen Council')
     expect(callOpts.prompt).toContain('the Ashen Council')
     expect(callOpts.prompt).toContain('dm') // channel

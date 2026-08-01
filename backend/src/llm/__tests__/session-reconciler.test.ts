@@ -58,6 +58,7 @@ const baseInput = {
   workingSet: '[WS-1] the cellar smuggler (tier: secret) — improvised this session.',
   candidates: '[CAND-1] Brann (npc, id=ent-abc) — live fact f-1: "loyal to the guild".',
   worldTone: 'grim and rain-soaked',
+  sessionId: 'sess-rec-1',
 }
 
 function structuredError(rawText: string): LlmStructuredOutputError {
@@ -78,7 +79,12 @@ describe('runSessionReconciler', () => {
       usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
     } as never)
 
-    const r = await runSessionReconciler({ workingSet: 'WS', candidates: 'C', worldTone: 'grim' })
+    const r = await runSessionReconciler({
+      workingSet: 'WS',
+      candidates: 'C',
+      worldTone: 'grim',
+      sessionId: 'sess-rec-1',
+    })
 
     expect(r.result).toEqual({ entities: [], facts: [], relationships: [] })
     expect(r.repairAttempted).toBe(false)
@@ -99,7 +105,9 @@ describe('runSessionReconciler', () => {
       prompt: string
       providerOptions?: unknown
     }
-    expect(call.providerOptions).toMatchObject({ mythrun: { stage: 'session_reconcile' } })
+    expect(call.providerOptions).toMatchObject({
+      mythrun: { stage: 'session_reconcile', sessionId: 'sess-rec-1' },
+    })
     expect(call.prompt).toContain(baseInput.workingSet)
     expect(call.prompt).toContain(baseInput.candidates)
     expect(call.prompt).toContain(baseInput.worldTone)

@@ -34,6 +34,9 @@ export interface PostSessionAnalysisInput {
    *  when the session had no farewell; the `{{closingNarration}}` slot then
    *  renders empty. */
   readonly closingNarration?: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun
+   *  only, NEVER the prompt. */
+  readonly sessionId: string
   readonly abortSignal?: AbortSignal
 }
 
@@ -58,7 +61,7 @@ export async function runPostSessionAnalysis(
       closingNarration: input.closingNarration ?? '',
     }),
     callSite: 'post-session-analysis',
-    providerOptions: { mythrun: { stage: 'post_session_analysis' } },
+    providerOptions: { mythrun: { stage: 'post_session_analysis', sessionId: input.sessionId } },
     repairStrategy: 'sonnet',
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     maxOutputTokens: ANALYSIS_MAX_OUTPUT_TOKENS,

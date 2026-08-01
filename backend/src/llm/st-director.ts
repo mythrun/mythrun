@@ -43,6 +43,9 @@ export interface StDirectorInput {
    *  direction. Mutually exclusive with `windDown` by construction — the
    *  worker never probes for convergence once wind-down is active. */
   readonly converge: boolean
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun
+   *  only, NEVER the prompt. */
+  readonly sessionId: string
 }
 
 export interface StDirectorOutput {
@@ -68,7 +71,7 @@ export async function runStDirector(input: StDirectorInput): Promise<StDirectorO
       summary_target_words: String(ST_SUMMARY_TARGET_WORDS),
     }),
     callSite: 'st-director',
-    providerOptions: { mythrun: { stage: 'st_eval' } },
+    providerOptions: { mythrun: { stage: 'st_eval', sessionId: input.sessionId } },
     repairStrategy: 'haiku-then-sonnet',
     timeoutMs: ST_EVAL_TIMEOUT_MS,
     maxOutputTokens: ST_EVAL_MAX_OUTPUT_TOKENS,

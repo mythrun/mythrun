@@ -49,6 +49,11 @@ export interface SecretTripwireInput {
    *  matched) is definitionally NOT a breach. Public by construction. Optional;
    *  absent renders as an empty block. */
   readonly diceOutcomes?: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun
+   *  only, NEVER the prompt. OPTIONAL: the tripwire is dual-context (per-turn
+   *  scribe leg AND the prep engine's opening vet); a prep-context line
+   *  without sessionId is correct behavior. */
+  readonly sessionId?: string
   readonly abortSignal?: AbortSignal
 }
 
@@ -71,7 +76,7 @@ export async function runSecretTripwire(input: SecretTripwireInput): Promise<Sec
       diceOutcomes: input.diceOutcomes ?? '(none this turn)',
     }),
     callSite: 'secret-tripwire',
-    providerOptions: { mythrun: { stage: 'secret_tripwire' } },
+    providerOptions: { mythrun: { stage: 'secret_tripwire', sessionId: input.sessionId } },
     repairStrategy: 'haiku-then-sonnet',
     timeoutMs: SCRIBE_TRIPWIRE_TIMEOUT_MS,
     redactRawText: true,

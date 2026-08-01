@@ -59,6 +59,9 @@ export interface TurnAuditInput {
    *  "whose declared intent the DM may execute". Optional — absent on a
    *  player-less turn. */
   readonly actingCharacters?: readonly string[]
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun
+   *  only, NEVER the serialized prompt. */
+  readonly sessionId: string
 }
 
 /** The injected shape the decorator calls; production binds it to `auditTurn`,
@@ -103,7 +106,7 @@ export async function auditTurn(input: TurnAuditInput): Promise<TurnAuditResult>
     repairStrategy: 'haiku-then-sonnet',
     timeoutMs: TURN_AUDIT_TIMEOUT_MS,
     callSite: 'ft-turn-audit',
-    providerOptions: { mythrun: { stage: 'turn_audit' } },
+    providerOptions: { mythrun: { stage: 'turn_audit', sessionId: input.sessionId } },
   })
   return result.output
 }

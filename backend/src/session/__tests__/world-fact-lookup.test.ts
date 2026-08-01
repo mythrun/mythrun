@@ -82,7 +82,7 @@ function makeResolved(overrides: Partial<ResolverResult> = {}): ResolverResult {
 
 function makeDeps(overrides: Partial<WorldFactLookupDeps> = {}): WorldFactLookupDeps {
   return {
-    gateDeps: { worldTone: 'grim and rain-soaked' },
+    gateDeps: { worldTone: 'grim and rain-soaked', sessionId: 'session-1' },
     vet: makeVet({ mode: 'relay', text: 'VET RELAY', repairAttempted: false }),
     worldTone: 'grim and rain-soaked',
     ...overrides,

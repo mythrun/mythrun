@@ -524,6 +524,7 @@ async function runLookup(
   const gate = buildGateInput(deps.worldTone, args.topic, askerSummary, asker)
   const gateDeps: WorldLookupGateDeps = {
     worldTone: deps.worldTone,
+    sessionId: deps.sessionId,
     ...(rng !== undefined ? { rng } : {}),
     ...(abortSignal !== undefined ? { abortSignal } : {}),
     ...(deps.logger !== undefined ? { logger: deps.logger } : {}),

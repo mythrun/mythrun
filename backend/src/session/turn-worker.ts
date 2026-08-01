@@ -1330,6 +1330,7 @@ export function buildSessionTurnWorker(
             logger,
           }),
           audit: auditTurn,
+          sessionId,
           enabled: TURN_AUDIT_ENABLED,
           logger,
           // myth-aiiao — arm the processor's whole-turn-replace push when the

@@ -81,7 +81,7 @@ describe('AuditedFastThinker', () => {
   it('(c) clean narration → no retry and exactly one audit call', async () => {
     const { ft, renderMock } = makeInner([textAssistant('The ferry rocks against the pilings.')])
     const audit = vi.fn<TurnAuditFn>().mockResolvedValue(CLEAN)
-    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true })
+    const gate = new AuditedFastThinker({ inner: ft, audit, sessionId: 'sess-aft-1', enabled: true })
 
     const result = await gate.render(CTX, NOOP_EMITTER)
 
@@ -93,7 +93,7 @@ describe('AuditedFastThinker', () => {
   it('(d) gate disabled by config → no audit call, no retry', async () => {
     const { ft, renderMock } = makeInner([textAssistant('Tally says nothing.')])
     const audit = vi.fn<TurnAuditFn>().mockResolvedValue(CLEAN)
-    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: false })
+    const gate = new AuditedFastThinker({ inner: ft, audit, sessionId: 'sess-aft-1', enabled: false })
 
     await gate.render(CTX, NOOP_EMITTER)
 
@@ -110,7 +110,7 @@ describe('AuditedFastThinker', () => {
       .fn<TurnAuditFn>()
       .mockResolvedValueOnce(PC_VIOLATION) // attempt 1
       .mockResolvedValueOnce(CLEAN) // retry
-    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true })
+    const gate = new AuditedFastThinker({ inner: ft, audit, sessionId: 'sess-aft-1', enabled: true })
 
     const result = await gate.render(CTX, NOOP_EMITTER)
 
@@ -135,7 +135,7 @@ describe('AuditedFastThinker', () => {
       captured.push(input)
       return Promise.resolve(PC_VIOLATION)
     })
-    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true })
+    const gate = new AuditedFastThinker({ inner: ft, audit, sessionId: 'sess-aft-1', enabled: true })
 
     await gate.render(CTX, NOOP_EMITTER)
 
@@ -155,6 +155,7 @@ describe('AuditedFastThinker', () => {
     const gate = new AuditedFastThinker({
       inner: ft,
       audit,
+      sessionId: 'sess-aft-1',
       enabled: true,
       logger: { warn },
       onFailOpen,
@@ -178,7 +179,7 @@ describe('AuditedFastThinker', () => {
     const audit = vi.fn<TurnAuditFn>().mockResolvedValue(PC_VIOLATION)
     const warn = vi.fn()
     const onFailOpen = vi.fn()
-    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true, logger: { warn }, onFailOpen })
+    const gate = new AuditedFastThinker({ inner: ft, audit, sessionId: 'sess-aft-1', enabled: true, logger: { warn }, onFailOpen })
 
     const result = await gate.render(CTX, NOOP_EMITTER)
 
@@ -196,7 +197,7 @@ describe('AuditedFastThinker', () => {
     const { ft, renderMock } = makeInner([textAssistant('the world answers')])
     const audit = vi.fn<TurnAuditFn>().mockRejectedValue(new Error('haiku 529'))
     const warn = vi.fn()
-    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true, logger: { warn } })
+    const gate = new AuditedFastThinker({ inner: ft, audit, sessionId: 'sess-aft-1', enabled: true, logger: { warn } })
 
     const result = await gate.render(CTX, NOOP_EMITTER)
 
@@ -222,7 +223,7 @@ describe('AuditedFastThinker', () => {
       .mockRejectedValueOnce(new Error('retry audit 529')) // retry audit itself fails
     const warn = vi.fn()
     const onFailOpen = vi.fn()
-    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true, logger: { warn }, onFailOpen })
+    const gate = new AuditedFastThinker({ inner: ft, audit, sessionId: 'sess-aft-1', enabled: true, logger: { warn }, onFailOpen })
 
     const result = await gate.render(CTX, NOOP_EMITTER)
 
@@ -243,7 +244,7 @@ describe('AuditedFastThinker', () => {
     const { ft, renderMock } = makeInner([textAssistant('the world answers')])
     const audit = vi.fn<TurnAuditFn>().mockRejectedValue('haiku string failure') // a non-Error throw
     const warn = vi.fn()
-    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true, logger: { warn } })
+    const gate = new AuditedFastThinker({ inner: ft, audit, sessionId: 'sess-aft-1', enabled: true, logger: { warn } })
 
     const result = await gate.render(CTX, NOOP_EMITTER)
 
@@ -273,7 +274,7 @@ describe('AuditedFastThinker', () => {
       captured.push(input)
       return Promise.resolve(CLEAN)
     })
-    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true })
+    const gate = new AuditedFastThinker({ inner: ft, audit, sessionId: 'sess-aft-1', enabled: true })
 
     await gate.render(ctxWithPriorDm, NOOP_EMITTER)
 
@@ -291,7 +292,7 @@ describe('AuditedFastThinker', () => {
       captured.push(input)
       return Promise.resolve(CLEAN)
     })
-    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true })
+    const gate = new AuditedFastThinker({ inner: ft, audit, sessionId: 'sess-aft-1', enabled: true })
 
     await gate.render(ctxNameless, NOOP_EMITTER)
 
@@ -341,7 +342,7 @@ describe('AuditedFastThinker', () => {
     }
     // attempt 1 violates (no tool → retryable); retry comes back clean.
     const audit = vi.fn<TurnAuditFn>().mockResolvedValueOnce(PC_VIOLATION).mockResolvedValueOnce(CLEAN)
-    const gate = new AuditedFastThinker({ inner, audit, enabled: true })
+    const gate = new AuditedFastThinker({ inner, audit, sessionId: 'sess-aft-1', enabled: true })
 
     const result = await gate.render(CTX, NOOP_EMITTER)
 
@@ -373,7 +374,7 @@ describe('AuditedFastThinker', () => {
       .mockResolvedValueOnce({ class: 'inline_meta_correction', confidence: 0.9, reason: 'inline fix' })
       .mockResolvedValueOnce(CLEAN)
     const info = vi.fn()
-    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true, logger: { warn: vi.fn(), info } })
+    const gate = new AuditedFastThinker({ inner: ft, audit, sessionId: 'sess-aft-1', enabled: true, logger: { warn: vi.fn(), info } })
 
     await gate.render(CTX, NOOP_EMITTER)
 
@@ -394,7 +395,7 @@ describe('AuditedFastThinker', () => {
       .fn<TurnAuditFn>()
       .mockResolvedValueOnce({ class: 'fake_session_end', confidence: 0.9, reason: 'fake end' })
       .mockResolvedValueOnce(CLEAN)
-    const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true })
+    const gate = new AuditedFastThinker({ inner: ft, audit, sessionId: 'sess-aft-1', enabled: true })
 
     await gate.render(CTX, NOOP_EMITTER)
 
@@ -409,7 +410,7 @@ describe('AuditedFastThinker', () => {
       const audit = vi.fn<TurnAuditFn>().mockResolvedValue(CLEAN)
       const onProseGuard = vi.fn()
       const warn = vi.fn()
-      const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true, onProseGuard, logger: { warn } })
+      const gate = new AuditedFastThinker({ inner: ft, audit, sessionId: 'sess-aft-1', enabled: true, onProseGuard, logger: { warn } })
 
       const result = await gate.render(CTX, NOOP_EMITTER)
 
@@ -430,7 +431,7 @@ describe('AuditedFastThinker', () => {
       const { ft } = makeInner([textAssistant('opened *but never closed and it.You fused')])
       const audit = vi.fn<TurnAuditFn>().mockResolvedValue(CLEAN)
       const onProseGuard = vi.fn()
-      const gate = new AuditedFastThinker({ inner: ft, audit, enabled: false, onProseGuard })
+      const gate = new AuditedFastThinker({ inner: ft, audit, sessionId: 'sess-aft-1', enabled: false, onProseGuard })
 
       await gate.render(CTX, NOOP_EMITTER)
 
@@ -444,7 +445,7 @@ describe('AuditedFastThinker', () => {
       const { ft } = makeInner([textAssistant('The ferry rocks against the pilings.')])
       const audit = vi.fn<TurnAuditFn>().mockResolvedValue(CLEAN)
       const onProseGuard = vi.fn()
-      const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true, onProseGuard })
+      const gate = new AuditedFastThinker({ inner: ft, audit, sessionId: 'sess-aft-1', enabled: true, onProseGuard })
 
       await gate.render(CTX, NOOP_EMITTER)
 
@@ -465,7 +466,7 @@ describe('AuditedFastThinker', () => {
         .mockResolvedValueOnce(PC_VIOLATION)
         .mockResolvedValueOnce(CLEAN)
       const onCorrected = vi.fn()
-      const gate = new AuditedFastThinker({ inner: ft, audit, enabled: true, onCorrected })
+      const gate = new AuditedFastThinker({ inner: ft, audit, sessionId: 'sess-aft-1', enabled: true, onCorrected })
 
       const result = await gate.render(CTX, NOOP_EMITTER)
 
@@ -481,6 +482,7 @@ describe('AuditedFastThinker', () => {
       await new AuditedFastThinker({
         inner: cleanInner.ft,
         audit: cleanAudit,
+        sessionId: 'sess-aft-1',
         enabled: true,
         onCorrected,
       }).render(CTX, NOOP_EMITTER)
@@ -490,6 +492,7 @@ describe('AuditedFastThinker', () => {
       await new AuditedFastThinker({
         inner: failInner.ft,
         audit: failAudit,
+        sessionId: 'sess-aft-1',
         enabled: true,
         onCorrected,
       }).render(CTX, NOOP_EMITTER)
@@ -563,7 +566,7 @@ describe('AuditedFastThinker', () => {
         .mockResolvedValueOnce(PC_VIOLATION)
         .mockResolvedValueOnce(CLEAN)
       const { emitter, ops } = recordingEmitter()
-      const gate = new AuditedFastThinker({ inner, audit, enabled: true })
+      const gate = new AuditedFastThinker({ inner, audit, sessionId: 'sess-aft-1', enabled: true })
 
       const result = await gate.render(PLAYERLESS_CTX, emitter)
 
@@ -584,7 +587,7 @@ describe('AuditedFastThinker', () => {
       ])
       const audit = vi.fn<TurnAuditFn>().mockResolvedValue(CLEAN)
       const { emitter, ops } = recordingEmitter()
-      const gate = new AuditedFastThinker({ inner, audit, enabled: true })
+      const gate = new AuditedFastThinker({ inner, audit, sessionId: 'sess-aft-1', enabled: true })
 
       await gate.render(PLAYERLESS_CTX, emitter)
 
@@ -628,7 +631,7 @@ describe('AuditedFastThinker', () => {
       ])
       const audit = vi.fn<TurnAuditFn>().mockResolvedValue(CLEAN)
       const { emitter, ops } = recordingEmitter()
-      const gate = new AuditedFastThinker({ inner, audit, enabled: true })
+      const gate = new AuditedFastThinker({ inner, audit, sessionId: 'sess-aft-1', enabled: true })
 
       await gate.render(PLAYERLESS_CTX, emitter)
 
@@ -661,7 +664,7 @@ describe('AuditedFastThinker', () => {
       const audit = vi.fn<TurnAuditFn>().mockResolvedValue(PC_VIOLATION)
       const { emitter, ops } = recordingEmitter()
       const onFailOpen = vi.fn()
-      const gate = new AuditedFastThinker({ inner, audit, enabled: true, onFailOpen })
+      const gate = new AuditedFastThinker({ inner, audit, sessionId: 'sess-aft-1', enabled: true, onFailOpen })
 
       const result = await gate.render(PLAYERLESS_CTX, emitter)
 
@@ -681,7 +684,7 @@ describe('AuditedFastThinker', () => {
       ])
       const audit = vi.fn<TurnAuditFn>().mockResolvedValue(PC_VIOLATION)
       const { emitter, ops } = recordingEmitter()
-      const gate = new AuditedFastThinker({ inner, audit, enabled: true })
+      const gate = new AuditedFastThinker({ inner, audit, sessionId: 'sess-aft-1', enabled: true })
 
       const result = await gate.render(PLAYERLESS_CTX, emitter)
 
@@ -711,7 +714,7 @@ describe('AuditedFastThinker', () => {
         .mockResolvedValueOnce(PC_VIOLATION)
         .mockResolvedValueOnce(CLEAN)
       const { emitter, ops } = recordingEmitter()
-      const gate = new AuditedFastThinker({ inner, audit, enabled: true })
+      const gate = new AuditedFastThinker({ inner, audit, sessionId: 'sess-aft-1', enabled: true })
 
       const result = await gate.render(CTX, emitter) // no playerlessTurn flag
 

@@ -150,7 +150,11 @@ function makeAskerCharacter(): Character {
 /** The REAL Opus ST-vet, with the secret playbook captured inside (exactly the
  *  enforced-ignorance closure shape buildLookupDeps wires in production). */
 const realVet: WorldFactLookupVet = async (vetInput) => {
-  const r = await runStLookupVet({ ...vetInput, sdPlaybook: SD_PLAYBOOK })
+  const r = await runStLookupVet({
+    ...vetInput,
+    sdPlaybook: SD_PLAYBOOK,
+    sessionId: 'world-lookup-vet-smoke',
+  })
   return {
     mode: r.result.mode,
     text: r.result.text,
@@ -163,7 +167,12 @@ const realVet: WorldFactLookupVet = async (vetInput) => {
 // Opus vet runs on EVERY scenario — the path this smoke exists to exercise. The
 // gate-FAIL path (where resolve+vet are skipped) is covered deterministically by
 // the leak matrix; here we want the real vet to gate a real over-pull every time.
-const gateDeps: WorldLookupGateDeps = { worldTone: WORLD_TONE, logger, rng: () => 20 }
+const gateDeps: WorldLookupGateDeps = {
+  worldTone: WORLD_TONE,
+  sessionId: 'world-lookup-vet-smoke',
+  logger,
+  rng: () => 20,
+}
 
 /** Drive one full lookup (real gate → real resolve → real Opus vet → relay) and
  *  assert NO secret token reaches the relay or the skill-gate frame. */

@@ -56,6 +56,7 @@ describe('runStDirector', () => {
       recentExchanges: 'EX',
       windDown: false,
       converge: false,
+      sessionId: 'sess-st-1',
     })
     expect(r.result).toEqual(okOutput)
     expect(r.repairAttempted).toBe(false)
@@ -66,7 +67,9 @@ describe('runStDirector', () => {
     }
     expect(call.prompt).toContain('SECRET')
     expect(call.prompt).toContain('Arin (Rogue)')
-    expect(call.providerOptions).toMatchObject({ mythrun: { stage: 'st_eval' } })
+    expect(call.providerOptions).toMatchObject({
+      mythrun: { stage: 'st_eval', sessionId: 'sess-st-1' },
+    })
   })
 
   it('surfaces repairAttempted=true (the worker discards on this)', async () => {
@@ -89,6 +92,7 @@ describe('runStDirector', () => {
       currentStandingDirective: 'NONE',
       pendingOneShot: 'NONE',
       recentExchanges: 'e',
+      sessionId: 'sess-st-1',
       windDown: false,
       converge: false,
     })
@@ -111,6 +115,7 @@ describe('runStDirector', () => {
       currentStandingDirective: 'NONE',
       pendingOneShot: 'NONE',
       recentExchanges: 'e',
+      sessionId: 'sess-st-1',
       windDown: true,
       converge: false,
     })
@@ -130,6 +135,7 @@ describe('runStDirector', () => {
       currentStandingDirective: 'NONE',
       pendingOneShot: 'NONE',
       recentExchanges: 'e',
+      sessionId: 'sess-st-1',
       windDown: false,
       converge: false,
     })
@@ -161,6 +167,7 @@ describe('runStDirector — convergence steer', () => {
     currentStandingDirective: 'NONE',
     pendingOneShot: 'NONE',
     recentExchanges: 'e',
+    sessionId: 'sess-st-1',
   } as const
 
   it('injects the convergence instruction only when converge is true', async () => {

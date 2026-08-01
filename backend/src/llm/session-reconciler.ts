@@ -40,6 +40,9 @@ export interface SessionReconcilerInput {
    *  they never entered the working set). Optional — '' when the session had no
    *  farewell; the `{{closingNarration}}` slot then renders empty. */
   readonly closingNarration?: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun
+   *  only, NEVER the prompt. */
+  readonly sessionId: string
   readonly abortSignal?: AbortSignal
 }
 
@@ -63,7 +66,7 @@ export async function runSessionReconciler(
       closingNarration: input.closingNarration ?? '',
     }),
     callSite: 'session-reconciler',
-    providerOptions: { mythrun: { stage: 'session_reconcile' } },
+    providerOptions: { mythrun: { stage: 'session_reconcile', sessionId: input.sessionId } },
     repairStrategy: 'sonnet',
     timeoutMs: RECONCILE_TIMEOUT_MS,
     maxOutputTokens: RECONCILE_MAX_OUTPUT_TOKENS,

@@ -46,6 +46,9 @@ export interface DmTriggerContext {
   readonly secondsSinceLastDmBeat: number
   /** Optional one-line grounding of the current scene, or null. */
   readonly sceneGrounding: string | null
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun
+   *  only, NEVER the serialized prompt. */
+  readonly sessionId: string
 }
 
 /**
@@ -113,7 +116,7 @@ export async function classifyDmTrigger(
     repairStrategy: 'haiku-then-sonnet',
     timeoutMs: HAIKU_CLASSIFY_TIMEOUT_MS,
     callSite: 'dm-trigger-classifier',
-    providerOptions: { mythrun: { stage: 'dm_trigger' } },
+    providerOptions: { mythrun: { stage: 'dm_trigger', sessionId: ctx.sessionId } },
   })
 
   return result.output

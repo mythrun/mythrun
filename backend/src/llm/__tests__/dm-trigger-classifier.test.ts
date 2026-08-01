@@ -46,6 +46,7 @@ const NON_EMPTY_CTX: DmTriggerContext = {
   turnsSinceLastDmBeat: 2,
   secondsSinceLastDmBeat: 45,
   sceneGrounding: 'The Gilded Sparrow tavern, late evening.',
+  sessionId: 'sess-dm-1',
 }
 
 describe('classifyDmTrigger', () => {
@@ -56,6 +57,7 @@ describe('classifyDmTrigger', () => {
   it('short-circuits on an empty batch without calling the LLM', async () => {
     const ctx: DmTriggerContext = {
       messages: [],
+      sessionId: 'sess-dm-1',
       lastDmOutput: null,
       turnsSinceLastDmBeat: 0,
       secondsSinceLastDmBeat: 0,
@@ -105,7 +107,9 @@ describe('classifyDmTrigger', () => {
     }
     // The wrapper forwards the model + an Output.object wrapper to the SDK.
     expect(callOpts.model).toBe(HAIKU)
-    expect(callOpts.providerOptions).toMatchObject({ mythrun: { stage: 'dm_trigger' } })
+    expect(callOpts.providerOptions).toMatchObject({
+      mythrun: { stage: 'dm_trigger', sessionId: 'sess-dm-1' },
+    })
     expect(callOpts.output).toBeDefined()
     // The serialized context (public fields only) lands in the prompt.
     expect(callOpts.prompt).toContain('Vire')
@@ -128,6 +132,7 @@ describe('classifyDmTrigger', () => {
 
     await classifyDmTrigger({
       messages: [{ characterName: 'Wren', text: 'I look around the room.' }],
+      sessionId: 'sess-dm-1',
       lastDmOutput: null,
       turnsSinceLastDmBeat: 0,
       secondsSinceLastDmBeat: 0,

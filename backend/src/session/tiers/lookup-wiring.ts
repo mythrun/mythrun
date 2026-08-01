@@ -141,7 +141,7 @@ export function buildLookupDeps(deps: LookupWiringDeps, args: LookupWiringArgs):
     const prep =
       sessionNumber > 0 ? await lookupVetRepo.sessionPreps.getBy(campaignId, sessionNumber) : null
     const sdPlaybook = prep?.sdPlaybook ?? '' // the secret is captured HERE, never escapes
-    const r = await runStLookupVet({ ...vetInput, sdPlaybook })
+    const r = await runStLookupVet({ ...vetInput, sdPlaybook, sessionId })
     // tier is surfaced out (MYT-73) so recordInjection can stamp the working-set
     // fact with the ST's access level; text/mode stay the vet's authoritative prose.
     return {

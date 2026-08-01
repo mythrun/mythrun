@@ -92,10 +92,11 @@ const args: LookupWiringArgs = {
   workingSet,
 }
 
-/** A vet input minus sdPlaybook (the shape the orchestrator hands the closure). */
-function vetInput(over?: Partial<Omit<StLookupVetInput, 'sdPlaybook'>>): Omit<
+/** A vet input minus sdPlaybook + sessionId (the shape the orchestrator hands
+ *  the closure — the wiring adds both). */
+function vetInput(over?: Partial<Omit<StLookupVetInput, 'sdPlaybook' | 'sessionId'>>): Omit<
   StLookupVetInput,
-  'sdPlaybook'
+  'sdPlaybook' | 'sessionId'
 > {
   return {
     question: 'Who runs the docks?',

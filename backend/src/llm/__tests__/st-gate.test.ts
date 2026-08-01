@@ -38,6 +38,7 @@ describe('runStGate', () => {
       sdPlaybook: 'SECRET-PLAYBOOK',
       runningSummary: 'SUMMARY',
       recentExchanges: 'EXCHANGES',
+      sessionId: 'sess-gate-1',
     })
 
     expect(r.result).toEqual({ needed: true, confidence: 0.6, reason: 'r' })
@@ -48,7 +49,9 @@ describe('runStGate', () => {
     expect(call.prompt).toContain('SECRET-PLAYBOOK')
     expect(call.prompt).toContain('SUMMARY')
     expect(call.prompt).toContain('EXCHANGES')
-    expect(call.providerOptions).toMatchObject({ mythrun: { stage: 'st_gate' } })
+    expect(call.providerOptions).toMatchObject({
+      mythrun: { stage: 'st_gate', sessionId: 'sess-gate-1' },
+    })
   })
 
   it('surfaces usage for :usage:st accounting', async () => {
@@ -58,7 +61,12 @@ describe('runStGate', () => {
       usage: { inputTokens: 9, outputTokens: 3, totalTokens: 12 },
     } as never)
 
-    const r = await runStGate({ sdPlaybook: 'p', runningSummary: '', recentExchanges: 'e' })
+    const r = await runStGate({
+      sdPlaybook: 'p',
+      runningSummary: '',
+      recentExchanges: 'e',
+      sessionId: 'sess-gate-1',
+    })
 
     expect(r.usage.inputTokens).toBe(9)
   })

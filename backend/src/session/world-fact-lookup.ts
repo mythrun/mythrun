@@ -43,7 +43,7 @@ export type SubstrateResolver = () => Promise<ResolverResult>
  *  provenance tag for the relayed/invented content — surfaced out so MYT-73's
  *  recordInjection can stamp the working-set fact with the right access level. */
 export type WorldFactLookupVet = (
-  input: Omit<StLookupVetInput, 'sdPlaybook'>,
+  input: Omit<StLookupVetInput, 'sdPlaybook' | 'sessionId'>,
 ) => Promise<{
   mode: 'relay' | 'none' | 'invent'
   text: string

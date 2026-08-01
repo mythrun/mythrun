@@ -43,6 +43,7 @@ const baseInput = {
   runningSummary: 'ST summary: the sappers were hired by SECRET-the-magistrate.',
   sdPlaybook: 'PLAYBOOK: SECRET — the magistrate funds the sappers to seize the tolls.',
   participants: 'Vael (rogue), Brina (cleric)',
+  sessionId: 'sess-psa-1',
 }
 
 beforeEach(() => {
@@ -92,7 +93,7 @@ describe('runPostSessionAnalysis', () => {
     expect(opts?.callSite).toBe('post-session-analysis')
     expect(opts?.repairStrategy).toBe('sonnet')
     expect(opts?.providerOptions).toMatchObject({
-      mythrun: { stage: 'post_session_analysis' },
+      mythrun: { stage: 'post_session_analysis', sessionId: 'sess-psa-1' },
     })
     expect(typeof opts?.prompt).toBe('string')
     // Proves loadPrompt actually substituted the {{...}} placeholders.

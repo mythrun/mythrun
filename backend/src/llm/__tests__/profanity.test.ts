@@ -45,7 +45,7 @@ describe('classifyProfanity', () => {
     } as never)
 
     const { classifyProfanity } = await import('../profanity.js')
-    const result = await classifyProfanity('gandalf')
+    const result = await classifyProfanity('gandalf', { sessionId: 'sess-prof-1' })
 
     expect(result).toEqual({ profane: false })
     expect(generateTextMock).toHaveBeenCalledOnce()
@@ -57,7 +57,9 @@ describe('classifyProfanity', () => {
     expect(callArgs.system as string).toContain('Reject the username')
     expect(callArgs.maxRetries).toBe(3)
     expect(callArgs.output).toBeDefined()
-    expect(callArgs.providerOptions).toMatchObject({ mythrun: { stage: 'profanity_gate' } })
+    expect(callArgs.providerOptions).toMatchObject({
+      mythrun: { stage: 'profanity_gate', sessionId: 'sess-prof-1' },
+    })
   })
 
   it('returns the output verbatim from generateText', async () => {

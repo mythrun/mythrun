@@ -305,6 +305,7 @@ async function runReconcile(
     candidates: candBlock,
     worldTone,
     closingNarration,
+    sessionId,
   })
 
   // 7. Validate (PURE, security-critical). A reject logs a STRUCTURAL code +

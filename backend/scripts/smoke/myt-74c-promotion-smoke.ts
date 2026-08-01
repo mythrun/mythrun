@@ -281,6 +281,7 @@ async function main(): Promise<void> {
       workingSet: wsBlock,
       candidates: candBlock,
       worldTone: WORLD_TONE,
+      sessionId: seeded.sessionId,
     })
     log('real Opus reconcile plan', {
       entityOps: plan.entities.length,

@@ -34,6 +34,9 @@ export interface StNarrativeProgressInput {
   readonly sdPlaybook: string
   readonly runningSummary: string
   readonly recentExchanges: string
+  /** Cost-harness scope id (cost wave 1 §1.0) — rides providerOptions.mythrun
+   *  only, NEVER the prompt. */
+  readonly sessionId: string
 }
 
 export interface StNarrativeProgressOutput {
@@ -54,7 +57,7 @@ export async function runStNarrativeProgress(
       recent_exchanges: input.recentExchanges,
     }),
     callSite: 'st-narrative-progress',
-    providerOptions: { mythrun: { stage: 'st_narrative_progress' } },
+    providerOptions: { mythrun: { stage: 'st_narrative_progress', sessionId: input.sessionId } },
     repairStrategy: 'haiku-then-sonnet',
     timeoutMs: ST_PROGRESS_TIMEOUT_MS,
   })
