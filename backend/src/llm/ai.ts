@@ -178,12 +178,121 @@ export interface LlmCallDiagnostic {
   readonly zodIssues: readonly { readonly path: string; readonly message: string }[] | null
 }
 
+// --- cost-wave1 §2: the blocks seam ----------------------------------------
+//
+// PromptBlocks is the cacheControl-capable input shape for the three entry
+// points. Blocks compile INSIDE this file to the SDK messages form with the
+// per-MESSAGE `providerOptions.anthropic.cacheControl` breakpoint — the FT's
+// proven mechanism (fast-thinker.ts §3.9). Call-level providerOptions.
+// anthropic.cacheControl is NOT a shortcut: on the installed provider it is
+// not inert — it maps to top-level auto-caching of the LAST cacheable block,
+// which for a volatile-suffixed flat prompt is WRONG placement (buys the
+// write premium with near-zero reads). Breakpoints ride the messages.
+
+/** Ordered prompt blocks — each compiles to one SDK ModelMessage;
+ *  `cacheBreakpoint: true` pins a per-message anthropic cacheControl
+ *  breakpoint on that block. Mutually exclusive with `prompt`/`system`
+ *  (runtime-asserted at the entry points); at most 4 breakpoints. */
+export type PromptBlocks = readonly {
+  readonly role: 'system' | 'user'
+  readonly text: string
+  readonly cacheBreakpoint?: boolean
+}[]
+
+/** The FT's proven per-message breakpoint shape (fast-thinker.ts §3.9). */
+const ANTHROPIC_CACHE_BREAKPOINT = {
+  anthropic: { cacheControl: { type: 'ephemeral' } },
+} as const
+
+/** Anthropic's per-request cache-breakpoint limit. On excess the provider
+ *  keeps the first 4 and drops+warns on the 5th and later — an ignored
+ *  breakpoint is a silent cost bug, so the compiler throws instead. */
+const MAX_CACHE_BREAKPOINTS = 4
+
+type CompiledPrompt =
+  | { readonly kind: 'prompt'; readonly prompt: string }
+  | { readonly kind: 'blocks'; readonly messages: ModelMessage[] }
+
+/** Validates the prompt-input contract and compiles blocks to messages.
+ *  Called ONCE per public entry point, BEFORE any transport/loop machinery,
+ *  so contract violations surface as plain synchronous throws — never as
+ *  classified/retried attempt failures inside the §1.3 loop. */
+function compilePromptShape(
+  opts: {
+    readonly prompt?: string
+    readonly system?: string
+    readonly blocks?: PromptBlocks
+  },
+  callSite: string,
+): CompiledPrompt {
+  if (opts.blocks === undefined) {
+    if (opts.prompt === undefined) {
+      throw new Error(`llm blocks contract (${callSite}): exactly one of blocks or prompt is required`)
+    }
+    return { kind: 'prompt', prompt: opts.prompt }
+  }
+  if (opts.prompt !== undefined || opts.system !== undefined) {
+    throw new Error(`llm blocks contract (${callSite}): blocks and prompt/system are mutually exclusive`)
+  }
+  if (opts.blocks.length === 0) {
+    throw new Error(`llm blocks contract (${callSite}): blocks must be non-empty`)
+  }
+  // Composition guards: the provider hoists LEADING system blocks into the
+  // top-level system param, so an all-system list compiles to messages: []
+  // (guaranteed runtime rejection), and a system block AFTER a user block
+  // becomes a mid-conversation system message — the provider silently adds
+  // the model-gated mid-conversation-system beta header (400s on
+  // Haiku/Sonnet). Both must throw here, at entry, not surface as classified
+  // attempt failures inside the §1.3 loop.
+  const firstUserIdx = opts.blocks.findIndex((b) => b.role === 'user')
+  if (firstUserIdx === -1) {
+    throw new Error(`llm blocks contract (${callSite}): at least one user block is required`)
+  }
+  if (opts.blocks.slice(firstUserIdx).some((b) => b.role === 'system')) {
+    throw new Error(
+      `llm blocks contract (${callSite}): system blocks must precede the first user block`,
+    )
+  }
+  const breakpoints = opts.blocks.filter((b) => b.cacheBreakpoint === true).length
+  if (breakpoints > MAX_CACHE_BREAKPOINTS) {
+    throw new Error(
+      `llm blocks contract (${callSite}): ${String(breakpoints)} cache breakpoints exceeds the provider limit of ${String(MAX_CACHE_BREAKPOINTS)}`,
+    )
+  }
+  return {
+    kind: 'blocks',
+    messages: opts.blocks.map((b): ModelMessage => {
+      const base =
+        b.role === 'system'
+          ? { role: 'system' as const, content: b.text }
+          : { role: 'user' as const, content: b.text }
+      return b.cacheBreakpoint === true
+        ? { ...base, providerOptions: ANTHROPIC_CACHE_BREAKPOINT }
+        : base
+    }),
+  }
+}
+
+/** Spread-ready SDK prompt args. The `system` opt is NOT folded in here — it
+ *  stays at its original position in each call's arg literal so the legacy
+ *  flat-prompt request shape is byte-identical (pinned by ai-blocks tests). */
+function promptShapeArgs(
+  shape: CompiledPrompt,
+): { readonly prompt: string } | { readonly messages: ModelMessage[] } {
+  return shape.kind === 'prompt' ? { prompt: shape.prompt } : { messages: shape.messages }
+}
+
 export interface GenerateObjectOpts<T> {
   readonly model: LanguageModel
   readonly schema: z.ZodType<T>
-  readonly prompt: string
+  /** Flat prompt (the legacy shape). Exactly one of `prompt` / `blocks` is
+   *  required — runtime-asserted at the entry point. */
+  readonly prompt?: string
   readonly callSite: string
   readonly system?: string
+  /** Cost-wave1 §2: the cacheControl-capable input shape — see PromptBlocks.
+   *  Mutually exclusive with `prompt` and `system`. */
+  readonly blocks?: PromptBlocks
   readonly maxRetries?: number
   readonly providerOptions?: unknown
   readonly schemaName?: string
@@ -245,7 +354,10 @@ export interface GenerateObjectResult<T> {
 export interface StreamObjectOpts<T> {
   readonly model: LanguageModel
   readonly schema: z.ZodType<T>
-  readonly prompt: string
+  /** See GenerateObjectOpts.prompt — exactly one of `prompt` / `blocks`. */
+  readonly prompt?: string
+  /** Cost-wave1 §2: see GenerateObjectOpts.blocks. */
+  readonly blocks?: PromptBlocks
   readonly callSite: string
   readonly maxRetries?: number
   readonly providerOptions?: unknown
@@ -269,8 +381,11 @@ export interface StreamObjectOpts<T> {
 
 export interface GenerateTextOpts {
   readonly model: LanguageModel
-  readonly prompt: string
+  /** See GenerateObjectOpts.prompt — exactly one of `prompt` / `blocks`. */
+  readonly prompt?: string
   readonly system?: string
+  /** Cost-wave1 §2: see GenerateObjectOpts.blocks. */
+  readonly blocks?: PromptBlocks
   readonly maxRetries?: number
   readonly providerOptions?: unknown
   /** myth-4omh: see GenerateObjectOpts.timeoutMs. */
@@ -801,12 +916,13 @@ function extractRetryAfterMs(err: unknown): number | null {
  */
 async function driveStreamingObjectAttempt<T>(
   opts: GenerateObjectOpts<T>,
+  promptShape: CompiledPrompt,
   attemptSignal: AbortSignal,
 ): Promise<{ readonly output: T; readonly usage: LanguageModelUsage }> {
   let inBandError: unknown
   const result = sdkStreamText({
     model: opts.model,
-    prompt: opts.prompt,
+    ...promptShapeArgs(promptShape),
     output: Output.object<T>({ schema: opts.schema }),
     abortSignal: attemptSignal,
     // §1.3: the loop owns attempts — SDK-internal retries are disabled.
@@ -854,6 +970,7 @@ type LoopAttemptOutcome<T> =
  */
 async function runLoopAttempt<T>(
   opts: GenerateObjectOpts<T>,
+  promptShape: CompiledPrompt,
   ctx: RepairContext<T>,
   deadline: number,
 ): Promise<LoopAttemptOutcome<T>> {
@@ -868,7 +985,7 @@ async function runLoopAttempt<T>(
       : attemptController.signal
   registerAttemptObservation(attemptSignal)
   try {
-    const { output, usage } = await driveStreamingObjectAttempt(opts, attemptSignal)
+    const { output, usage } = await driveStreamingObjectAttempt(opts, promptShape, attemptSignal)
     return { tag: 'ok', result: { output, usage, repairAttempted: false } }
   } catch (err) {
     const observation = takeAttemptObservation(attemptSignal)
@@ -935,6 +1052,7 @@ async function runLoopAttempt<T>(
 /** §1.3: the wrapper-owned attempt loop. See GenerateObjectOpts.stageBudgetMs. */
 async function generateObjectWithBudget<T>(
   opts: GenerateObjectOpts<T>,
+  promptShape: CompiledPrompt,
   stageBudgetMs: number,
   ctx: RepairContext<T>,
 ): Promise<GenerateObjectResult<T>> {
@@ -942,7 +1060,7 @@ async function generateObjectWithBudget<T>(
   const expectedHealthyMs =
     opts.expectedHealthyDurationMs ?? DEFAULT_EXPECTED_HEALTHY_DURATION_MS
   for (let attempt = 1; ; attempt += 1) {
-    const outcome = await runLoopAttempt(opts, ctx, deadline)
+    const outcome = await runLoopAttempt(opts, promptShape, ctx, deadline)
     if (outcome.tag === 'ok') return outcome.result
     const { error, verdict, observation } = outcome
     // §1.3: external aborts win — bail, no retry, no report.
@@ -978,6 +1096,9 @@ async function generateObjectWithBudget<T>(
 export async function generateObject<T>(
   opts: GenerateObjectOpts<T>,
 ): Promise<GenerateObjectResult<T>> {
+  // §2: contract-asserts + compiles blocks BEFORE any transport/loop
+  // machinery — a violation is a plain throw, never a retried attempt.
+  const promptShape = compilePromptShape(opts, opts.callSite)
   const repairStrategy = opts.repairStrategy ?? 'sonnet'
   const schemaName = opts.schemaName ?? 'unnamed'
   const ctx: RepairContext<T> = {
@@ -1000,7 +1121,7 @@ export async function generateObject<T>(
   // report per attempt). Absent, the legacy single-shot path below is
   // byte-identical to the pre-loop behavior.
   if (opts.stageBudgetMs !== undefined) {
-    return generateObjectWithBudget(opts, opts.stageBudgetMs, ctx)
+    return generateObjectWithBudget(opts, promptShape, opts.stageBudgetMs, ctx)
   }
 
   const timeout = createTimeoutSignal(opts.timeoutMs)
@@ -1008,7 +1129,7 @@ export async function generateObject<T>(
     const result = await sdkGenerateText({
       model: opts.model,
       output: Output.object<T>({ schema: opts.schema }),
-      prompt: opts.prompt,
+      ...promptShapeArgs(promptShape),
       abortSignal:
         opts.abortSignal !== undefined
           ? AbortSignal.any([timeout.signal, opts.abortSignal])
@@ -1078,6 +1199,9 @@ export async function generateObject<T>(
 export function streamObject<T>(
   opts: StreamObjectOpts<T>,
 ): StreamObjectResult<DeepPartial<T>, T, never> {
+  // §2: contract-asserts + compiles blocks first — a violation throws
+  // synchronously, before the timeout timer or the SDK stream exist.
+  const promptShape = compilePromptShape(opts, opts.callSite)
   const repairStrategy = opts.repairStrategy ?? 'sonnet'
   const schemaName = opts.schemaName ?? 'unnamed'
   const ctx: RepairContext<T> = {
@@ -1106,7 +1230,7 @@ export function streamObject<T>(
   const sdkResult = sdkStreamObject({
     model: opts.model,
     schema: opts.schema,
-    prompt: opts.prompt,
+    ...promptShapeArgs(promptShape),
     abortSignal:
       opts.abortSignal !== undefined
         ? AbortSignal.any([timeout.signal, opts.abortSignal])
@@ -1190,6 +1314,8 @@ export function streamObject<T>(
  * trimmed to `{ text, usage }`.
  */
 export async function generateText(opts: GenerateTextOpts): Promise<GenerateTextResult> {
+  // §2: see generateObject — contract-assert + compile before the timer.
+  const promptShape = compilePromptShape(opts, opts.callSite ?? 'generate-text')
   // Defensive: `system` passthrough on bare generateText is unused today
   // (no current production call passes both `system` and no Output.object).
   // Kept for API symmetry with generateObject; both ternary arms wrapped.
@@ -1198,7 +1324,7 @@ export async function generateText(opts: GenerateTextOpts): Promise<GenerateText
   try {
     const result = await sdkGenerateText({
       model: opts.model,
-      prompt: opts.prompt,
+      ...promptShapeArgs(promptShape),
       abortSignal: timeout.signal,
       ...(opts.system !== undefined ? { system: opts.system } : {}),
       ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
@@ -1240,8 +1366,11 @@ export interface StreamTextWithToolsOpts {
   readonly model: LanguageModel
   /** Full message array INCLUDING the system-role message — passed as a
    *  message (not the `system:` param) so it can carry the per-message
-   *  anthropic cacheControl breakpoint (call-level providerOptions is
-   *  silently inert for cache_control on this provider). */
+   *  anthropic cacheControl breakpoint. Call-level providerOptions.anthropic.
+   *  cacheControl is NOT inert on this provider (cost-wave1 §2): it maps to
+   *  top-level auto-caching of the LAST cacheable block — wrong placement
+   *  for a volatile-suffixed prompt (write premium, near-zero reads) — so
+   *  breakpoints must ride the messages. */
   readonly messages: ModelMessage[]
   readonly tools: ToolSet
   readonly stopWhen: StopCondition<ToolSet> | StopCondition<ToolSet>[]
@@ -1256,7 +1385,8 @@ export interface StreamTextWithToolsOpts {
   /** Per-TURN budget (whole loop). Surfaces as an in-band `abort` part —
    *  the CONSUMER throws LlmTimeoutError on it; nothing here throws. */
   readonly timeoutMs?: number
-  /** mythrun log bindings ONLY — never cacheControl (see messages note). */
+  /** mythrun log bindings ONLY — never cacheControl: at call level it buys
+   *  wrong-placement top-level auto-caching (see the messages note). */
   readonly providerOptions?: unknown
   readonly maxOutputTokens?: number
   /** §1.4: see GenerateObjectOpts.skipHealthReport. */

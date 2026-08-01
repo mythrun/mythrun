@@ -41,8 +41,11 @@
 //      cacheControl` breakpoint goes on (a) the system message and (b) the
 //      last SETTLED message (second-to-last in the history array — the current
 //      batch is the last and stays uncached). Call-level providerOptions
-//      carries ONLY the mythrun log bindings (cache_control is silently inert
-//      at call level on this provider).
+//      carries ONLY the mythrun log bindings — call-level cacheControl is NOT
+//      inert on this provider (cost-wave1 §2): it maps to top-level
+//      auto-caching of the LAST cacheable block, wrong placement for this
+//      volatile-suffixed message array (write premium, near-zero reads), so
+//      breakpoints ride the messages.
 //
 //   6. FRAME EMISSION FROM TOOL-RESULT PARTS: a roll_skill_check ok-output is
 //      mapped from snake_case to the camelCase `SkillCheckFramePayload`; an
