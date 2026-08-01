@@ -65,7 +65,31 @@ export interface StDirectorOutput {
 // the split: interpolation is a single pass over the TEMPLATE, values are
 // never re-scanned, so a literal "{{block_boundary}}" typed into player chat
 // renders verbatim and can never mint a boundary.
-const BLOCK_BOUNDARY_SENTINEL = `<<st-eval-block-boundary ${randomUUID()}>>`
+export const BLOCK_BOUNDARY_SENTINEL = `<<st-eval-block-boundary ${randomUUID()}>>`
+
+/** Splits a RENDERED st-evaluation template on the boundary sentinel. Exactly
+ *  two markers, so exactly three parts: fewer means template drift, more would
+ *  move a cache breakpoint silently. Exported for the marker-validation tests
+ *  (the drifted templates never reach disk) — same shape as the gate and
+ *  tripwire splitters. */
+export function splitStEvaluationTemplate(rendered: string): {
+  head: string
+  stable: string
+  volatileTail: string
+} {
+  const [head, stable, volatileTail, ...rest] = rendered.split(BLOCK_BOUNDARY_SENTINEL)
+  if (head === undefined || stable === undefined || volatileTail === undefined) {
+    throw new Error(
+      'st-evaluation template must carry exactly two {{block_boundary}} markers (found too few) — template drifted; re-derive the cache breakpoints (cost-wave1 §3)',
+    )
+  }
+  if (rest.length > 0) {
+    throw new Error(
+      `st-evaluation template must carry exactly two {{block_boundary}} markers (found ${String(rest.length + 2)}) — the cut points are ambiguous; re-derive the cache breakpoints (cost-wave1 §3)`,
+    )
+  }
+  return { head, stable, volatileTail }
+}
 
 function stEvaluationBlocks(input: StDirectorInput): PromptBlocks {
   const rendered = loadPrompt('session', 'st-evaluation', {
@@ -80,13 +104,7 @@ function stEvaluationBlocks(input: StDirectorInput): PromptBlocks {
     converge: input.converge ? CONVERGE_INSTRUCTION : '',
     summary_target_words: String(ST_SUMMARY_TARGET_WORDS),
   })
-  const parts = rendered.split(BLOCK_BOUNDARY_SENTINEL)
-  const [head, stable, volatileTail] = parts
-  if (parts.length !== 3 || head === undefined || stable === undefined || volatileTail === undefined) {
-    throw new Error(
-      `st-evaluation template must carry exactly two {{block_boundary}} markers (found ${String(parts.length - 1)})`,
-    )
-  }
+  const { head, stable, volatileTail } = splitStEvaluationTemplate(rendered)
   return [
     { role: 'system', text: head.trim(), cacheBreakpoint: true },
     { role: 'user', text: stable.trim(), cacheBreakpoint: true },

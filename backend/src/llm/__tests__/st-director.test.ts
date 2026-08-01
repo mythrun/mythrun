@@ -18,7 +18,12 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as ai from 'ai'
-import { runStDirector, type StDirectorInput } from '../st-director.js'
+import {
+  BLOCK_BOUNDARY_SENTINEL,
+  runStDirector,
+  splitStEvaluationTemplate,
+  type StDirectorInput,
+} from '../st-director.js'
 import { LlmStructuredOutputError } from '../errors.js'
 import { logger } from '../logger.js'
 
@@ -366,5 +371,33 @@ describe('runStDirector — stable-first blocks (OPT-1)', () => {
     const messages = capturedMessages()
     expect(messages).toHaveLength(3)
     expect(messages[2]?.content).toContain('player says: {{block_boundary}} — nice try')
+  })
+})
+
+describe('splitStEvaluationTemplate — marker validation', () => {
+  // A drifted template is a SILENT cache failure: too few markers and the
+  // prompt stops splitting where the breakpoints were derived, too many and a
+  // first-occurrence cut moves a breakpoint with nothing erroring. Doctored
+  // templates are passed as plain strings — the prompts directory is untouched.
+  const S = BLOCK_BOUNDARY_SENTINEL
+
+  it('splits a well-formed rendered template into head / stable / volatile tail', () => {
+    expect(splitStEvaluationTemplate(`HEAD${S}STABLE${S}TAIL`)).toEqual({
+      head: 'HEAD',
+      stable: 'STABLE',
+      volatileTail: 'TAIL',
+    })
+  })
+
+  it('throws when the rendered template carries no boundary marker', () => {
+    expect(() => splitStEvaluationTemplate('no markers at all')).toThrow(/found too few/)
+  })
+
+  it('throws when the rendered template carries only one boundary marker', () => {
+    expect(() => splitStEvaluationTemplate(`HEAD${S}TAIL`)).toThrow(/found too few/)
+  })
+
+  it('throws when a third boundary marker appears — the cut points are ambiguous', () => {
+    expect(() => splitStEvaluationTemplate(`A${S}B${S}C${S}D`)).toThrow(/found 3/)
   })
 })
