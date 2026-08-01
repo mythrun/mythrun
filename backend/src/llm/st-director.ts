@@ -7,7 +7,8 @@
 // author; the single-gate argument requires it). maxOutputTokens is set
 // explicitly (reasoning + direction + a full summary rewrite is long).
 
-import { generateObject, type LanguageModelUsage } from './ai.js'
+import { randomUUID } from 'node:crypto'
+import { generateObject, type LanguageModelUsage, type PromptBlocks } from './ai.js'
 import { loadPrompt } from './prompts.js'
 import { StDirectorResultSchema, type StDirectorResult } from './schemas/st-director.js'
 import {
@@ -54,22 +55,51 @@ export interface StDirectorOutput {
   readonly repairAttempted: boolean
 }
 
+// OPT-1 (cost wave 1 §3) — stable-first blocks. The template is ONE file in
+// model-visible order with two {{block_boundary}} markers; it renders once,
+// splits into [system head | stable span | volatile tail], and rides the ai.ts
+// blocks seam. Breakpoints: the head (static instructions — the span is shared
+// across sessions) and the stable-span end (roster + playbook — per-session
+// stable), so every eval after a session's first reads head+roster+playbook
+// from cache. The marker interpolates to a per-process random sentinel BEFORE
+// the split: interpolation is a single pass over the TEMPLATE, values are
+// never re-scanned, so a literal "{{block_boundary}}" typed into player chat
+// renders verbatim and can never mint a boundary.
+const BLOCK_BOUNDARY_SENTINEL = `<<st-eval-block-boundary ${randomUUID()}>>`
+
+function stEvaluationBlocks(input: StDirectorInput): PromptBlocks {
+  const rendered = loadPrompt('session', 'st-evaluation', {
+    block_boundary: BLOCK_BOUNDARY_SENTINEL,
+    party_roster: input.partyRoster,
+    sd_playbook: input.sdPlaybook,
+    running_summary: input.runningSummary,
+    current_standing_directive: input.currentStandingDirective,
+    pending_one_shot: input.pendingOneShot,
+    recent_exchanges: input.recentExchanges,
+    wind_down: input.windDown ? WIND_DOWN_INSTRUCTION : '',
+    converge: input.converge ? CONVERGE_INSTRUCTION : '',
+    summary_target_words: String(ST_SUMMARY_TARGET_WORDS),
+  })
+  const parts = rendered.split(BLOCK_BOUNDARY_SENTINEL)
+  const [head, stable, volatileTail] = parts
+  if (parts.length !== 3 || head === undefined || stable === undefined || volatileTail === undefined) {
+    throw new Error(
+      `st-evaluation template must carry exactly two {{block_boundary}} markers (found ${String(parts.length - 1)})`,
+    )
+  }
+  return [
+    { role: 'system', text: head.trim(), cacheBreakpoint: true },
+    { role: 'user', text: stable.trim(), cacheBreakpoint: true },
+    { role: 'user', text: volatileTail.trim() },
+  ]
+}
+
 export async function runStDirector(input: StDirectorInput): Promise<StDirectorOutput> {
   const r = await generateObject({
     model: ST_MODEL,
     schema: StDirectorResultSchema,
     schemaName: 'StDirectorResultSchema',
-    prompt: loadPrompt('session', 'st-evaluation', {
-      party_roster: input.partyRoster,
-      sd_playbook: input.sdPlaybook,
-      running_summary: input.runningSummary,
-      current_standing_directive: input.currentStandingDirective,
-      pending_one_shot: input.pendingOneShot,
-      recent_exchanges: input.recentExchanges,
-      wind_down: input.windDown ? WIND_DOWN_INSTRUCTION : '',
-      converge: input.converge ? CONVERGE_INSTRUCTION : '',
-      summary_target_words: String(ST_SUMMARY_TARGET_WORDS),
-    }),
+    blocks: stEvaluationBlocks(input),
     callSite: 'st-director',
     providerOptions: { mythrun: { stage: 'st_eval', sessionId: input.sessionId } },
     repairStrategy: 'haiku-then-sonnet',
