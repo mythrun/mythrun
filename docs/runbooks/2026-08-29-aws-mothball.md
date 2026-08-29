@@ -14,10 +14,10 @@ Before: ~$115–125/month, almost entirely idle-hours charges
 (NAT $33, ALB+IPv4s $22, Fargate $18, RDS $13, Redis $11, NAT EIP $3.65,
 Secrets Manager $5.60, tax ~$11).
 
-Projected after (once the two pending steps below are done): **~$12/month**
-— RDS gp3 storage $2.30, 14 Secrets Manager secrets $5.60, KMS CMK $1.00,
-CloudWatch alarms $0.70, Route53 zone $0.51, ECR storage ~$0.61, RDS
-weekly-restart leakage ~$0.30, plus ~10% tax.
+After (all steps executed 2026-08-29): **~$12/month** — RDS gp3 storage
+$2.30, 14 Secrets Manager secrets $5.60, KMS CMK $1.00, CloudWatch alarms
+$0.70, Route53 zone $0.51, ECR storage ~$0.44, RDS weekly-restart leakage
+~$0.30, plus ~10% tax.
 
 ## What was done (verbatim, in order)
 
@@ -75,11 +75,15 @@ weekly-restart leakage ~$0.30, plus ~10% tax.
      --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"rds:StopDBInstance","Resource":"arn:aws:rds:us-east-1:862127484110:db:mythrun"}]}'
    ```
 
-## Pending — run these by hand (agent permission classifier blocked them)
+## Completed later the same session (initially classifier-blocked, then executed with Miklos's explicit go-ahead)
 
-**A. Delete the ALB** (~$24/month: $16.40 hours + $7.30 for its two
-service-managed public IPv4s, which release automatically with it).
-Deletion protection must be flipped first:
+These four were blocked by the agent permission classifier on first attempt;
+Miklos authorized a retry in-conversation and all four then executed and were
+verified on 2026-08-29.
+
+**A. Deleted the ALB** (~$24/month: $16.40 hours + $7.30 for its two
+service-managed public IPv4s, which released automatically with it).
+Deletion protection flipped first:
 
 ```sh
 aws elbv2 modify-load-balancer-attributes \
@@ -90,11 +94,12 @@ aws elbv2 delete-load-balancer \
 ```
 
 The target group `mythrun-staging-api` stays (free). The Route53 alias
-`staging-api.mythrun.com` dangles harmlessly until resume.
+`staging-api.mythrun.com` dangles harmlessly until resume. Verified after:
+zero load balancers, zero in-use public IPv4 addresses in the account.
 
-**B. Create the daily RDS re-stop schedule** (role from step 6 above already
-exists). Without this, AWS restarts the stopped instance every 7 days and it
-then bills ~$11.70/month until someone notices:
+**B. Created the daily RDS re-stop schedule** (uses the role from step 6).
+Without this, AWS restarts the stopped instance every 7 days and it then
+bills ~$11.70/month until someone notices. Verified ENABLED, cron(15 6 * * ? *):
 
 ```sh
 aws scheduler create-schedule --name mythrun-mothball-rds-stop-daily \
@@ -104,16 +109,17 @@ aws scheduler create-schedule --name mythrun-mothball-rds-stop-daily \
   --target '{"Arn":"arn:aws:scheduler:::aws-sdk:rds:stopDBInstance","RoleArn":"arn:aws:iam::862127484110:role/mythrun-mothball-rds-stop","Input":"{\"DbInstanceIdentifier\": \"mythrun\"}","RetryPolicy":{"MaximumRetryAttempts":2}}'
 ```
 
-**C. Optional, cosmetic** — silence alarm notifications for the hold (without
-this you may get a few one-time state-transition emails to dev@mythrun.com as
-things went dark; alarms do not re-email while parked in a state):
+**C. Silenced alarm notifications for the hold** (a few one-time
+state-transition emails to dev@mythrun.com may have gone out before this
+landed; alarms do not re-email while parked in a state). Verified: zero
+alarms with actions enabled. Resume step 4 re-enables them:
 
 ```sh
 aws cloudwatch disable-alarm-actions --alarm-names mythrun-acm-wildcard-expiry mythrun-alb-5xx mythrun-nat-port-allocation-errors mythrun-rds-cpu-high mythrun-rds-storage-low mythrun-redis-001-memory-high mythrun-staging-api-down mythrun-staging-api-target-5xx mythrun-staging-billing-probe-auth-failure mythrun-staging-billing-probe-config-failure mythrun-staging-billing-probe-transient-failure mythrun-staging-cognito-federation-throttles-discord mythrun-staging-cognito-federation-throttles-google mythrun-staging-cognito-sign-in-throttles mythrun-staging-stripe-webhook-api-version-mismatch mythrun-staging-voyage-misconfigured mythrun-staging-voyage-unavailable
 ```
 
-**D. Optional, ~$0.17/month** — delete the ECR pull-through-cache mirrors of
-public node/alpine images (1.72 GB; auto-recreated on next pull):
+**D. Deleted the ECR pull-through-cache mirrors** of public node/alpine
+images (1.72 GB, ~$0.17/month; auto-recreated on next pull):
 
 ```sh
 aws ecr delete-repository --repository-name ecr-public/docker/library/node --force
@@ -139,7 +145,7 @@ aws ecr delete-repository --repository-name ecr-public/docker/library/alpine --f
 ## Known hold-state quirks
 
 - Terraform now has drift in `environments/shared` (NAT gateway, NAT EIP,
-  and — after pending step A — the ALB + listeners). **Do not run
+  ALB + listeners). **Do not run
   `terraform apply` casually during the hold**; it would recreate them and
   restart the spend. Applies are manual-only in this project (no CI apply),
   so nothing will do this automatically.
