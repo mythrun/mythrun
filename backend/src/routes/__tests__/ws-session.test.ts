@@ -2655,6 +2655,9 @@ describe('ws-session connection handler (stub-deps unit harness)', () => {
     handler(socket, fakeRequest({}))
     await flush()
 
+    // Armed only after connect (line 381 uses the same call unguarded): the
+    // disconnect read fails → catch treats the user as departed.
+    sessionState.userConnectionCount.mockRejectedValue(new Error('conn-count transient'))
     socket.emit('close')
     await flush()
 
@@ -2669,6 +2672,10 @@ describe('ws-session connection handler (stub-deps unit harness)', () => {
     expect(appLog.log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ err: expect.any(Error) as unknown }),
       'ws-session player_left publish failed',
+    )
+    expect(appLog.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) as unknown }),
+      'ws-session userConnectionCount failed — treating as departed',
     )
     expect(appLog.log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ err: expect.any(Error) as unknown }),
