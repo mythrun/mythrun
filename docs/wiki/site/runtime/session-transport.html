@@ -1333,14 +1333,14 @@
   that module's <code>:summary</code> key is owned by the
   <a href="./slow-thinker.html">Slow Thinker</a> job (the turn flush is usage-only, and
   <code>setRunningSummary</code> is the summary's only writer), the ST's spend tracks on a dedicated
-  <code>:usage:st</code> counter summed at every read, and the session-start route resets the spend
-  + summary keys (<code>resetSessionSpend</code>). The
+  <code>:usage:st</code> counter summed at every read, and the session-start route resets the spend,
+  summary, progress and context-level keys (<code>resetSessionSpend</code>). The
   <a href="./dm-trigger.html">DM trigger</a> system hangs off this inbound handler: it observes the
   typing and message frames here, writes its own trigger-state Redis keys, and reschedules the
   quiet-window debounce that decides when a DM turn fires — and adds the
   <code>dm_invoke</code> client frame to the contract. The
   <a href="./session-reconcile.html">end-of-session reconciliation</a> story closes the lifecycle
-  this transport opens: the <code>end_session</code> frame and the budget auto-end both
+  this transport opens: the <code>end_session</code> frame and the context-ceiling auto-end both
   <em>begin</em> an orchestration that quiesces this transport (the <code>ending</code> gate,
   <code>cancelSuspend</code>) and enqueues a farewell turn; the turn worker's finalize then flips
   the session row and fires the reconcile + analysis workers. The <code>/start</code> route's twin
@@ -1541,6 +1541,20 @@
       </td>
     </tr>
     <tr>
+      <td><code>session:{campaignId}:ftcontext</code></td>
+      <td>
+        myth-zd6pn — the Fast Thinker's context <em>level</em>: input tokens on its most recent
+        call. A blind SET each turn, so unlike the counters around it this value legitimately falls.
+        It is the session-length bound everything now divides by (the turn worker's auto-end, the
+        progress fraction, and the <a href="./slow-thinker.html">Slow Thinker</a>'s wind-down and
+        convergence arms), which is precisely why it lives in Redis: the reading is produced in the
+        turn worker and needed in the st-evaluation worker, a different process. Missing or corrupt
+        reads as 0, the safe direction — under-reading self-heals next turn, over-reading would end
+        a session early. Also DEL'd by <code>resetSessionSpend</code>, or the next session would
+        open with the window reported already full.
+      </td>
+    </tr>
+    <tr>
       <td><code>session:campaign:{campaignId}</code> (channel)</td>
       <td>Pub/sub channel; the hub <code>PSUBSCRIBE</code>s <code>session:campaign:*</code>.</td>
     </tr>
@@ -1595,10 +1609,12 @@
         >
         / <code>isEnding</code> / the myth-x4ca4 <code>clearEnding</code> release); the LLM-tier
         turn-state surface (<code>flushTurnState</code> usage-only, <code>setRunningSummary</code> /
-        <code>incrUsageSt</code> / <code>totalUsageTokens</code> / <code>resetSessionSpend</code> —
-        MYT-69 — and the myth-nu0hm <code>progressFraction</code> read /
-        <code>raiseProgressFraction</code> raise-only write); <code>PRESENCE_TTL</code>,
-        <code>SessionMode</code> / <code>SessionStateBlob</code> / <code>CheckpointStore</code>
+        <code>incrUsageSt</code> / <code>totalUsageTokens</code> — the last of these observability
+        only since myth-zd6pn — / <code>resetSessionSpend</code> — MYT-69 — the myth-nu0hm
+        <code>progressFraction</code> read / <code>raiseProgressFraction</code> raise-only write,
+        and the myth-zd6pn <code>ftContextTokens</code> read / <code>setFtContextTokens</code> blind
+        SET); <code>PRESENCE_TTL</code>, <code>SessionMode</code> / <code>SessionStateBlob</code> /
+        <code>CheckpointStore</code>
         types.
       </td>
     </tr>

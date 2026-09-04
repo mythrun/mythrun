@@ -1305,14 +1305,18 @@
   permanently zero, so no session ever hit the budget cliff; sessions ended only when a player chose
   to end one, or when the FT context finally overflowed and the provider rejected the call mid-turn,
   which is an error rather than an ending (no farewell, no finalize, no recap). The stop was
-  restored by pointing it at the Redis usage counter the
+  restored by pointing it at a Redis counter the
   <a href="../runtime/slow-thinker.html">Slow Thinker</a>'s wind-down and the progress signal
-  already read — three signals that must agree about how much budget is gone are surest to agree
-  when they read one number. Re-wiring <code>recordUsage</code> would have given a fourth. The
-  durable per-session trail is still missing, and anything reading <code>session_usage</code> for
-  cost metering or analytics reads nothing; that is a metering concern tracked separately rather
-  than conflated with restoring the stop. Everything below describes the shape these two methods
-  have when a writer is finally wired to them.
+  already read — signals that must agree about how much session is gone are surest to agree when
+  they read one number, and re-wiring <code>recordUsage</code> would have given a fourth. myth-zd6pn
+  later moved all of them again, off token counts entirely and onto the
+  <a href="../runtime/fast-thinker.html#the-context-ceiling">Fast Thinker's context level</a>: the
+  counter they had been sharing summed gross tokens with cache reads counted 1:1, so it saturated
+  roughly ten times too fast. The principle held; the quantity was wrong. The durable per-session
+  trail is still missing either way, and anything reading <code>session_usage</code> for cost
+  metering or analytics reads nothing — a metering concern tracked separately rather than conflated
+  with the stop. Everything below describes the shape these two methods have when a writer is
+  finally wired to them.
 </aside>
 
 <p>

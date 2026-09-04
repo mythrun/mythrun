@@ -65,6 +65,7 @@ digraph session_turn {
 
     lock  [label="session:lock:{cId}\nSET NX PX (token)\nLua compare-extend / -release"];
     turnstate [label="session:{cId}:usage · :seq · :state\n:summary (ST job's — not flushed here)\ndirection:oneshot (GETDEL) · direction:standing (read)\n(NO ft_history — retired)"];
+    ftctx [label="session:{cId}:ftcontext · :progress\nFT context LEVEL (blind SET, may fall)\nTHE session bound — read by the end arm,\nthe progress bar, wind-down + converge", color="ember", fontcolor="ember"];
     channel [label="session:campaign:{cId}\n(PUBLISH frame JSON)", color="ember", fontcolor="ember"];
   }
 
@@ -94,6 +95,7 @@ digraph session_turn {
   pub     -> channel [label="PUBLISH"];
   channel -> hub     [label="pmessage\n(every container)", color="ember"];
   hub     -> client  [label="ws.send"];
+  proc    -> ftctx   [label="SET level after render\nread back → end at ≥ ceiling\nraise progress floor", color="ember"];
   proc    -> steval  [label="post-turn enqueue\n(off the hot path)", style=dashed, color="ember"];
   ctrl    -> scribe  [label="enqueueScribeJob\n(flushed success)", style=dashed, color="ember"];
   scribe  -> q_turn  [label="correction turn\n(retcon Z)", style=dotted, color="ember"];

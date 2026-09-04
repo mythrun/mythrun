@@ -21,7 +21,7 @@
 <!-- source: backend/src/llm/schemas/world-lookup-gate.ts -->
 <!-- source: backend/src/llm/schemas/st-lookup-vet.ts -->
 <!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
-<!-- source-hash: sha256:646a1aaba5868992bd6fa65c353d1536ca14b1e6fe38cdc526e81df35367d657 -->
+<!-- source-hash: sha256:286416a135599fa56ef1fb433fdde43167eccd01de5a9736e443facc51eeda10 -->
 <!-- last-ticket: myth-aiiao -->
 
 <h1>Fast Thinker</h1>
@@ -79,8 +79,10 @@
   <a href="./llm.html">LLM client</a>'s <code>ai.ts</code> alongside <code>generateObject</code> /
   <code>streamObject</code> / <code>generateText</code>. The wrapper exposes the
   <code>fullStream</code> plus two distinct usage promises — the final step's usage (the
-  context-fill signal) and the cumulative <code>totalUsage</code> across all steps (the spend
-  number) — and threads the per-turn timeout through the SDK's native <code>timeout</code>.
+  context-fill signal, and as of myth-zd6pn the number the whole
+  <a href="#the-context-ceiling">session bound</a> is built on) and the cumulative
+  <code>totalUsage</code> across all steps (the spend number, observability only) — and threads the
+  per-turn timeout through the SDK's native <code>timeout</code>.
 </p>
 
 <aside class="wiki-rationale">
@@ -924,15 +926,53 @@
 
 <p>
   Caching makes holding the whole transcript affordable; it does not make it unbounded. The FT
-  re-sends every message every turn with no compaction, so the model's input window — not the token
+  re-sends every message every turn with no compaction, so the model's input window — not a token
   budget, not anyone's patience — is the hard limit on how long a session can run.
   <code>ft-config.ts</code> names it: <code>FT_CONTEXT_WINDOW_TOKENS</code> (1,000,000, read off the
   Anthropic Models API for the configured <code>FT_MODEL</code> rather than assumed) minus
-  <code>FT_CONTEXT_HEADROOM_TOKENS</code> (150,000) gives <code>FT_USABLE_CONTEXT_TOKENS</code> —
-  the divisor the
-  <a href="./session-turn.html#the-session-progress-signal">progress fraction</a> measures context
-  fill against.
+  <code>FT_CONTEXT_HEADROOM_TOKENS</code> (150,000) gives <code>FT_USABLE_CONTEXT_TOKENS</code>,
+  850,000.
 </p>
+
+<p>
+  As of myth-zd6pn that is not merely <em>a</em> bound but <em>the</em> bound, and it has a name of
+  its own: <code>SESSION_FT_CONTEXT_BUDGET</code>, defined as exactly
+  <code>FT_USABLE_CONTEXT_TOKENS</code>. Four things divide by it — the
+  <a href="./session-turn.html">turn worker</a>'s auto-end, the player-facing
+  <a href="./session-turn.html#the-session-progress-signal">progress fraction</a>, and the
+  <a href="./slow-thinker.html">Slow Thinker</a>'s wind-down and convergence arms — and all four
+  read one Redis level, <code>session:{cId}:ftcontext</code>, so a session's length, the bar
+  describing it, and the DM's decision to start landing cannot come apart.
+</p>
+
+<aside class="wiki-rationale">
+  <strong
+    >The session used to be metered on something else entirely, and it was wrong
+    (myth-zd6pn)</strong
+  >
+  — the bound was <code>SESSION_TOKEN_BUDGET</code>: 545,000 cumulative gross tokens summed across
+  every tier. Two independent errors sat inside that. It <em>accumulated</em> a quantity that is
+  really a level — the FT re-sends one transcript per call, it does not stack them, so summing turns
+  counts the same context over and over. And it counted cache reads 1:1 against a ceiling that was
+  calibrated before prompt caching existed; once the
+  <a href="./llm.html">per-message breakpoints</a> put the FT at a measured 91–96% cache-read rate,
+  the meter filled roughly ten times faster than the spend it stood for. Sessions auto-ended around
+  turn 14 — some nineteen minutes — against a session unit sold as roughly three hours, with this
+  window about 4% full. The constant is retired. Metering the window is the honest version of the
+  same intent: it is the quantity that genuinely runs out.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>This is a length bound, not a cost bound, and nothing currently caps cost</strong> — worth
+  being plain about, because the retired constant looked like both and was neither. A cache-read
+  token fills exactly as much window as an uncached one at roughly a tenth of the price, so window
+  fill answers <em>how much session is left</em> and says nothing about what the session cost.
+  Sessions consequently now run far longer than they did, with no per-session spend ceiling behind
+  them. That is an open product decision rather than an oversight: a spend cap has to be metered on
+  priced usage — uncached input, cache read and cache write each at their own rate, per the
+  <a href="../auth-billing/billing-metering.html">billing</a> model — and would live beside this
+  constant as its own, not folded into it.
+</aside>
 
 <aside class="wiki-rationale">
   <strong>The usable ceiling sits below the real one on purpose</strong> — a session has to end
@@ -940,8 +980,11 @@
   still has to fit: one more whole FT turn (the farewell), its up-to-<code>FT_MAX_TOOL_STEPS</code>
   tool round-trips, and its output, which the model line caps at 128K. 150K — 15% — clears that with
   margin. Running to the real ceiling instead would trade a graceful send-off for a provider 400
-  mid-turn, which is the failure mode that was actually ending sessions before the budget auto-end
-  was <a href="./session-turn.html">repaired</a>.
+  mid-turn, which is the failure mode that was actually ending sessions for as long as the auto-end
+  was <a href="./session-turn.html">wired to a counter nothing wrote</a>. Because the reserve is
+  already inside <code>FT_USABLE_CONTEXT_TOKENS</code>, ending <em>at</em>
+  <code>SESSION_FT_CONTEXT_BUDGET</code> still leaves a whole farewell turn's worth of room; the
+  ceiling and the send-off are not in tension.
 </aside>
 
 <aside class="wiki-rationale">
@@ -951,19 +994,24 @@
   (measured on 6KB of our own prep prompt: 1175 → 1593; Opus is unchanged). Same window in tokens is
   roughly 26% <em>smaller in prose</em>. Nothing in the config moved; the thing it measures did.
   These constants are deliberately not auto-scaled off a model change — session length against cost
-  per session is a product decision, not a silent side effect — so the compensating move was made
-  once, explicitly, on <a href="./slow-thinker.html">SESSION_TOKEN_BUDGET</a>. Re-check both numbers
-  whenever <code>FT_MODEL</code> moves; they are not the same across the model line (Haiku 4.5's
-  window is 200K).
+  per session is a product decision, not a silent side effect. At the time the compensating move was
+  made explicitly, on the then-separate <code>SESSION_TOKEN_BUDGET</code>; that constant is now
+  retired and the window <em>is</em> the bound, so a tokenizer shift like this one no longer has a
+  second dial to move. It shortens the session in prose directly, and the only honest response is to
+  say so rather than to quietly widen the ceiling. Re-check both numbers whenever
+  <code>FT_MODEL</code> moves; they are not the same across the model line (Haiku 4.5's window is
+  200K).
 </aside>
 
 <p>
   The measurement itself comes off the render. <code>streamTextWithTools</code> exposes the final
   step's usage separately from the cumulative total, and the FT returns that step's
-  <code>inputTokens</code> as <code>contextTokens</code> on the assistant message. It is read
-  best-effort — the promise rejects on a zero-step failure, and this runs after the prose has
-  already streamed, so a usage hiccup degrades the progress number and never costs the table a
-  rendered turn.
+  <code>inputTokens</code> as <code>contextTokens</code> on the assistant message — the last step's
+  prompt is the largest single one of the turn and so the honest reading of how full the window
+  actually is. The <a href="./session-turn.html">turn worker</a> stores it as the session's context
+  level; everything downstream reads that, not this. It is read best-effort — the promise rejects on
+  a zero-step failure, and this runs after the prose has already streamed, so a usage hiccup leaves
+  the previous level standing and never costs the table a rendered turn.
 </p>
 
 <h2>Integration points</h2>
@@ -1036,8 +1084,18 @@
       <td>1000000 / 150000 / 850000</td>
       <td>
         The <a href="#the-context-ceiling">session-length bound</a>: the model's real input window,
-        the reserve the ending needs, and the divisor the progress fraction measures against.
-        Re-verify against the Models API whenever <code>FT_MODEL</code> moves.
+        the reserve the ending needs, and what is left to spend on play. Re-verify against the
+        Models API whenever <code>FT_MODEL</code> moves.
+      </td>
+    </tr>
+    <tr>
+      <td><code>SESSION_FT_CONTEXT_BUDGET</code></td>
+      <td>850000</td>
+      <td>
+        myth-zd6pn — <em>the</em> session ceiling, defined as <code>FT_USABLE_CONTEXT_TOKENS</code>.
+        Divides the auto-end, the progress fraction, and the Slow Thinker's wind-down and
+        convergence fractions. Replaced the retired <code>SESSION_TOKEN_BUDGET</code>; a spend cap,
+        if wanted, belongs beside it rather than inside it.
       </td>
     </tr>
     <tr>

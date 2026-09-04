@@ -103,10 +103,12 @@
   <code>recordUsage</code> has no caller anywhere in production, so <code>session_usage</code> is
   permanently empty and <code>budgetSummary</code> always returns <code>null</code>. The durable
   per-session cost trail described on this page therefore does not exist yet. Worse, the Session
-  Runtime's budget auto-end was built to read <code>budgetSummary</code>, which meant it saw zero on
-  every turn and <em>never fired once</em> — sessions had no enforced stop until that read was moved
-  to the Redis usage counter. Treat this section as the design of the durable trail, not a
-  description of a live feed, until a writer is wired up.
+  Runtime's session auto-end was built to read <code>budgetSummary</code>, which meant it saw zero
+  on every turn and <em>never fired once</em> — sessions had no enforced stop until that read was
+  moved to Redis, and it has since moved again, onto the
+  <a href="../runtime/fast-thinker.html#the-context-ceiling">Fast Thinker's context level</a>, which
+  is a session-length bound and not a cost one. Treat this section as the design of the durable
+  trail, not a description of a live feed, until a writer is wired up.
 </div>
 
 <p>
@@ -401,9 +403,15 @@
   subscription and purchase handlers call <code>grantInTx</code>, which means trial-burn fires
   inside their transactions on the first paid grant. The Session Runtime calls
   <code>tryDebitForSession</code> at session-start and reads
-  <code>consumedSourceType === 'trial'</code> as the trial-mode entry signal; its cost-cap and
-  wind-down signals, however, come from the Redis usage counter
-  (<code>sessionState.totalUsageTokens</code>), not from this table.
+  <code>consumedSourceType === 'trial'</code> as the trial-mode entry signal. Its session-length
+  signals — wind-down, convergence, the auto-end, the progress bar — come from Redis and not from
+  this table, and as of myth-zd6pn they read the
+  <a href="../runtime/fast-thinker.html#the-context-ceiling">Fast Thinker's context level</a> rather
+  than the gross token counter (<code>sessionState.totalUsageTokens</code>), which now bounds
+  nothing. Note the consequence for this page: a running session has no cost ceiling of its own. The
+  credit debit at session start is the only spend gate a session passes through, and a per-session
+  spend cap — if one is wanted — has to be metered here, on priced usage, with uncached input, cache
+  read and cache write each at their own rate.
 </p>
 
 <h2>Appendix: file map</h2>

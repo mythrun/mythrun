@@ -15,7 +15,7 @@
 <!-- source: backend/src/llm/prompts/session/st-narrative-progress.txt -->
 <!-- source: backend/src/session/trigger-state.ts -->
 <!-- source: docs/superpowers/specs/2026-06-10-myt-69-slowthinker-design.md -->
-<!-- source-hash: sha256:c62222c2da171a76f42ad002911eb4ffc09d224da9cee684aacf3e27b4eb1409 -->
+<!-- source-hash: sha256:3772d694977288e679f05c2a29bcde9d4d321410ea9796e58e9f28e0c6f575d6 -->
 <!-- last-ticket: myth-l2lap -->
 
 <h1>Slow Thinker</h1>
@@ -103,8 +103,8 @@
   Inside <code>processStEvalJob</code>, the first decision is
   <strong>mechanical code, not a model</strong>. Three arms force an evaluation outright, skipping
   the gate: turns-since-the-last-ST-run ≥ <code>ST_EVAL_FLOOR_TURNS</code> (the every-N-turns
-  oversight floor), total session usage ≥ <code>WIND_DOWN_FRACTION</code> ×
-  <code>SESSION_TOKEN_BUDGET</code> (which also flips wind-down mode on), or the
+  oversight floor), the Fast Thinker's context fill ≥ <code>WIND_DOWN_FRACTION</code> ×
+  <code>SESSION_FT_CONTEXT_BUDGET</code> (which also flips wind-down mode on), or the
   <a href="#the-convergence-steer">convergence probe</a> below returning a steer. These are policy
   arms around the gate — like a rate limit, they are ZFC-exempt mechanical thresholds, never prompt
   content.
@@ -122,20 +122,20 @@
 </p>
 
 <p>
-  The gate's template was already written stable-first, so making it cacheable took no content change
-  at all — only an annotation: the assembly now hands the LLM client a breakpoint after the playbook
-  span and leaves the bytes exactly as they were. Its stable span measures 4,753 tokens against
-  Haiku's 4,096-token minimum cacheable prefix, roughly 650 tokens of headroom. That number is worth
-  remembering before anyone shortens the playbook to save input: below the floor the cache stops
-  engaging entirely, and a trim that looks like a saving would cost more than it saves.
+  The gate's template was already written stable-first, so making it cacheable took no content
+  change at all — only an annotation: the assembly now hands the LLM client a breakpoint after the
+  playbook span and leaves the bytes exactly as they were. Its stable span measures 4,753 tokens
+  against Haiku's 4,096-token minimum cacheable prefix, roughly 650 tokens of headroom. That number
+  is worth remembering before anyone shortens the playbook to save input: below the floor the cache
+  stops engaging entirely, and a trim that looks like a saving would cost more than it saves.
 </p>
 
 <p>
-  How often the gate actually skips is also worth stating, because it is easy to over-model. Measured
-  across three scripted sessions on current code, the Opus evaluation runs about
-  <strong>0.6 times per turn</strong>, not once per turn — six evaluations over ten turns is typical.
-  Any cost or latency estimate built on one evaluation per turn is high by roughly 40% before any
-  optimization is applied.
+  How often the gate actually skips is also worth stating, because it is easy to over-model.
+  Measured across three scripted sessions on current code, the Opus evaluation runs about
+  <strong>0.6 times per turn</strong>, not once per turn — six evaluations over ten turns is
+  typical. Any cost or latency estimate built on one evaluation per turn is high by roughly 40%
+  before any optimization is applied.
 </p>
 
 <aside class="wiki-rationale">
@@ -169,21 +169,22 @@
 </p>
 
 <p>
-  The steer needs two independent readings. The first is mechanical: cumulative spend over
-  <code>SESSION_TOKEN_BUDGET</code>, arithmetic in <code>converge-policy.ts</code>. The second is a
-  judgment — <em>how far through the prep's intended arc is this table actually?</em> — which is a
-  reading of prose against the <code>sd_playbook</code>, so per ZFC it is a model call and never a
-  beat count in code. Cheap and classification-shaped, so Haiku, the same tier as the gate. The
-  steer fires when the story sits below the spend by more than <code>CONVERGE_LAG_MARGIN</code>.
+  The steer needs two independent readings. The first is mechanical: the FT's context fill over
+  <code>SESSION_FT_CONTEXT_BUDGET</code>, arithmetic in <code>converge-policy.ts</code> over the
+  same <code>session:{cId}:ftcontext</code> level the turn worker writes. The second is a judgment —
+  <em>how far through the prep's intended arc is this table actually?</em> — which is a reading of
+  prose against the <code>sd_playbook</code>, so per ZFC it is a model call and never a beat count
+  in code. Cheap and classification-shaped, so Haiku, the same tier as the gate. The steer fires
+  when the story sits below the session by more than <code>CONVERGE_LAG_MARGIN</code>.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>The probe is never told how much budget is left</strong> — the whole value of the steer is
-  comparing two <em>independent</em> axes, story delivered against session spent. A probe that could
-  see the clock would anchor to it, and the comparison would collapse into a number checked against
-  itself. So <code>st-narrative-progress</code> receives the playbook, the running summary, and a
-  recent-exchange window, and nothing about the budget; the comparison happens afterwards, in code
-  that never reads prose.
+  <strong>The probe is never told how much session is left</strong> — the whole value of the steer
+  is comparing two <em>independent</em> axes, story delivered against session spent. A probe that
+  could see the clock would anchor to it, and the comparison would collapse into a number checked
+  against itself. So <code>st-narrative-progress</code> receives the playbook, the running summary,
+  and a recent-exchange window, and nothing about how full the window is; the comparison happens
+  afterwards, in code that never reads prose.
 </aside>
 
 <aside class="wiki-rationale">
@@ -260,14 +261,15 @@
 </p>
 
 <p>
-  That assembly is ordered for the prompt cache, not for reading convenience. The template is written
-  stable-first — the instruction head, then the roster and the <code>sd_playbook</code>, then a
-  breakpoint, and only below it the parts that change every turn: the running summary, both standing
-  slots, the exchange window, and the wind-down and converge banners. The call passes those pieces to
-  the LLM client as <a href="./llm.html#prompt-blocks-and-cache-breakpoints">blocks</a> with two
-  breakpoints, so everything above the boundary is written to Anthropic's cache once and read back at
-  a tenth of the input price on every later evaluation in the session. Before this, the director's
-  cache reads were flatly zero. Measured on a ten-turn session, evaluation cost fell 28%.
+  That assembly is ordered for the prompt cache, not for reading convenience. The template is
+  written stable-first — the instruction head, then the roster and the <code>sd_playbook</code>,
+  then a breakpoint, and only below it the parts that change every turn: the running summary, both
+  standing slots, the exchange window, and the wind-down and converge banners. The call passes those
+  pieces to the LLM client as
+  <a href="./llm.html#prompt-blocks-and-cache-breakpoints">blocks</a> with two breakpoints, so
+  everything above the boundary is written to Anthropic's cache once and read back at a tenth of the
+  input price on every later evaluation in the session. Before this, the director's cache reads were
+  flatly zero. Measured on a ten-turn session, evaluation cost fell 28%.
 </p>
 
 <aside class="wiki-rationale">
@@ -451,12 +453,12 @@
 <h2>Wind-down and session boundaries</h2>
 
 <p>
-  Wind-down is the budget policy arm: once
-  <code>(usage + usage:st) ≥ WIND_DOWN_FRACTION × SESSION_TOKEN_BUDGET</code>, the evaluation is
-  forced with the wind-down flag and the director sets a <strong>standing</strong> directive
-  steering toward a natural close — resolve the current scene, open no new threads or NPCs — and
-  keeps directing toward closure on subsequent evaluations. It is the second of the three closing
-  arms, after <a href="#the-convergence-steer">convergence</a> at 0.75 and before the
+  Wind-down is the late policy arm: once
+  <code>ftContext ≥ WIND_DOWN_FRACTION × SESSION_FT_CONTEXT_BUDGET</code>, the evaluation is forced
+  with the wind-down flag and the director sets a <strong>standing</strong> directive steering
+  toward a natural close — resolve the current scene, open no new threads or NPCs — and keeps
+  directing toward closure on subsequent evaluations. It is the second of the three closing arms,
+  after <a href="#the-convergence-steer">convergence</a> at 0.75 and before the
   <a href="./session-turn.html">turn worker</a>'s farewell auto-end at 1.0. Wind-down and
   convergence are mutually exclusive by construction — the worker never probes for convergence once
   wind-down is active — which is why the probe takes the wind-down expression as an argument rather
@@ -464,19 +466,36 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>What the budget constant actually governs, and why it moved</strong> —
-  <code>SESSION_TOKEN_BUDGET</code> went from 400,000 to 545,000 on 2026-07-26, and that was
-  <em>not</em> a decision to make sessions longer. Sonnet 5 ships a tokenizer that spends about
-  35.6% more tokens on identical text (measured on 6KB of our own prep prompt: 1175 → 1593), and the
-  <a href="./fast-thinker.html">Fast Thinker</a> re-sends the whole transcript every turn — so
-  overnight the old 400,000 bought roughly 26% less actual story. Multiplying through restores the
-  prior session in <em>prose</em> terms rather than token terms. Worth being precise about the blast
-  radius: the three arms that read this constant are the convergence probe's window, the wind-down
-  flip, and the <a href="./session-turn.html#the-session-progress-signal">progress fraction</a>. So
-  raising it makes the DM land later and the progress bar climb slower; it is narrative pacing, not
-  an authorisation to spend more. Sessions that genuinely run long do cost more, and Sonnet 5's
-  introductory rate ends 2026-08-31 — an equal-length session is slightly cheaper than before until
-  then, and roughly 36% dearer after.
+  <strong>All three arms read one number, written by a different process (myth-zd6pn)</strong> — the
+  fraction this worker compares is the
+  <a href="./fast-thinker.html#the-context-ceiling">Fast Thinker</a>'s context fill on its most
+  recent call, read from <code>session:{cId}:ftcontext</code>. That key exists because this job runs
+  in the <em>st-evaluation</em> worker while the reading is produced in the <em>turn</em> worker:
+  the level has to cross a process boundary, and passing it through Redis is what makes the
+  wind-down flip, the convergence window, the turn worker's auto-end and the player-facing
+  <a href="./session-turn.html#the-session-progress-signal">progress bar</a> agree by construction
+  rather than by discipline. It is a level rather than a counter — overwritten each turn, and
+  legitimately falling when a terse turn follows a combat burst — so wind-down can in principle
+  un-flip. That is correct: if the window emptied, the session is genuinely less far along. Only the
+  player-visible bar is pinned monotonic, and for a display reason, not a policy one.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>What the fractions are a fraction OF changed; what they mean did not</strong> — until
+  myth-zd6pn the divisor was <code>SESSION_TOKEN_BUDGET</code>, 545,000 cumulative gross tokens
+  across every tier. It was retired outright, because it metered a quantity that was wrong twice
+  over: it accumulated a value that is really a level, and it counted cache reads 1:1 against a
+  ceiling calibrated before prompt caching existed. At the FT's measured 91–96% cache-read rate it
+  saturated roughly ten times too fast, so wind-down fired within about twenty minutes of the
+  session opening and the DM spent nearly every session in landing mode. <code>0.9</code>,
+  <code>0.75</code> and the lag margin all survived the fix untouched — they were never the problem,
+  and they still mean the same thing about where in a session the DM starts closing. Note what
+  follows: sessions now run to the Fast Thinker's window, which is materially longer, and no
+  per-session <em>spend</em> ceiling replaced the retired one. That is a product decision left open
+  on purpose. A spend cap must be metered on priced usage through the
+  <a href="../auth-billing/billing-metering.html">billing</a> model, and
+  <code>st-config.ts</code> carries a standing note against quietly reintroducing a token-count
+  ceiling in its place.
 </aside>
 
 <p>
@@ -488,13 +507,14 @@
 <aside class="wiki-rationale">
   <strong>Session start must wipe the ST's keys, or a replayed session is born dying</strong> — a
   same-campaign session started within the keys' lifetime would otherwise inherit the prior
-  session's usage and a standing wind-down directive. So
+  session's readings and a standing wind-down directive. So
   <code>POST /api/sessions/:campaignId/start</code> resets the spend keys (<code>:usage</code>,
-  <code>:usage:st</code>, <code>:summary</code>, and — since the fraction is derived from the same
-  budget — the <code>:progress</code> floor, which never falls on its own and would otherwise open
-  the next session pinned at the last one's reading) and the ST-owned trigger-state (both direction
-  slots + the turns-since-ST counter). The smoke surfaced the sibling hazard too: a stale
-  <code>responded-seq</code> watermark made every new batch
+  <code>:usage:st</code>, <code>:summary</code>, the <code>:progress</code> floor, which never falls
+  on its own and would otherwise open the next session pinned at the last one's reading, and — since
+  myth-zd6pn — the <code>:ftcontext</code> level, without which the next session would open with the
+  Fast Thinker's window already reported full and wind down on its first turn) and the ST-owned
+  trigger-state (both direction slots + the turns-since-ST counter). The smoke surfaced the sibling
+  hazard too: a stale <code>responded-seq</code> watermark made every new batch
   <code>(staleWatermark, max]</code> empty, so the DM never fired — the session-start reset now
   sweeps the no-TTL dm-trigger coordination keys (responded-seq, first-unresponded, last-activity,
   dm_responding, dm-trigger-explicit) alongside the ST keys. The st-evaluation job also re-checks
@@ -539,9 +559,9 @@
   <li>
     After a turn flushes, watch the worker log for <code>st-eval gate</code> (with
     <code>needed</code> / <code>confidence</code> / <code>skip</code>) on a gated cycle, or a forced
-    evaluation when the floor or wind-down arm fired. Past 75% of the budget you should also see
-    <code>st-eval convergence probe</code> with <code>mechanical</code> / <code>narrative</code> /
-    <code>converge</code> — those two numbers are what to watch when tuning
+    evaluation when the floor or wind-down arm fired. Past 75% of the context ceiling you should
+    also see <code>st-eval convergence probe</code> with <code>mechanical</code> /
+    <code>narrative</code> / <code>converge</code> — those two numbers are what to watch when tuning
     <code>CONVERGE_LAG_MARGIN</code>. Below the floor the line is absent, which is correct: the
     probe does not run.
   </li>
@@ -632,11 +652,13 @@
       <td>Recent-slice sizes; the gate sees a tighter window than the evaluation.</td>
     </tr>
     <tr>
-      <td><code>SESSION_TOKEN_BUDGET</code> / <code>WIND_DOWN_FRACTION</code></td>
-      <td>545000 / 0.9</td>
+      <td><code>WIND_DOWN_FRACTION</code></td>
+      <td>0.9</td>
       <td>
-        The session-bound proxy and the fraction at which wind-down trips. 400000 → 545000 on the
-        Sonnet 5 tokenizer shift — same session length in prose, not a bigger session.
+        The fraction of <code>SESSION_FT_CONTEXT_BUDGET</code> (850000, in
+        <a href="./fast-thinker.html#the-context-ceiling"><code>ft-config.ts</code></a
+        >) at which wind-down trips. myth-zd6pn retired the local <code>SESSION_TOKEN_BUDGET</code>;
+        the fraction is unchanged, what it divides is not.
       </td>
     </tr>
     <tr>
@@ -644,7 +666,8 @@
       <td>0.75 / 0.1</td>
       <td>
         Where the <a href="#the-convergence-steer">convergence probe</a> starts running, and how far
-        the story must lag the spend before it steers. Both are pacing feel; real play settles them.
+        the story must lag the session before it steers. Both are pacing feel; real play settles
+        them.
       </td>
     </tr>
     <tr>
@@ -790,8 +813,9 @@
     <tr>
       <td><code>src/session/st-config.ts</code></td>
       <td>
-        The tuning constants above (models, floor, gate floor, windows, budget, convergence
-        thresholds, timeouts).
+        The tuning constants above (models, floor, gate floor, windows, the wind-down fraction,
+        convergence thresholds, timeouts). The session ceiling those fractions divide lives in
+        <code>ft-config.ts</code>, not here.
       </td>
     </tr>
   </tbody>

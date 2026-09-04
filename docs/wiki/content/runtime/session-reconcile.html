@@ -107,11 +107,16 @@
     the orchestration.
   </li>
   <li>
-    <strong>Budget auto-end</strong> — the token budget reaches 100%. The
+    <strong>Context-ceiling auto-end</strong> — the session reaches 100% of its length bound. The
     <a href="./session-turn.html">turn worker</a> observes the crossing on its post-flush success
     phase (the same place the ST-evaluation floor is bumped) and fires the same begin flow. The
-    Fast-Thinker context bound is the real session-length cap; when cumulative usage reaches it, the
-    session <em>has</em> to end because the FT can hold no more transcript.
+    bound is the
+    <a href="./fast-thinker.html#the-context-ceiling">Fast Thinker's context window</a>: it re-sends
+    the whole transcript on every call with no compaction, so when its fill reaches
+    <code>SESSION_FT_CONTEXT_BUDGET</code> the session <em>has</em> to end — the next turn would not
+    fit. It is a length bound and not a spend cap; myth-zd6pn retired the cumulative-token ceiling
+    that used to fire here, which counted cache reads against a pre-caching budget and ended
+    sessions roughly ten times too early.
   </li>
 </ul>
 
@@ -147,9 +152,9 @@
 
 <aside class="wiki-rationale">
   <strong>A SET-NX <code>ending</code> flag makes the two triggers idempotent</strong> — the
-  explicit frame and the budget auto-end can race (a player taps end on the same turn that crosses
-  100%). <code>endSession</code>'s first act is to claim the flag; the loser short-circuits there.
-  So exactly one farewell turn is enqueued no matter how many triggers fire — and the
+  explicit frame and the auto-end can race (a player taps end on the same turn that crosses 100%).
+  <code>endSession</code>'s first act is to claim the flag; the loser short-circuits there. So
+  exactly one farewell turn is enqueued no matter how many triggers fire — and the
   <code>farewell-{sessionId}</code> jobId is a broker-level dedup backstop beyond the flag.
 </aside>
 
@@ -160,11 +165,11 @@
   <code>[DM direction:]</code> silent-consume seam — the same seam the MYT-73 correction turn
   established — so the Fast Thinker writes the send-off in its own voice rather than quoting a
   marker. It joins the correction turn under a shared <code>isPlayerless</code> predicate in the
-  turn worker: neither advances the watermark, enqueues the Scribe, nor runs the budget auto-end.
-  The Scribe skip has a consequence the closeout jobs must answer for: whatever the send-off
-  establishes — an NPC departing, an object reaching its finished form — never enters the working
-  set. The farewell's prose is still persisted like any turn's, as durable <code>dm_text</code> rows
-  stamped <code>trigger_kind='farewell'</code>, and those rows land at <code>persistTurn</code>,
+  turn worker: neither advances the watermark, enqueues the Scribe, nor runs the auto-end. The
+  Scribe skip has a consequence the closeout jobs must answer for: whatever the send-off establishes
+  — an NPC departing, an object reaching its finished form — never enters the working set. The
+  farewell's prose is still persisted like any turn's, as durable <code>dm_text</code> rows stamped
+  <code>trigger_kind='farewell'</code>, and those rows land at <code>persistTurn</code>,
   <em>before</em> the finalize enqueues the closeout jobs. Both jobs read them back as the
   <strong>closing narration</strong> (below). The
   <a href="./session-turn.html#player-less-turns-correction-and-farewell">turn page</a> covers the
@@ -273,7 +278,7 @@
   status flips to <code>ended</code>. Without a guard, a new session could start on the same
   campaign, append onto the <em>same</em> Redis list, and have the prior session's still-pending
   reconcile load the polluted list and <code>clear()</code> it — silently destroying the new
-  session's working set on a perfectly normal flow (budget auto-end of session 1 → start session 2).
+  session's working set on a perfectly normal flow (auto-end of session 1 → start session 2).
 </p>
 
 <p>
@@ -1042,7 +1047,7 @@
   end. The end lifecycle lives at the <a href="./session-transport.html">session transport</a> seam
   (the <code>end_session</code> / <code>session_end</code> frames, the inbound ending-gate, the two
   start-interlock 409s) and is also fired by the <a href="./session-turn.html">turn worker</a>'s
-  budget auto-end; the farewell turn itself is rendered by that turn worker, and the
+  auto-end; the farewell turn itself is rendered by that turn worker, and the
   <code>QueueEvents</code> backstop is its terminal-stall net. The reconcile and analysis workers
   are the eighth and ninth <a href="./worker.html">BullMQ workers</a>. Reconcile retrieves
   candidates through the

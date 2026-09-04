@@ -1,7 +1,7 @@
 digraph session_reconcile {
   // End-of-session lifecycle (MYT-74a + MYT-74b). Two triggers converge on
   // endSession (idempotent via a SET-NX `ending` flag): the explicit `end_session`
-  // WS frame and the turn worker's budget-100% auto-end. MYT-74b SPLIT the end:
+  // WS frame and the turn worker's context-ceiling auto-end. MYT-74b SPLIT the end:
   // endSession only BEGINS it — claim flag, cancelSuspend, read watermark, enqueue
   // ONE player-less FAREWELL turn (jobId per-session). The turn worker renders the
   // send-off, then its `finally` runs finalizeEndedSession — the CONDITIONAL flip
@@ -36,7 +36,7 @@ digraph session_reconcile {
     fontcolor="ember";
 
     ws_end   [label="end_session WS frame\n(explicit summon,\n no payload)", color="ember", fontcolor="ember"];
-    budget   [label="turn worker\nbudget-100% auto-end\n(post-flush phase)", color="ember", fontcolor="ember"];
+    budget   [label="turn worker\ncontext-ceiling auto-end\nFT fill ≥ SESSION_FT_CONTEXT_BUDGET\n(post-flush phase)", color="ember", fontcolor="ember"];
     endfn    [label="endSession — BEGIN only\nSET-NX `ending` flag →\ncancelSuspend → read watermark →\nenqueue ONE farewell turn\n(does NOT finalize)", color="ember", fontcolor="ember"];
   }
 
@@ -46,7 +46,7 @@ digraph session_reconcile {
     color="ember";
     fontcolor="ember";
 
-    farewell [label="farewell turn (player-less)\n[DM direction:] silent-consume seam\nFT renders the send-off prose\nno watermark / no Scribe / no budget", color="ember", fontcolor="ember"];
+    farewell [label="farewell turn (player-less)\n[DM direction:] silent-consume seam\nFT renders the send-off prose\nno watermark / no Scribe / no re-end", color="ember", fontcolor="ember"];
     finalize [label="finalizeEndedSession\n(turn `finally`, unconditional)\nconditional markEnded (flip 'ended')\n→ broadcast session_end ONCE\n→ enqueue reconcile + analysis", color="ember", fontcolor="ember"];
     backstop [label="QueueEvents backstop\n(maxStalledCount terminal)\nidempotent finalize", color="ember", fontcolor="ember"];
   }

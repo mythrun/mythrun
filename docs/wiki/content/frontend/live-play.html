@@ -549,9 +549,9 @@
 
 <p>
   The wire carries one number saying how far through its mechanical ceiling the session is: a
-  fraction the server computes from cumulative token spend against the session budget and the Fast
-  Thinker's context fill against its usable window, whichever ceiling is nearer, because the session
-  ends when either is reached. It is monotonic and coarse by the server's own guarantee, and it rides
+  fraction the server computes from the Fast Thinker's context fill against its usable window — one
+  ceiling, because the session ends when that window can no longer take another turn. It is
+  monotonic and coarse by the server's own guarantee, and it rides
   three frames — <code>turn_end</code> (the once-per-turn beat, after persist and flush),
   <code>session_reconnect</code>, and <code>session_ready</code>. The client reads all three
   identically, holds the raw value, and derives exactly two things from it.
@@ -561,7 +561,7 @@
   <strong>The fraction is purely mechanical, and that is the enforced-ignorance argument</strong> —
   this is the one progress number the <em>player</em> sees, so under enforced ignorance it may never
   encode plot state, NPC secrets, or any narrative judgment about how close the story is to an
-  ending. Token spend and context fill carry none of that; there is nothing narrative in them to leak.
+  ending. How full a context window is carries none of that; there is nothing narrative in it to leak.
   The narrative side of a session converging lives with the Slow Thinker, on the secret side of the
   boundary, and never rides this field.
 </aside>

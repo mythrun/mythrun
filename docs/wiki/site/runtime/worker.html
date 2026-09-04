@@ -949,7 +949,7 @@
   improvised working set into durable canon (load the working set → retrieve canon candidates → one
   holistic Opus reconcile → a pure structural-and-policy validate → Voyage embed → one gated commit
   transaction → clear the working set), off the hot path. It is fired by the
-  <code>end_session</code> WS frame or the turn worker's budget-100% auto-end, not by a per-turn
+  <code>end_session</code> WS frame or the turn worker's context-ceiling auto-end, not by a per-turn
   enqueue, so unlike the other session workers it has no producer inside the worker process — the
   API server and the turn worker are the producers. It takes both Redis connections (<code
     >redisBatch</code

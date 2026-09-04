@@ -33,8 +33,8 @@ digraph slow_thinker {
     fontcolor="ember";
 
     active [label="active-session check\n(queued job for an ended session → no-op)"];
-    policy [label="DETERMINISTIC POLICY (code)\nturns-since-ST ≥ FLOOR → evaluate\nusage ≥ 0.9 × BUDGET → evaluate (wind-down)"];
-    probe [label="converge probe — Haiku (myth-3jna1)\nONLY inside 0.75 ≤ mech < 0.9 (else free)\narc position vs the sd_playbook, NEVER told the budget\nSECRET-SIDE: only a boolean + a token count leave", color="ember", fontcolor="ember"];
+    policy [label="DETERMINISTIC POLICY (code)\nturns-since-ST ≥ FLOOR → evaluate\nFT context ≥ 0.9 × FT_CONTEXT_BUDGET → evaluate (wind-down)"];
+    probe [label="converge probe — Haiku (myth-3jna1)\nONLY inside 0.75 ≤ mech < 0.9 (else free)\narc position vs the sd_playbook, NEVER told the clock\nSECRET-SIDE: only a boolean + a token count leave", color="ember", fontcolor="ember"];
     gate  [label="Haiku gate (generateObject)\n{needed, confidence, reason}\nskip IFF !needed && confidence ≥ 0.8", color="ember", fontcolor="ember"];
     director [label="Opus director (generateObject)\nGATE VERDICT NOT FED IN\nstructural split: reasoning | direction |\nstandingDirective | summaryUpdate\nrepairAttempted → DISCARD whole", color="ember", fontcolor="ember"];
     rearm [label="self-re-arm\nnewer turns mid-eval →\nremoveDeduplicationKey + re-add"];
@@ -60,7 +60,8 @@ digraph slow_thinker {
     oneshot [label="direction:oneshot\nlatest-wins SET · GETDEL by the turn worker", color="ember", fontcolor="ember"];
     standing [label="direction:standing\nSET / clear · READ (not cleared) every turn", color="ember", fontcolor="ember"];
     summary [label="session:{cId}:summary\nST is the ONLY writer (rewrite)"];
-    usagest [label="session:{cId}:usage:st\ndedicated INCRBY (gate+eval spend)"];
+    usagest [label="session:{cId}:usage:st\ndedicated INCRBY (gate+eval spend)\n(observability — bounds nothing)"];
+    ftctx [label="session:{cId}:ftcontext\nFT context LEVEL, written by the TURN worker\nthe one number wind-down + converge read", color="ember", fontcolor="ember"];
   }
 
   nextturn [label="NEXT DM turn → FastThinker\none-shot fused onto last user message\nstanding appended as raw tail (post-breakpoint)", color="ember", fontcolor="ember"];
@@ -68,8 +69,10 @@ digraph slow_thinker {
   turn -> q [label="add (dedup, no ttl)"];
   q -> active [label="BLPOP-style"];
   active -> policy;
+  ftctx -> policy [label="read (cross-process)", color="ember"];
   policy -> probe [label="not forced"];
   policy -> director [label="floor / wind-down forces", style=dashed];
+  ftctx -> probe [label="mechanical fraction", style=dotted, color="ember"];
   probe -> gate [label="on pace, out of window,\nor probe failed (fail-quiet)"];
   probe -> director [label="story behind spend →\nforce, converge:true (a BOOLEAN)", style=dashed];
   gate -> director [label="evaluate"];

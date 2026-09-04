@@ -16,7 +16,7 @@
 <!-- source: backend/src/routes/dev-fire-turn.ts -->
 <!-- source: docs/superpowers/specs/2026-06-05-myt-66-session-controller-design.md -->
 <!-- source: docs/superpowers/specs/2026-06-09-myt-68-fastthinker-design.md -->
-<!-- source-hash: sha256:3ac6ce4594d475eae02ede07a3b6b01713199d3794954f2a339234652f5f8e5a -->
+<!-- source-hash: sha256:7fc44140e8e9ca3805a710165c479ea1367f6be49fbce4d70da87eb0ed5eabed -->
 <!-- last-ticket: myth-05p52 -->
 
 <h1>Session turn</h1>
@@ -600,7 +600,7 @@
   <strong>Two player-less turn kinds: <code>correction</code> and <code>farewell</code></strong> — a
   player-less turn consumed no player message. The worker hoists a shared
   <code>isPlayerless = isCorrection || isFarewell</code> predicate and gates the watermark advance,
-  the Scribe enqueue, and the budget auto-end on it. The two differ only in how their direction is
+  the Scribe enqueue, and the session auto-end on it. The two differ only in how their direction is
   delivered:
   <ul>
     <li>
@@ -713,45 +713,78 @@
 </p>
 
 <aside class="wiki-rationale">
-  <strong>The budget-100% auto-end fires here too (MYT-74a / MYT-74b)</strong> — this post-flush
-  phase is also where the session can end itself. The Fast-Thinker context bound is the real
-  session-length cap; when cumulative token usage reaches <code>SESSION_TOKEN_BUDGET</code>, the
-  worker fires <code>endSession</code> — which, as of MYT-74b, only <em>begins</em> the end (claim
-  the <code>ending</code> flag → enqueue a player-less farewell turn); the
-  <a href="./session-reconcile.html">finalize</a> that flips the row and broadcasts
+  <strong>The session's auto-end fires here too (MYT-74a / MYT-74b)</strong> — this post-flush phase
+  is also where the session can end itself. The
+  <a href="./fast-thinker.html#the-context-ceiling">Fast Thinker</a> re-sends the whole transcript
+  on every call with no compaction, so a session genuinely runs out when the window can take no
+  more: once the FT's context fill reaches <code>SESSION_FT_CONTEXT_BUDGET</code> the next turn
+  would not fit, and the worker fires <code>endSession</code> — which, as of MYT-74b, only
+  <em>begins</em> the end (claim the <code>ending</code> flag → enqueue a player-less farewell
+  turn); the <a href="./session-reconcile.html">finalize</a> that flips the row and broadcasts
   <code>session_end</code> runs after the farewell renders. It's the same flow the explicit
   <code>end_session</code> WS frame runs. It is gated on <code>!isPlayerless</code> like the
-  watermark and the Scribe enqueue (a player-less correction opens no new budget-bearing context,
-  and a farewell <em>is</em> the end — re-triggering it would be meaningless), and it sits in its
-  own try/catch so a failure to enqueue the end never masks the turn outcome — mirroring the
+  watermark and the Scribe enqueue (a player-less correction opens no new context of its own, and a
+  farewell <em>is</em> the end — re-triggering it would be meaningless), and it sits in its own
+  try/catch so a failure to enqueue the end never masks the turn outcome — mirroring the
   st-evaluation isolation. Idempotence across turns is free: the SET-NX <code>ending</code> flag
-  no-ops a second over-budget turn, so the processor needs no dedup of its own.
+  no-ops a second over-ceiling turn, so the processor needs no dedup of its own.
 </aside>
 
 <aside class="wiki-rationale">
   <strong
-    >That auto-end had never fired once, and the fix was to read the same number everyone else reads
-    (myth-05p52)</strong
+    >The context fill is a level in Redis, and the arm reads it back rather than using the value in
+    hand</strong
   >
-  — until 2026-07-26 the arm above summed <code>repo.sessions.budgetSummary</code>, the durable
-  <code>session_usage</code> row. But <code>recordUsage</code>, the only writer of that table, has
-  no caller in production: the summary was permanently <code>null</code>, the cumulative count
-  permanently zero, and the comparison permanently false. Sessions had
-  <em>no enforced stop at all</em> — they ended when a player chose to end one, or when the FT
-  context finally overflowed and the provider rejected the call mid-turn, which is an error rather
-  than an ending (no farewell, no finalize, no recap, no post-session analysis). The arm now reads
-  <code>sessionState.totalUsageTokens</code>, the same Redis counter the
-  <a href="./slow-thinker.html">Slow Thinker</a>'s wind-down and convergence arms and the progress
-  fraction below already read. Sharing one number was the deciding argument over re-wiring
-  <code>recordUsage</code>: three signals that claim to describe how much budget is gone must not be
-  able to disagree, and one counter is the only way to guarantee that. The Redis counter is
-  genuinely written on every flush, which is why the progress bar stayed honest while this arm was
-  dead. <code>budgetSummary</code> is gone from the worker's repo surface entirely. What did
-  <em>not</em> come back is the durable per-session cost trail: <code>session_usage</code> stays
-  empty, so anything reading it for analytics reads nothing. That is a metering gap, tracked on its
-  own rather than folded into restoring the stop. The tests missed all of this because they mocked
-  <code>budgetSummary</code> and asserted the end fired — green against a read that could never
-  return anything; they now seed the real Redis counter.
+  — the worker finishes a render holding this turn's context reading, writes it to
+  <code>session:{cId}:ftcontext</code>, and then re-reads that key one line later. Two separate
+  reasons, both worth stating. It lives in <em>Redis</em> because the
+  <a href="./slow-thinker.html">Slow Thinker</a>'s wind-down and convergence arms run in a different
+  process and have to see the same number — four signals that all claim to say how much session is
+  left must not be able to disagree, and one key is the only way to guarantee that. And the arm
+  <em>reads it back</em> because the converge path does no fresh render and so produces no reading:
+  the last stored level is still the truth about how full the window is, where the in-hand value
+  would make a converge turn look like a session at zero. It is a level, not a counter — blindly
+  overwritten each turn, and legitimately falling when a terse turn follows a combat burst. The
+  write sits in its own try/catch; a miss degrades the end arm and the progress bar to the previous
+  reading, which is nearly right and self-heals next turn.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>This stop has been wrong twice, in opposite directions (myth-05p52, myth-zd6pn)</strong> —
+  worth carrying, because neither failure was visible from the code. Until 2026-07-26 the arm summed
+  <code>repo.sessions.budgetSummary</code>, the durable <code>session_usage</code> row — and
+  <code>recordUsage</code>, the only writer of that table, has no caller in production. The summary
+  was permanently <code>null</code> and the comparison permanently false, so sessions had
+  <em>no enforced stop at all</em>: they ended when a player chose to end one, or when the FT
+  context overflowed and the provider rejected the call mid-turn, which is an error rather than an
+  ending (no farewell, no finalize, no recap). myth-05p52 repointed the arm at
+  <code>sessionState.totalUsageTokens</code>, a Redis counter that is genuinely written on every
+  flush. That fixed the wiring and left the metric wrong. That counter sums
+  <strong>cumulative gross tokens across every tier</strong>, which is the wrong quantity in two
+  independent ways: it accumulates a value that is really a level (the FT re-sends one transcript,
+  it does not stack them), and it counts cache reads 1:1 against a ceiling calibrated before prompt
+  caching existed. Once the <a href="./llm.html">per-message cache breakpoints</a> landed and the FT
+  settled at a measured 91–96% cache-read rate, the meter filled roughly ten times faster than the
+  spend it stood for — auto-ending sessions around turn 14, some nineteen minutes, against a session
+  unit sold as roughly three hours, with the FT's window about 4% full. myth-zd6pn moved the arm
+  onto the context level. <code>totalUsageTokens</code> survives as an observability read and bounds
+  nothing; <code>budgetSummary</code> is gone from the worker's repo surface entirely, and the
+  durable per-session cost trail is still missing — <code>session_usage</code> stays empty, a
+  metering gap tracked on its own rather than folded into the stop.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>A context ceiling is not a spend cap, and this one deliberately isn't</strong> — the two
+  were conflated in the retired constant, and the conflation is most of what made it wrong. How full
+  the FT's window is answers <em>how much session is left</em>; it says nothing about what the
+  session cost, because a cache-read token and an uncached one fill the same amount of window at a
+  tenth of the price. So the honest consequence of this fix is that sessions now run to the window
+  rather than to a token count — materially longer than the old cliff — and there is at present
+  <em>no</em> per-session spend cap at all. That is an open product decision, not an oversight. A
+  spend cap is a legitimate separate thing, but it has to be metered on priced usage, with uncached
+  input, cache read and cache write each at their own rate through the
+  <a href="../auth-billing/billing-metering.html">billing</a> model, rather than bolted back onto
+  this axis.
 </aside>
 
 <aside class="wiki-rationale">
@@ -784,44 +817,54 @@
   simply stopped. So <code>turn_end</code> now carries an optional
   <code>progress: { fraction }</code> — a single number between 0 and 1 that says how much of the
   session is spent. The worker computes it on the beat that already exists, after persist and flush,
-  from counters the flush just moved: two Redis round-trips against keys this worker is already
-  talking to, entirely off the player-visible latency path (the prose streamed turns ago).
+  off the player-visible latency path (the prose streamed turns ago).
 </p>
 
 <p>
-  The fraction is the <strong>max</strong> of two mechanical ratios, bucketed to steps of 0.05:
-  cumulative session spend over <code>SESSION_TOKEN_BUDGET</code>, and the latest turn's FT input
-  tokens over <code>FT_USABLE_CONTEXT_TOKENS</code>. Max rather than sum or average because the
-  session ends when <em>either</em> ceiling is reached, so the nearer one is the one the table is
-  actually up against. The token term is the budget bound the auto-end above enforces; the context
-  term is the harder one — the <a href="./fast-thinker.html">Fast Thinker</a> re-sends the whole
-  transcript every turn with no compaction, so a long session runs out of window whatever the spend
-  says.
+  The fraction is <strong>one</strong> mechanical ratio, bucketed to steps of 0.05: the latest
+  turn's FT context fill over <code>SESSION_FT_CONTEXT_BUDGET</code> — the same level the auto-end
+  above compares, read from the same Redis key. The bar and the stop therefore cannot disagree: the
+  bar reaching the top and the session ending are two readings of one number.
 </p>
 
 <aside class="wiki-rationale">
-  <strong>Purely mechanical, and that is the point</strong> — this is the one progress number
-  players see, so it is derived from two token counters over two configured ceilings and nothing
-  else. It carries no plot state, no ST rationale, and no judgment about what is happening in the
-  fiction; nothing in it may ever become a function of the story. The narrative half of "this
-  session should start heading somewhere" lives on the secret side, as the
-  <a href="./slow-thinker.html#the-convergence-steer">Slow Thinker's convergence steer</a>, and the
-  two never meet. It is ZFC-exempt for the same reason dice math is: arithmetic over configured
-  budgets, not classification.
+  <strong>One axis, where there used to be two (myth-zd6pn)</strong> — the fraction was the
+  <em>max</em> of context fill and cumulative token spend over <code>SESSION_TOKEN_BUDGET</code>,
+  max because the session ended when either ceiling was reached. The spend term is gone, and with it
+  the second ceiling. It metered gross tokens with cache reads counted 1:1 against a budget
+  calibrated before prompt caching existed, so it saturated roughly ten times too fast and pinned
+  the bar at 100% while the window was 4% full — it was not a second bound, it was a broken reading
+  of the first one. There is now genuinely one bound, so there is one term: the
+  <a href="./fast-thinker.html#the-context-ceiling">Fast Thinker</a> re-sends the whole transcript
+  every turn with no compaction, and how full its window is <em>is</em> how much session is left.
+  Spend is a billing question and belongs on the
+  <a href="../auth-billing/billing-metering.html">billing surface</a>, not on a session-length
+  signal.
 </aside>
 
 <aside class="wiki-rationale">
-  <strong>Monotonic, coarse, and floored in Redis</strong> — the context term is
-  <em>not</em> monotonic (a terse turn after a combat burst legitimately reports fewer input tokens
-  than the turn before), so the raw max can fall. A bar that walks backwards destroys trust in the
-  number faster than no bar would: once a table has been told the session is 60% spent, telling them
-  35% next turn is worse than telling them nothing. So the candidate is folded against a per-session
+  <strong>Purely mechanical, and that is the point</strong> — this is the one progress number
+  players see, so it is one token reading over one configured ceiling and nothing else. It carries
+  no plot state, no ST rationale, and no judgment about what is happening in the fiction; nothing in
+  it may ever become a function of the story. The narrative half of "this session should start
+  heading somewhere" lives on the secret side, as the
+  <a href="./slow-thinker.html#the-convergence-steer">Slow Thinker's convergence steer</a>, and the
+  two never meet. It is ZFC-exempt for the same reason dice math is: arithmetic over a configured
+  ceiling, not classification.
+</aside>
+
+<aside class="wiki-rationale">
+  <strong>Monotonic, coarse, and floored in Redis</strong> — dropping the second term did not make
+  the monotonic fold redundant; it is the surviving term that falls. Context fill is
+  <em>not</em> monotonic: a terse turn after a combat burst legitimately reports fewer input tokens
+  than the turn before. A bar that walks backwards destroys trust in the number faster than no bar
+  would — once a table has been told the session is 60% spent, telling them 35% next turn is worse
+  than telling them nothing. So the candidate is folded against a per-session
   <code>:progress</code> floor in Redis and only ever raised. The floor stores the published
-  <em>fraction</em>, not the raw counters, which also means re-tuning
-  <code>SESSION_TOKEN_BUDGET</code> or the FT window mid-session can raise a live bar but never
-  rewind it. The 0.05 bucketing is the other half of the same concern: a combat-heavy turn burns
-  tokens several times faster than a quiet one, and a number that lurches turn-to-turn reads as
-  broken rather than informative.
+  <em>fraction</em>, not the raw counter, which also means re-tuning the ceiling or moving the FT
+  model mid-session can raise a live bar but never rewind it. The 0.05 bucketing is the other half
+  of the same concern: a combat-heavy turn burns tokens several times faster than a quiet one, and a
+  number that lurches turn-to-turn reads as broken rather than informative.
 </aside>
 
 <aside class="wiki-rationale">
@@ -836,11 +879,13 @@
   The whole computation is wrapped so that <em>any</em> failure returns nothing and the frame ships
   without the field — the same isolation the st-evaluation and Scribe enqueues use on this path. A
   Redis hiccup costs the table the readout; it must never cost them the <code>turn_end</code> that
-  tells the client its turn is over. The converge arm publishes a fraction too, from the token term
-  and the stored floor alone: it did no fresh render, so it has no context-fill reading, and the
-  result is still truthful and still non-decreasing. What reaches the screen is not this number but
-  four coarse bands derived from it — see the <a href="./session-transport.html">transport</a> for
-  the connect-path carriers.
+  tells the client its turn is over. The converge arm publishes a fraction too: it did no fresh
+  render and so has no reading of its own, so it falls back to the stored
+  <code>:ftcontext</code> level rather than to zero — a converge turn's window is exactly as full as
+  the last real turn left it, and letting the candidate collapse to zero would lean on the monotonic
+  floor to hide a number that was simply wrong. What reaches the screen is not this number but four
+  coarse bands derived from it — see the <a href="./session-transport.html">transport</a> for the
+  connect-path carriers.
 </p>
 
 <h2>Cross-process frame publishing and the turnId fence</h2>
@@ -1071,10 +1116,10 @@
   <code>dm_responding</code> flag and records the <code>last-responded-seq</code> watermark that the
   trigger's drain logic depends on, and the trigger system's <code>QueueEvents</code> subscriber
   closes this worker's terminal-error gap (and, MYT-74b, runs the finalize for a terminally-stalled
-  farewell). Downstream, this worker's post-flush phase is also the budget-100% trigger for
-  <a href="./session-reconcile.html">end of session</a>: when cumulative usage reaches the token
-  budget it begins the same end flow the explicit <code>end_session</code> frame runs. And the
-  worker itself renders the player-less <code>farewell</code> turn and runs the
+  farewell). Downstream, this worker's post-flush phase is also the auto-end trigger for
+  <a href="./session-reconcile.html">end of session</a>: when the FT's context fill reaches the
+  session ceiling it begins the same end flow the explicit <code>end_session</code> frame runs. And
+  the worker itself renders the player-less <code>farewell</code> turn and runs the
   <a href="./session-reconcile.html">unconditional finalize</a> in its <code>finally</code> — so the
   table's live send-off precedes the <code>session_end</code> frame.
 </p>
@@ -1183,10 +1228,21 @@
     <tr>
       <td><code>session:{campaignId}:usage</code></td>
       <td>
-        Accumulated token usage <code>{ input, output }</code>. Summed with
-        <code>:usage:st</code> to give the cumulative spend the budget auto-end, the
-        <a href="./slow-thinker.html">Slow Thinker</a>'s policy arms, and the progress fraction all
-        read.
+        Accumulated token usage <code>{ input, output }</code>, summed with <code>:usage:st</code>.
+        Gross tokens, cache reads included — observability only as of myth-zd6pn. It bounds nothing:
+        the auto-end, the <a href="./slow-thinker.html">Slow Thinker</a>'s policy arms and the
+        progress fraction all moved to <code>:ftcontext</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>session:{campaignId}:ftcontext</code></td>
+      <td>
+        myth-zd6pn — the FT context <em>level</em>: input tokens on the Fast Thinker's most recent
+        call. Blind SET each turn, so it legitimately falls; a missing or corrupt value reads as 0
+        ("early session"), because under-reading self-heals next turn while over-reading would end a
+        session early and cannot be undone. The one number the auto-end, the progress fraction, the
+        ST's wind-down and the convergence steer all read. DEL'd at session start; carries the
+        session-state TTL.
       </td>
     </tr>
     <tr>

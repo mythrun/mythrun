@@ -16,7 +16,7 @@
 <!-- source: backend/src/session/post-session-analysis.ts -->
 <!-- source: backend/src/session/session-turn-queue-events.ts -->
 <!-- source: backend/src/queue/job-containment.ts -->
-<!-- source-hash: sha256:f1a244a89f627d01070c7e477598af1376543146f40228b02d809cfa884ac948 -->
+<!-- source-hash: sha256:68dee64089a3b28b98e435e7f6898507ec8319a7ee7481cf1ecd5ef6b6d38875 -->
 <!-- last-ticket: myth-ha6qr -->
 
 <h1>Worker</h1>
@@ -155,7 +155,7 @@
   improvised working set into durable canon (load the working set → retrieve canon candidates → one
   holistic Opus reconcile → a pure structural-and-policy validate → Voyage embed → one gated commit
   transaction → clear the working set), off the hot path. It is fired by the
-  <code>end_session</code> WS frame or the turn worker's budget-100% auto-end, not by a per-turn
+  <code>end_session</code> WS frame or the turn worker's context-ceiling auto-end, not by a per-turn
   enqueue, so unlike the other session workers it has no producer inside the worker process — the
   API server and the turn worker are the producers. It takes both Redis connections (<code
     >redisBatch</code

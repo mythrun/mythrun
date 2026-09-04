@@ -14,7 +14,7 @@ digraph worker {
   // closeout that writes the recap + handoff. The st-evaluation and scribe
   // workers are both enqueued by the turn worker on its flushed-success path;
   // the reconcile + analysis workers are fired at finalize (end_session WS
-  // frame or the turn worker's budget-100% auto-end). The turn / trigger /
+  // frame or the turn worker's context-ceiling auto-end). The turn / trigger /
   // st-eval / scribe / reconcile / analysis workers also read/write
   // redisRealtime (lock / state / direction / working set / summary / trigger
   // coordination). A QueueEvents('session-turn') subscriber publishes the
