@@ -16,20 +16,20 @@ import {
 import {
   CONVERGE_LAG_MARGIN,
   CONVERGE_MECHANICAL_FLOOR,
-  SESSION_TOKEN_BUDGET,
   WIND_DOWN_FRACTION,
 } from '../st-config.js'
+import { SESSION_FT_CONTEXT_BUDGET } from '../ft-config.js'
 
 describe('mechanicalProgress', () => {
   it('is cumulative spend over the session token budget', () => {
-    expect(mechanicalProgress(SESSION_TOKEN_BUDGET / 4)).toBeCloseTo(0.25, 10)
-    expect(mechanicalProgress(SESSION_TOKEN_BUDGET * 0.75)).toBeCloseTo(0.75, 10)
+    expect(mechanicalProgress(SESSION_FT_CONTEXT_BUDGET / 4)).toBeCloseTo(0.25, 10)
+    expect(mechanicalProgress(SESSION_FT_CONTEXT_BUDGET * 0.75)).toBeCloseTo(0.75, 10)
   })
 
   it('clamps to [0,1] — it is a fraction, not a ratio that runs away', () => {
     expect(mechanicalProgress(0)).toBe(0)
     expect(mechanicalProgress(-1)).toBe(0)
-    expect(mechanicalProgress(SESSION_TOKEN_BUDGET * 3)).toBe(1)
+    expect(mechanicalProgress(SESSION_FT_CONTEXT_BUDGET * 3)).toBe(1)
   })
 })
 

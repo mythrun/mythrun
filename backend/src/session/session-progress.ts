@@ -18,8 +18,7 @@
 // Pure + I/O-free by design. The monotonic floor is session-scoped state the
 // CALLER owns (Redis `session:{cId}:progress`) — see `raiseProgressMonotonic`.
 
-import { FT_USABLE_CONTEXT_TOKENS } from './ft-config.js'
-import { SESSION_TOKEN_BUDGET } from './st-config.js'
+import { SESSION_FT_CONTEXT_BUDGET } from './ft-config.js'
 
 /**
  * The display quantum. A combat-heavy turn burns tokens several times faster
@@ -28,15 +27,19 @@ import { SESSION_TOKEN_BUDGET } from './st-config.js'
  */
 export const PROGRESS_STEP = 0.05
 
-/** The two mechanical counters the fraction is derived from. */
+/** The mechanical counter the fraction is derived from.
+ *
+ *  myth-zd6pn — ONE term, not two. The cumulative-spend term was removed: it
+ *  metered gross tokens (cache reads included) against a ceiling calibrated
+ *  before prompt caching existed, so it saturated roughly ten times too fast
+ *  and ended sessions with the window ~4% full. Spend is a billing question
+ *  and belongs on the billing surface, not on the session-length signal. */
 export interface ProgressInputs {
-  /** Cumulative session token spend (every tier, whole session). Monotonic by
-   *  construction — the counters only ever accumulate. */
-  readonly cumulativeTokens: number
   /** The LATEST turn's FT input tokens — the final tool-loop step's prompt,
    *  which is the largest one and therefore the honest context-fill measure.
    *  NOT monotonic: a terse turn after a combat burst legitimately reports
-   *  fewer than the turn before it. */
+   *  fewer than the turn before it. The monotonic guarantee is applied
+   *  downstream, over the published fraction. */
   readonly contextTokens: number
 }
 
@@ -48,26 +51,19 @@ function ratio(used: number, ceiling: number): number {
 }
 
 /**
- * The raw progress fraction: the MAX of the mechanical ceilings, bucketed to
- * PROGRESS_STEP.
+ * The raw progress fraction: FT context fill over the session's context
+ * ceiling, bucketed to PROGRESS_STEP.
  *
- * Max, not sum or average, because the session ends when ANY ceiling is
- * reached — whichever is nearer is the one the player is actually up against:
+ * One term, because there is one bound. The FT re-sends the whole transcript
+ * with no compaction, so the session ends when the window can no longer take
+ * another turn, and how full the window is IS how much session is left.
  *
- *   - token budget: cumulative spend / SESSION_TOKEN_BUDGET (the §3.11 bound
- *     proxy, the one the cliff enforces today)
- *   - context fill: the latest turn's FT input / FT_USABLE_CONTEXT_TOKENS (the
- *     real bound — the FT re-sends the whole transcript with no compaction, so
- *     a long session runs out of window whatever the spend says)
- *
- * NOT monotonic on its own: the context term can fall. Fold the result through
- * `raiseProgressMonotonic` against the session's stored floor before it ships.
+ * NOT monotonic on its own: the context term falls on a terse turn. Fold the
+ * result through `raiseProgressMonotonic` against the session's stored floor
+ * before it ships.
  */
 export function computeProgressFraction(inputs: ProgressInputs): number {
-  const raw = Math.max(
-    ratio(inputs.cumulativeTokens, SESSION_TOKEN_BUDGET),
-    ratio(inputs.contextTokens, FT_USABLE_CONTEXT_TOKENS),
-  )
+  const raw = ratio(inputs.contextTokens, SESSION_FT_CONTEXT_BUDGET)
   // `Math.round(raw * 20) / 20`, NOT `Math.round(raw / STEP) * STEP` — the
   // latter lands on 0.35000000000000003 for bucket 7 and ships that as JSON.
   // Dividing by the integer bucket count yields the canonical double.

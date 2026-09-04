@@ -25,29 +25,23 @@ export const ST_GATE_CONFIDENCE_FLOOR = 0.8
 export const ST_GATE_EXCHANGE_WINDOW = 6
 export const ST_EVAL_EXCHANGE_WINDOW = 10
 
-/** The §3.11 session bound proxy — the total token budget that, at
- *  WIND_DOWN_FRACTION, trips the wind-down policy arm. Plan-time; tuned in the
- *  smoke. The FT-context hard cap (session-end issue) is the real bound; this
- *  is the ST-side signal.
+/** myth-zd6pn — SESSION_TOKEN_BUDGET (545_000 cumulative GROSS tokens) is
+ *  RETIRED. It metered the wrong quantity twice over: it accumulated a value
+ *  that is really a level (the FT re-sends one transcript, it does not stack
+ *  them), and after cost wave 1 landed per-message cache breakpoints it counted
+ *  cache reads 1:1 against a ceiling calibrated before caching existed. At the
+ *  measured 91-96% cache-read rate it saturated roughly ten times too fast,
+ *  auto-ending sessions around turn 14 with the FT window ~4% full.
  *
- *  400_000 -> 545_000 on the 2026-07-26 Sonnet 5 bump. This is NOT a decision to
- *  make sessions longer — it holds them where they already were. Sonnet 5's
- *  tokenizer spends ~35.6% more tokens on identical text (measured: 1175 -> 1593
- *  on 6KB of our own prep prompt), and the FT re-sends the whole transcript every
- *  turn, so the old 400_000 bought ~26% less actual story than it did the day
- *  before. 400_000 x 1.356 ~= 545_000 restores the prior session in PROSE terms
- *  rather than in token terms.
+ *  The session bound is now SESSION_FT_CONTEXT_BUDGET in ft-config.ts: how much
+ *  context the Fast Thinker holds in a single call. WIND_DOWN_FRACTION and the
+ *  CONVERGE_* thresholds below are fractions OF THAT ceiling — they did not
+ *  change meaning, only what they are a fraction of.
  *
- *  What this constant actually controls today is narrative pacing, not spend:
- *  the ST convergence/wind-down arms and the myth-nu0hm progress fraction read
- *  it, but the hard auto-end that was supposed to enforce it is dead code
- *  (myth-05p52 — recordUsage has no caller, so budgetSummary always reads zero).
- *  So raising it makes the DM land later and the progress band climb slower; it
- *  does not by itself authorise more spend. Sessions that genuinely run long do
- *  cost more, and note the Sonnet 5 introductory rate ends 2026-08-31 — an
- *  equal-length session is slightly cheaper than before until then, ~36% dearer
- *  after. Re-tune here if that step lands badly. */
-export const SESSION_TOKEN_BUDGET = 545_000
+ *  Do not reintroduce a token-count ceiling here. A per-session SPEND cap is a
+ *  legitimate separate thing, but it must be metered on PRICED usage (uncached
+ *  input, cache read and cache write each at their own rate, per
+ *  billing/model-pricing.ts), not on a gross token sum. */
 export const WIND_DOWN_FRACTION = 0.9
 
 /** myth-3jna1 — the CONVERGENCE steer, the stage before wind-down. Wind-down

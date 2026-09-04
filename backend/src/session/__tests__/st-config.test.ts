@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ST_MODEL, ST_GATE_MODEL, ST_EVAL_FLOOR_TURNS, ST_GATE_CONFIDENCE_FLOOR,
-  ST_GATE_EXCHANGE_WINDOW, ST_EVAL_EXCHANGE_WINDOW, SESSION_TOKEN_BUDGET,
+  ST_GATE_EXCHANGE_WINDOW, ST_EVAL_EXCHANGE_WINDOW,
   WIND_DOWN_FRACTION, ST_EVAL_TIMEOUT_MS, ST_GATE_TIMEOUT_MS,
   ST_EVAL_MAX_OUTPUT_TOKENS, ST_SUMMARY_TARGET_WORDS,
   CONVERGE_MECHANICAL_FLOOR, CONVERGE_LAG_MARGIN, ST_PROGRESS_MODEL,
@@ -21,10 +21,9 @@ describe('st-config', () => {
     expect(ST_EVAL_TIMEOUT_MS).toBe(120_000)
     expect(ST_GATE_TIMEOUT_MS).toBe(30_000)
   })
-  it('exposes the slice windows, budget, output ceiling, summary target', () => {
+  it('exposes the slice windows, output ceiling, summary target', () => {
     expect(ST_GATE_EXCHANGE_WINDOW).toBeGreaterThan(0)
     expect(ST_EVAL_EXCHANGE_WINDOW).toBeGreaterThanOrEqual(ST_GATE_EXCHANGE_WINDOW)
-    expect(SESSION_TOKEN_BUDGET).toBeGreaterThan(0)
     expect(ST_EVAL_MAX_OUTPUT_TOKENS).toBeGreaterThan(0)
     expect(ST_SUMMARY_TARGET_WORDS).toBeGreaterThan(0)
   })

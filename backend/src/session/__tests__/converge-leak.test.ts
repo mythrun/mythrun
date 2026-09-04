@@ -32,7 +32,8 @@
 // real-Haiku QUALITY of the judgment is a separate concern from this plumbing.
 
 import { describe, expect, it } from 'vitest'
-import { CONVERGE_MECHANICAL_FLOOR, SESSION_TOKEN_BUDGET } from '../st-config.js'
+import { SESSION_FT_CONTEXT_BUDGET } from '../ft-config.js'
+import { CONVERGE_MECHANICAL_FLOOR } from '../st-config.js'
 import { processStEvalJob } from '../st-evaluation-worker.js'
 import { buildModelMessages } from '../tiers/fast-thinker.js'
 import type { FtTurnContext } from '../tiers/types.js'
@@ -47,7 +48,7 @@ const PROBE_BASIS = `only one goal landed; ${SECRET} is still undiscovered`
 const PLAYBOOK = `## Session Goals\nLand the reveal.\n\n## NPC Secrets\n${SECRET}`
 
 /** Cumulative spend inside the convergence window with the arc badly behind. */
-const AT_FLOOR = CONVERGE_MECHANICAL_FLOOR * SESSION_TOKEN_BUDGET
+const AT_FLOOR = CONVERGE_MECHANICAL_FLOOR * SESSION_FT_CONTEXT_BUDGET
 const NARRATIVE_LAGGING = 0.15
 
 function convergingHarness(): ReturnType<typeof makeHarness> {

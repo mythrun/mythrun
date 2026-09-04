@@ -10,7 +10,7 @@ import { SessionController } from '../session-controller.js'
 import { StubFastThinker } from '../tiers/stubs.js'
 import { type TriggerState, makeTriggerState } from '../trigger-state.js'
 import { FAREWELL_DIRECTION, type TurnJobPayload } from '../turn-queue.js'
-import { SESSION_TOKEN_BUDGET } from '../st-config.js'
+import { SESSION_FT_CONTEXT_BUDGET } from '../ft-config.js'
 import { type TurnProcessorDeps, processTurnJob } from '../turn-worker.js'
 import { CAMPAIGN, KEY_PREFIX, SESSION, TURN, fakeHandle, fakeLock, fakeRepo, farewellPayload, makeTiers, newCalls, recordingPublisher, silentLogger } from './_helpers/turn-worker-harness.js'
 import { type ScribeCall, inertCombatLedger, inertDmTriggerQueue, inertEndSession, inertFinalize, inertLedgerTx, inertScribeQueue, inertStEvalQueue, inertTurnQueue, recordingScribeQueue } from './_helpers/turn-worker-deps.js'
@@ -166,7 +166,7 @@ describe('processTurnJob — farewell turns', () => {
     }
 
     // myth-05p52 — seed the REAL Redis counter the auto-end now reads.
-    await sessionState.incrUsageSt(CAMPAIGN, SESSION_TOKEN_BUDGET + 5_000)
+    await sessionState.setFtContextTokens(CAMPAIGN, SESSION_FT_CONTEXT_BUDGET + 5_000)
 
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),

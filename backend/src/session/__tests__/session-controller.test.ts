@@ -191,6 +191,8 @@ function fakeSessionState(opts: {
       return Promise.resolve()
     }),
     getState: unused('getState'),
+    ftContextTokens: unused('ftContextTokens'),
+    setFtContextTokens: unused('setFtContextTokens'),
     nextSeq: unused('nextSeq'),
     reseedSeq: unused('reseedSeq'),
     clearEnding: unused('clearEnding'),

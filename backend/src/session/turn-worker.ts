@@ -103,7 +103,7 @@ import {
   type FinalizeEndedSessionDeps,
 } from './session-end.js'
 import { QUEUE_SESSION_SUSPEND, type SuspendQueueLike } from './session-suspend.js'
-import { SESSION_TOKEN_BUDGET } from './st-config.js'
+import { SESSION_FT_CONTEXT_BUDGET } from './ft-config.js'
 import { computeProgressFraction } from './session-progress.js'
 import type { SessionProgress } from '../contract/session-events.js'
 import { buildSessionReconcileQueue, buildSessionAnalysisQueue } from '../server-queues.js'
@@ -314,9 +314,11 @@ export interface TurnProcessorDeps {
   /** MYT-74a T12 — the budget-100% auto-end. A bound closure (the worker binds
    *  the real `endSession` orchestration's deps in `buildSessionTurnWorker`) so
    *  the processor stays testable. Invoked on the post-flush success phase when
-   *  cumulative session usage reaches `SESSION_TOKEN_BUDGET`. IDEMPOTENT across
-   *  turns via `endSession`'s SET-NX `ending` flag — a second over-budget turn
-   *  no-ops at the flag, so the processor needs no dedup of its own. */
+   *  the FT's context fill reaches `SESSION_FT_CONTEXT_BUDGET` (myth-zd6pn — it
+   *  used to read cumulative gross tokens, which saturated ~10x too fast once
+   *  prompt caching landed). IDEMPOTENT across turns via `endSession`'s SET-NX
+   *  `ending` flag — a second over-ceiling turn no-ops at the flag, so the
+   *  processor needs no dedup of its own. */
   readonly endSession: (args: EndSessionArgs) => Promise<void>
   /** MYT-74b §1.3 — the UNCONDITIONAL end-of-session finalize. A bound closure (the
    *  worker binds the real `finalizeEndedSession` orchestration's deps in
@@ -736,6 +738,12 @@ export async function processTurnJob(
     }
     // §8 — a flushed turn happened; bump the ST floor counter.
     await deps.triggerState.incrTurnsSinceSt(campaignId)
+    // myth-zd6pn — this turn's FT context fill (the final tool-loop step's input
+    // tokens, the biggest prompt of the turn). `null` on the converge path (no
+    // fresh render) or when usage never resolved. Read ONCE here and reused by
+    // both the context-level write below and the progress fraction, so the end
+    // arm and the published number can never disagree.
+    const contextTokens = controller.contextTokens()
     // §2 — enqueue the st-evaluation (post-hoc, off the hot path). Gated on the
     // flushed-success path ONLY (a failed/lock-lost/converge run has no fresh FT
     // response to evaluate). Own try/catch — an enqueue hiccup never masks the
@@ -745,45 +753,54 @@ export async function processTurnJob(
     } catch (enqErr) {
       deps.logger.error({ err: enqErr, campaignId, turnId }, 'failed to enqueue st-evaluation')
     }
-    // MYT-74a T12 — budget-100% auto-end. The §3.11 FT-context bound is the real
-    // session length cap; when cumulative token usage reaches it, the session has
-    // to end (the FT can hold no more transcript). Read the durable cumulative
-    // usage and, if it has reached SESSION_TOKEN_BUDGET, fire the end orchestration
-    // (status flip → reconcile → session_end broadcast). `endSession`'s SET-NX
-    // `ending` flag makes this idempotent across turns: a second over-budget turn
-    // no-ops at the flag, so no per-turn dedup is needed here. Gated like the
-    // watermark on `!isPlayerless` (a player-less correction/farewell never opens
-    // new budget-bearing context of its own — and a farewell is itself the end, so
-    // re-triggering the end orchestration off it is meaningless). OWN try/catch — a
-    // failure to enqueue the end must NEVER mask the turn outcome (mirrors the
-    // st-evaluation isolation).
+    // MYT-74a T12 — session-end at the context ceiling. The FT holds the WHOLE
+    // transcript on every call with no compaction, so a session genuinely ends
+    // when the window can take no more: at SESSION_FT_CONTEXT_BUDGET the next
+    // turn would not fit. Fire the end orchestration (status flip → reconcile →
+    // session_end broadcast). `endSession`'s SET-NX `ending` flag makes this
+    // idempotent across turns: a second over-ceiling turn no-ops at the flag, so
+    // no per-turn dedup is needed here. Gated like the watermark on
+    // `!isPlayerless` (a player-less correction/farewell opens no new context of
+    // its own — and a farewell is itself the end, so re-triggering the end
+    // orchestration off it is meaningless). OWN try/catch — a failure to enqueue
+    // the end must NEVER mask the turn outcome (mirrors the st-evaluation
+    // isolation).
     //
-    // myth-05p52 — this arm READ THE WRONG COUNTER AND HAD NEVER ONCE FIRED.
-    // It used `repo.sessions.budgetSummary`, which reads the Postgres
-    // `session_usage` table — and `repo.sessions.recordUsage`, the only thing
-    // that writes that table, HAS NO CALLER anywhere in production. So the
-    // summary was permanently null, `cumulativeTokens` was permanently 0, and
-    // the guard below was permanently false: no session has ever hit the budget
-    // cliff. Sessions ended only when a player chose to end one, or when the FT
-    // context finally overflowed and the provider rejected the call mid-turn —
-    // which is an error, not an ending (no farewell, no finalize, no recap).
+    // myth-05p52 — this arm once read `repo.sessions.budgetSummary`, whose only
+    // writer (`recordUsage`) has no caller, so it was permanently 0 and had
+    // never fired. It was then repointed at `sessionState.totalUsageTokens`.
     //
-    // Now reads `sessionState.totalUsageTokens`, the SAME Redis counter the ST
-    // wind-down arm and `resolveProgress` already read. That was the deciding
-    // argument for this fix over re-wiring recordUsage: those three signals must
-    // agree about how much budget is gone, and the surest way to guarantee that
-    // is for them to read one number. The Redis counter is genuinely written
-    // (flushTurnState -> :usage, incrUsageSt -> :usage:st), which is why the
-    // progress bar has been honest while this arm was dead.
+    // myth-zd6pn — that counter was ALSO wrong, in the opposite direction. It
+    // sums CUMULATIVE GROSS tokens across every tier, so it (a) accumulated a
+    // quantity that is really a level, since the FT re-sends one transcript
+    // rather than stacking them, and (b) counted cache reads 1:1 against a
+    // ceiling calibrated before prompt caching existed. At the measured 91-96%
+    // cache-read rate it saturated about ten times too fast, ending sessions
+    // around turn 14 (~19 minutes) against a product sold as about three hours,
+    // with the FT window roughly 4% full.
     //
-    // NOTE the durable per-session cost trail is still missing — `session_usage`
-    // stays empty, so analytics reading it read nothing. That is a real gap, but
-    // it is a metering concern, not a correctness one, and it is tracked
-    // separately rather than conflated with restoring the stop.
+    // It now reads the FT CONTEXT LEVEL — the same number `resolveProgress`
+    // publishes and the ST's wind-down and convergence arms read, so all four
+    // signals agree about how much session is left by construction. The level is
+    // written to Redis immediately below, before this check, so the arm sees
+    // THIS turn's fill rather than last turn's.
+    if (contextTokens !== null) {
+      try {
+        await deps.sessionState.setFtContextTokens(campaignId, contextTokens)
+      } catch (ctxErr) {
+        // Non-fatal: the level is a signal, not the turn. A miss degrades the
+        // end arm and the progress bar to the previous reading, which is nearly
+        // right and self-heals next turn.
+        deps.logger.error({ err: ctxErr, campaignId, turnId }, 'failed to store FT context level')
+      }
+    }
     if (!isPlayerless) {
       try {
-        const cumulativeTokens = await deps.sessionState.totalUsageTokens(campaignId)
-        if (cumulativeTokens >= SESSION_TOKEN_BUDGET) {
+        // Read back rather than using `contextTokens` directly: on the converge
+        // path there is no fresh render, and the LAST stored level is still the
+        // truth about how full the window is.
+        const ftContext = await deps.sessionState.ftContextTokens(campaignId)
+        if (ftContext >= SESSION_FT_CONTEXT_BUDGET) {
           await deps.endSession({ campaignId, sessionId, worldId })
         }
       } catch (endErr) {
@@ -812,7 +829,7 @@ export async function processTurnJob(
     await deps.publisher.turnEnd(
       campaignId,
       turnId,
-      await resolveProgress(deps, campaignId, controller.contextTokens()),
+      await resolveProgress(deps, campaignId, contextTokens),
     )
     return { ran: true }
   } catch (err) {
@@ -928,10 +945,10 @@ interface CombatApplyIds {
  * myth-nu0hm — resolve the mechanical session-progress fraction to ride
  * `turn_end`.
  *
- * Reads the cumulative session spend (the SAME `totalUsageTokens` the ST's
- * wind-down arm reads, so the two signals can never disagree about how much of
- * the budget is gone), folds in this turn's FT context fill, then RAISES the
- * session's stored floor and returns the effective value.
+ * Reads this turn's FT context fill (the SAME level the end arm and the ST's
+ * wind-down arm read, so the signals can never disagree about how much session
+ * is left), then RAISES the session's stored floor and returns the effective
+ * value.
  *
  * `contextTokens` is null when the turn produced no reading — the converge path
  * (no fresh render) or a render whose usage never resolved. That is not an
@@ -949,11 +966,13 @@ async function resolveProgress(
   contextTokens: number | null,
 ): Promise<SessionProgress | undefined> {
   try {
-    const cumulativeTokens = await deps.sessionState.totalUsageTokens(campaignId)
-    const candidate = computeProgressFraction({
-      cumulativeTokens,
-      contextTokens: contextTokens ?? 0,
-    })
+    // myth-zd6pn — one axis: how full the FT's window got. When this turn
+    // produced no reading (converge path, or a render whose usage never
+    // resolved) fall back to the stored level rather than 0, so the candidate
+    // does not collapse and lean on the monotonic floor to hide it.
+    const level =
+      contextTokens ?? (await deps.sessionState.ftContextTokens(campaignId))
+    const candidate = computeProgressFraction({ contextTokens: level })
     const fraction = await deps.sessionState.raiseProgressFraction(campaignId, candidate)
     return { fraction }
   } catch (err) {
@@ -1343,9 +1362,9 @@ export function buildSessionTurnWorker(
     /* c8 ignore stop */
     // MYT-74a T12 — bind the budget-100% auto-end. The closure threads the
     // worker-constructed endDeps into the shared `endSession` orchestration; the
-    // processor invokes it with `{campaignId, sessionId, worldId}` when cumulative
-    // usage reaches SESSION_TOKEN_BUDGET on the post-flush success phase. This
-    // builder-only passthrough fires only on a real flushed-then-over-budget turn
+    // processor invokes it with `{campaignId, sessionId, worldId}` when the FT's
+    // context fill reaches SESSION_FT_CONTEXT_BUDGET on the post-flush success
+    // phase. This builder-only passthrough fires only on a real over-ceiling turn
     // (the §10 real-Anthropic E2E / the reconcile smoke), not the converge-path
     // builder unit tests — the budget branch itself is covered via the injected
     // `endSession` fake in processTurnJob's tests.

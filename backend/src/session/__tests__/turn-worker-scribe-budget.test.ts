@@ -10,8 +10,7 @@ import { StubFastThinker } from '../tiers/stubs.js'
 import { type TriggerState, makeTriggerState } from '../trigger-state.js'
 import { SCRIBE_JOB_NAME, type ScribeQueueLike } from '../scribe-queue.js'
 import type { WorkingSetProposal } from '../working-set/types.js'
-import { SESSION_TOKEN_BUDGET } from '../st-config.js'
-import { FT_USABLE_CONTEXT_TOKENS } from '../ft-config.js'
+import { SESSION_FT_CONTEXT_BUDGET } from '../ft-config.js'
 import { type TurnProcessorDeps, processTurnJob } from '../turn-worker.js'
 import { CAMPAIGN, KEY_PREFIX, SESSION, TURN, correctionPayload, fakeHandle, fakeLock, fakeRepo, makeTiers, newCalls, payload, recordingPublisher, silentLogger } from './_helpers/turn-worker-harness.js'
 import { type ScribeCall, inertCombatLedger, inertDmTriggerQueue, inertEndSession, inertFinalize, inertLedgerTx, inertScribeQueue, inertStEvalQueue, inertTurnQueue, recordingScribeQueue } from './_helpers/turn-worker-deps.js'
@@ -243,9 +242,9 @@ describe('processTurnJob — scribe enqueue & budget auto-end', () => {
   })
 
   // ── MYT-74a T12 — budget-100% auto-end ───────────────────────────────────
-  it('ends the session when cumulative usage reaches the budget after a flushed turn (T12)', async () => {
-    // The post-flush success phase reads the durable cumulative usage. When
-    // (input + output) >= SESSION_TOKEN_BUDGET, the worker fires the injected
+  it('ends the session when the FT context reaches the ceiling after a flushed turn (T12)', async () => {
+    // The post-flush success phase reads the durable FT context level. When
+    // it is >= SESSION_FT_CONTEXT_BUDGET, the worker fires the injected
     // end orchestration with {campaignId, sessionId, worldId} (worldId resolved
     // on the fresh-run arm). The :state blob carries a worldId so resolveWorldId
     // returns it without a PG read.
@@ -261,14 +260,15 @@ describe('processTurnJob — scribe enqueue & budget auto-end', () => {
     const handle = fakeHandle({ extendReturns: true, release })
     const endSession = vi.fn((): Promise<void> => Promise.resolve())
 
-    // myth-05p52 — seed the REAL Redis counter the auto-end now reads.
-    // at-budget: cumulative usage exactly equals the budget.
-    await sessionState.incrUsageSt(CAMPAIGN, SESSION_TOKEN_BUDGET)
+    // myth-zd6pn — seed the REAL Redis level the auto-end now reads. The stub
+    // FT reports no context fill, so the worker does not overwrite it: this is
+    // the read-back arm (the converge-path shape).
+    await sessionState.setFtContextTokens(CAMPAIGN, SESSION_FT_CONTEXT_BUDGET)
 
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
-      // At-budget: input + output exactly equals SESSION_TOKEN_BUDGET.
+      // At the ceiling: FT context fill exactly equals the budget.
       repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
@@ -299,20 +299,19 @@ describe('processTurnJob — scribe enqueue & budget auto-end', () => {
     })
   })
 
-  it('does NOT end the session when cumulative usage is under the budget (T12)', async () => {
+  it('does NOT end the session when the FT context is under the ceiling (T12)', async () => {
     const calls = newCalls()
     const release = vi.fn((): Promise<void> => Promise.resolve())
     const handle = fakeHandle({ extendReturns: true, release })
     const endSession = vi.fn((): Promise<void> => Promise.resolve())
 
-    // myth-05p52 — seed the REAL Redis counter the auto-end now reads.
-    // under budget: one token short of the threshold.
-    await sessionState.incrUsageSt(CAMPAIGN, SESSION_TOKEN_BUDGET - 1)
+    // myth-zd6pn — one token short of the ceiling.
+    await sessionState.setFtContextTokens(CAMPAIGN, SESSION_FT_CONTEXT_BUDGET - 1)
 
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
       sessionState,
-      // Under budget: one token short of the threshold.
+      // Under the ceiling: one token short.
       repo: fakeRepo(),
       triggerState,
       sessionTurnQueue: inertTurnQueue(),
@@ -339,16 +338,15 @@ describe('processTurnJob — scribe enqueue & budget auto-end', () => {
 
   it('does NOT end the session on a correction turn even at-budget (player-less, T12)', async () => {
     // A correction is player-less and gated like the watermark/scribe on
-    // !isCorrection, so the budget check is skipped — even with usage at-budget,
+    // !isCorrection, so the check is skipped — even at the context ceiling,
     // a correction turn never auto-ends.
     const calls = newCalls()
     const release = vi.fn((): Promise<void> => Promise.resolve())
     const handle = fakeHandle({ extendReturns: true, release })
     const endSession = vi.fn((): Promise<void> => Promise.resolve())
 
-    // myth-05p52 — seed the REAL Redis counter the auto-end now reads.
-    // over budget, but the turn is player-less.
-    await sessionState.incrUsageSt(CAMPAIGN, SESSION_TOKEN_BUDGET + 5_000)
+    // myth-zd6pn — over the ceiling, but the turn is player-less.
+    await sessionState.setFtContextTokens(CAMPAIGN, SESSION_FT_CONTEXT_BUDGET + 5_000)
 
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
@@ -389,9 +387,8 @@ describe('processTurnJob — scribe enqueue & budget auto-end', () => {
     const boom = new Error('reconcile queue unreachable')
     const endSession = vi.fn((): Promise<void> => Promise.reject(boom))
 
-    // myth-05p52 — seed the REAL Redis counter the auto-end now reads.
-    // at-budget, so the (throwing) auto-end is reached.
-    await sessionState.incrUsageSt(CAMPAIGN, SESSION_TOKEN_BUDGET)
+    // myth-zd6pn — at the ceiling, so the (throwing) auto-end is reached.
+    await sessionState.setFtContextTokens(CAMPAIGN, SESSION_FT_CONTEXT_BUDGET)
 
     const deps: TurnProcessorDeps = {
       lock: fakeLock(handle),
@@ -470,6 +467,7 @@ describe('processTurnJob — session-progress signal (myth-nu0hm)', () => {
     overrides?: {
       sessionState?: SessionState
       makeTiers?: TurnProcessorDeps['makeTiers']
+      logger?: TurnProcessorDeps['logger']
     },
   ): TurnProcessorDeps {
     return {
@@ -488,7 +486,7 @@ describe('processTurnJob — session-progress signal (myth-nu0hm)', () => {
       publisher: recordingPublisher(calls),
       makeTiers: overrides?.makeTiers ?? makeTiers,
       heartbeatMs: 10_000,
-      logger: silentLogger,
+      logger: overrides?.logger ?? silentLogger,
     }
   }
 
@@ -510,41 +508,59 @@ describe('processTurnJob — session-progress signal (myth-nu0hm)', () => {
     })
   }
 
-  it('turn_end carries the TOKEN-BUDGET fraction when that ceiling is nearer', async () => {
-    // Half the session budget burned, negligible context fill.
+  it('turn_end carries the FT CONTEXT-FILL fraction', async () => {
+    // myth-zd6pn — one axis. Cumulative gross spend no longer moves the bar at
+    // all: the session ends when the FT's window fills, so that IS the number.
     await sessionState.flushTurnState(CAMPAIGN, {
-      usage: { input: SESSION_TOKEN_BUDGET / 2, output: 0 },
+      usage: { input: SESSION_FT_CONTEXT_BUDGET * 4, output: 0 },
     })
     const calls = newCalls()
 
-    const result = await processTurnJob(progressDeps(calls), payload())
-
-    expect(result).toEqual({ ran: true })
-    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
-    expect(calls.turnEndProgress).toEqual([{ fraction: 0.5 }])
-  })
-
-  it('turn_end carries the CONTEXT-FILL fraction when THAT ceiling is nearer', async () => {
-    // Barely any cumulative spend, but the FT's window is 90% full — the
-    // session still ends when the window fills, so the max must pick this.
-    await sessionState.flushTurnState(CAMPAIGN, { usage: { input: 1_000, output: 0 } })
-    const calls = newCalls()
-
-    await processTurnJob(
-      progressDeps(calls, { makeTiers: tiersWithContext(FT_USABLE_CONTEXT_TOKENS * 0.9) }),
+    const result = await processTurnJob(
+      progressDeps(calls, { makeTiers: tiersWithContext(SESSION_FT_CONTEXT_BUDGET * 0.5) }),
       payload(),
     )
 
-    expect(calls.turnEndProgress).toEqual([{ fraction: 0.9 }])
+    expect(result).toEqual({ ran: true })
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    // Half the window, despite four times the old budget in gross tokens.
+    expect(calls.turnEndProgress).toEqual([{ fraction: 0.5 }])
+  })
+
+  it('a huge GROSS spend with a small window reads as an EARLY session', async () => {
+    // The regression this fix exists for. Before myth-zd6pn a session at this
+    // shape (mostly cache reads) published ~1.0 and auto-ended; the FT was
+    // holding ~4% of its window at the time.
+    await sessionState.flushTurnState(CAMPAIGN, {
+      usage: { input: 545_000, output: 20_000 },
+    })
+    const calls = newCalls()
+
+    await processTurnJob(
+      progressDeps(calls, { makeTiers: tiersWithContext(35_600) }),
+      payload(),
+    )
+
+    expect(calls.turnEndProgress).toEqual([{ fraction: 0.05 }])
+  })
+
+  it('writes the FT context level so the ST worker reads the same number', async () => {
+    // The end arm, the progress bar, wind-down and the converge steer must all
+    // agree about how much session is left; they agree by reading one key.
+    const calls = newCalls()
+
+    await processTurnJob(
+      progressDeps(calls, { makeTiers: tiersWithContext(400_000) }),
+      payload(),
+    )
+
+    expect(await sessionState.ftContextTokens(CAMPAIGN)).toBe(400_000)
   })
 
   it('the published fraction NEVER walks back when the context term falls', async () => {
     // A previous combat-heavy turn pushed the floor to 0.85. This turn is
-    // terse: low context fill, modest spend. The bar must hold, not drop.
+    // terse: low context fill. The bar must hold, not drop.
     await sessionState.raiseProgressFraction(CAMPAIGN, 0.85)
-    await sessionState.flushTurnState(CAMPAIGN, {
-      usage: { input: SESSION_TOKEN_BUDGET * 0.1, output: 0 },
-    })
     const calls = newCalls()
 
     await processTurnJob(
@@ -557,15 +573,45 @@ describe('processTurnJob — session-progress signal (myth-nu0hm)', () => {
     expect(await sessionState.progressFraction(CAMPAIGN)).toBe(0.85)
   })
 
-  it('the fraction is COARSE — an awkward spend lands on a 0.05 bucket', async () => {
-    await sessionState.flushTurnState(CAMPAIGN, {
-      usage: { input: Math.round(SESSION_TOKEN_BUDGET * 0.5199), output: 0 },
-    })
+  it('the fraction is COARSE — an awkward fill lands on a 0.05 bucket', async () => {
     const calls = newCalls()
 
-    await processTurnJob(progressDeps(calls), payload())
+    await processTurnJob(
+      progressDeps(calls, {
+        makeTiers: tiersWithContext(Math.round(SESSION_FT_CONTEXT_BUDGET * 0.5199)),
+      }),
+      payload(),
+    )
 
     expect(calls.turnEndProgress).toEqual([{ fraction: 0.5 }])
+  })
+
+  it('a context-level write failure is swallowed and does not mask the turn', async () => {
+    // The level is a signal, not the turn. A Redis hiccup here degrades the end
+    // arm and the progress bar to the previous reading (nearly right, and it
+    // self-heals next turn); it must never cost the table a rendered turn.
+    const logger = { warn: vi.fn(), error: vi.fn() }
+    const broken: SessionState = {
+      ...sessionState,
+      setFtContextTokens: () => Promise.reject(new Error('redis down')),
+    }
+    const calls = newCalls()
+
+    const result = await processTurnJob(
+      progressDeps(calls, {
+        sessionState: broken,
+        makeTiers: tiersWithContext(400_000),
+        logger,
+      }),
+      payload(),
+    )
+
+    expect(result).toEqual({ ran: true })
+    expect(calls.order[calls.order.length - 1]).toBe('turn_end')
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ campaignId: CAMPAIGN, turnId: TURN }),
+      'failed to store FT context level',
+    )
   })
 
   it('a progress failure OMITS the fraction but still publishes turn_end', async () => {
@@ -573,7 +619,7 @@ describe('processTurnJob — session-progress signal (myth-nu0hm)', () => {
     // over. A Redis hiccup must cost the number, never the turn.
     const broken: SessionState = {
       ...sessionState,
-      totalUsageTokens: () => Promise.reject(new Error('redis down')),
+      raiseProgressFraction: () => Promise.reject(new Error('redis down')),
     }
     const calls = newCalls()
 
@@ -585,11 +631,9 @@ describe('processTurnJob — session-progress signal (myth-nu0hm)', () => {
   })
 
   it('the CONVERGE path (rows already durable) still publishes a fraction', async () => {
-    // No fresh render there, so there is no context reading — the cumulative
-    // token term plus the stored floor still give an honest number.
-    await sessionState.flushTurnState(CAMPAIGN, {
-      usage: { input: SESSION_TOKEN_BUDGET * 0.4, output: 0 },
-    })
+    // No fresh render there, so there is no context reading this turn — the
+    // STORED level from the previous turn still gives an honest number.
+    await sessionState.setFtContextTokens(CAMPAIGN, SESSION_FT_CONTEXT_BUDGET * 0.4)
     const calls = newCalls()
     const deps: TurnProcessorDeps = {
       ...progressDeps(calls),

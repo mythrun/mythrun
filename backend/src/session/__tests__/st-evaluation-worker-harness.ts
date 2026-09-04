@@ -196,7 +196,7 @@ export function makeHarness(overrides: Partial<Knobs> = {}): {
         rec.setSummary.push(s)
         return Promise.resolve()
       },
-      totalUsageTokens: () => Promise.resolve(knobs.totalUsed),
+      ftContextTokens: () => Promise.resolve(knobs.totalUsed),
       incrUsageSt: (_c, t) => {
         if (knobs.throwIncrUsage) return Promise.reject(new Error('incr usage boom'))
         rec.incrUsage.push(t)

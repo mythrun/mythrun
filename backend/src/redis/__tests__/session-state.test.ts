@@ -332,16 +332,67 @@ describe('makeSessionState — turn state', () => {
     expect(await s.totalUsageTokens('c1')).toBe(14)
   })
 
-  it('resetSessionSpend DELs :usage, :usage:st, :summary, and :progress (§8 session-start reset)', async () => {
+  // ── myth-zd6pn — the FT context LEVEL ────────────────────────────────────
+  it('setFtContextTokens SETs the level; ftContextTokens reads it back', async () => {
+    const s = makeSessionState(redis, 'p:')
+    await s.setFtContextTokens('c1', 412_000)
+    expect(await s.ftContextTokens('c1')).toBe(412_000)
+  })
+
+  it('setFtContextTokens OVERWRITES rather than accumulating — it is a level, not a counter', async () => {
+    // The whole defect being fixed: the FT re-sends ONE transcript every turn,
+    // it does not stack them. A terse turn after a combat burst legitimately
+    // reports a LOWER number, and the level must follow it down.
+    const s = makeSessionState(redis, 'p:')
+    await s.setFtContextTokens('c1', 400_000)
+    await s.setFtContextTokens('c1', 120_000)
+    expect(await s.ftContextTokens('c1')).toBe(120_000)
+  })
+
+  it('setFtContextTokens rounds a fractional reading', async () => {
+    const s = makeSessionState(redis, 'p:')
+    await s.setFtContextTokens('c1', 1234.6)
+    expect(await s.ftContextTokens('c1')).toBe(1235)
+  })
+
+  it('setFtContextTokens IGNORES a non-finite or negative reading', async () => {
+    // Keeping the previous honest level beats storing garbage: the reader
+    // floors to 0, and a 0 would read as "early session" and defer the end.
+    const s = makeSessionState(redis, 'p:')
+    await s.setFtContextTokens('c1', 400_000)
+    await s.setFtContextTokens('c1', Number.NaN)
+    await s.setFtContextTokens('c1', -5)
+    expect(await s.ftContextTokens('c1')).toBe(400_000)
+  })
+
+  it('ftContextTokens reads 0 for a session with no rendered turn', async () => {
+    expect(await makeSessionState(redis, 'p:').ftContextTokens('c-none')).toBe(0)
+  })
+
+  it('ftContextTokens reads 0 for a corrupt or non-positive stored value', async () => {
+    // Under-reading self-heals on the next honest turn; over-reading would end
+    // a session early and cannot be undone.
+    const s = makeSessionState(redis, 'p:')
+    await redis.set('p:session:c1:ftcontext', 'garbage')
+    expect(await s.ftContextTokens('c1')).toBe(0)
+    await redis.set('p:session:c1:ftcontext', '-3')
+    expect(await s.ftContextTokens('c1')).toBe(0)
+  })
+
+  it('resetSessionSpend DELs :usage, :usage:st, :summary, :progress, and :ftcontext (§8 session-start reset)', async () => {
     const s = makeSessionState(redis, 'p:')
     await s.flushTurnState('c1', { usage: { input: 5, output: 9 } })
     await s.incrUsageSt('c1', 4)
     await s.setRunningSummary('c1', 'a running summary')
     await s.raiseProgressFraction('c1', 0.6)
+    await s.setFtContextTokens('c1', 400_000)
     await s.resetSessionSpend('c1')
     expect(await redis.exists('p:session:c1:usage')).toBe(0)
     expect(await redis.exists('p:session:c1:usage:st')).toBe(0)
     expect(await redis.exists('p:session:c1:summary')).toBe(0)
+    // Without this DEL the campaign's NEXT session would open with the previous
+    // session's window already "full" and end on its first turn.
+    expect(await redis.exists('p:session:c1:ftcontext')).toBe(0)
     // myth-nu0hm — without this the campaign's NEXT session opens pinned at the
     // previous session's fraction: the floor never falls on its own.
     expect(await redis.exists('p:session:c1:progress')).toBe(0)

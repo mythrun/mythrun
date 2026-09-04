@@ -19,9 +19,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   ST_EVAL_FLOOR_TURNS,
-  SESSION_TOKEN_BUDGET,
   WIND_DOWN_FRACTION,
 } from '../st-config.js'
+import { SESSION_FT_CONTEXT_BUDGET } from '../ft-config.js'
 import { processStEvalJob } from '../st-evaluation-worker.js'
 import {
   CAMPAIGN,
@@ -64,7 +64,7 @@ describe('processStEvalJob — deterministic policy (§ step 2)', () => {
   })
 
   it('case 4: usage ≥ wind-down fraction → director called with windDown:true', async () => {
-    const overBudget = Math.ceil(WIND_DOWN_FRACTION * SESSION_TOKEN_BUDGET)
+    const overBudget = Math.ceil(WIND_DOWN_FRACTION * SESSION_FT_CONTEXT_BUDGET)
     const { deps, rec } = makeHarness({ turnsSinceSt: 1, totalUsed: overBudget })
     await processStEvalJob(deps, job)
     expect(rec.gateCalls).toBe(0)

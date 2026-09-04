@@ -33,9 +33,9 @@ import {
   ST_GATE_CONFIDENCE_FLOOR,
   ST_EVAL_EXCHANGE_WINDOW,
   ST_GATE_EXCHANGE_WINDOW,
-  SESSION_TOKEN_BUDGET,
   WIND_DOWN_FRACTION,
 } from './st-config.js'
+import { SESSION_FT_CONTEXT_BUDGET } from './ft-config.js'
 import { mechanicalProgress, shouldProbeNarrativeProgress } from './converge-policy.js'
 import { NO_CONVERGE, probeConvergence } from './st-converge-probe.js'
 import { usageTokens } from './st-usage.js'
@@ -94,7 +94,9 @@ interface StEvalRepo {
 interface StEvalSessionState {
   loadTurnState(campaignId: string): Promise<{ summary: string }>
   setRunningSummary(campaignId: string, summary: string): Promise<void>
-  totalUsageTokens(campaignId: string): Promise<number>
+  /** myth-zd6pn — the FT context level, the session-length axis. Replaces the
+   *  gross `totalUsageTokens` read for wind-down and convergence. */
+  ftContextTokens(campaignId: string): Promise<number>
   incrUsageSt(campaignId: string, tokens: number): Promise<void>
 }
 
@@ -187,8 +189,8 @@ export async function processStEvalJob(
 
   // 2. DETERMINISTIC POLICY (mechanical, ZFC-exempt).
   const turnsSinceSt = await deps.triggerState.turnsSinceSt(campaignId)
-  const totalUsed = await deps.sessionState.totalUsageTokens(campaignId)
-  const windDown = totalUsed >= WIND_DOWN_FRACTION * SESSION_TOKEN_BUDGET
+  const ftContext = await deps.sessionState.ftContextTokens(campaignId)
+  const windDown = ftContext >= WIND_DOWN_FRACTION * SESSION_FT_CONTEXT_BUDGET
   const floorForces = turnsSinceSt >= ST_EVAL_FLOOR_TURNS
 
   let usageToWrite = 0
@@ -199,7 +201,7 @@ export async function processStEvalJob(
   // arrive with no session left to land in, which is the whole defect. The
   // window is a handful of turns at the tail, so the forced-Opus cost profile
   // matches the wind-down arm's, which already accepts it.
-  const mechanical = mechanicalProgress(totalUsed)
+  const mechanical = mechanicalProgress(ftContext)
   const probe = shouldProbeNarrativeProgress(mechanical, windDown)
     ? await probeConvergence(deps, campaignId, mechanical, {
         sdPlaybook,
@@ -376,7 +378,7 @@ export function buildStEvaluationWorker(
     sessionState: {
       loadTurnState: (c) => sessionState.loadTurnState(c),
       setRunningSummary: (c, s) => sessionState.setRunningSummary(c, s),
-      totalUsageTokens: (c) => sessionState.totalUsageTokens(c),
+      ftContextTokens: (c) => sessionState.ftContextTokens(c),
       incrUsageSt: (c, t) => sessionState.incrUsageSt(c, t),
     },
     triggerState,

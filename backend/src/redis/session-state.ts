@@ -243,8 +243,23 @@ export interface SessionState {
    *  stale-read-then-SET — its blind flush would erase a shared increment. */
   incrUsageSt(campaignId: string, tokens: number): Promise<void>
   /** Total session token spend: the `:usage` blob's `input + output` PLUS the
-   *  `:usage:st` counter, summed. The §7 budget gate reads this. */
+   *  `:usage:st` counter, summed. OBSERVABILITY ONLY as of myth-zd6pn — this
+   *  is gross tokens (cache reads included) and is no longer any session's
+   *  bound. Do NOT reintroduce it as a ceiling: see SESSION_FT_CONTEXT_BUDGET. */
   totalUsageTokens(campaignId: string): Promise<number>
+  /** myth-zd6pn — read the FT context LEVEL: how many input tokens the Fast
+   *  Thinker held on its most recent call. 0 when unset (no turn has rendered
+   *  yet) or corrupt.
+   *
+   *  A LEVEL, not a counter: it is overwritten each turn and legitimately
+   *  falls. It lives in Redis rather than staying in the turn worker's memory
+   *  because the ST evaluation job runs in a DIFFERENT process and needs the
+   *  same number for its wind-down and convergence arms — the two signals must
+   *  never disagree about how much session is left. */
+  ftContextTokens(campaignId: string): Promise<number>
+  /** myth-zd6pn — overwrite the FT context level (SET, not INCR). Written by
+   *  the turn worker after each render, carrying the state TTL. */
+  setFtContextTokens(campaignId: string, tokens: number): Promise<void>
   /** myth-nu0hm — read the published session-progress fraction (the MONOTONIC
    *  FLOOR). 0 when unset (a session that has published none yet) or corrupt.
    *  The ws connect path reads this so a joining client's `session_ready` is
@@ -329,6 +344,7 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
   const usageKey = (campaignId: string): string => `${base(campaignId)}:usage`
   const usageStKey = (campaignId: string): string => `${base(campaignId)}:usage:st`
   const progressKey = (campaignId: string): string => `${base(campaignId)}:progress`
+  const ftContextKey = (campaignId: string): string => `${base(campaignId)}:ftcontext`
   const endingKey = (campaignId: string): string => `${base(campaignId)}:ending`
   const combatKey = (campaignId: string): string => `${base(campaignId)}:combat`
   const resumedKey = (campaignId: string): string => `${base(campaignId)}:resumed`
@@ -450,6 +466,16 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
     totalUsageTokens: (campaignId) =>
       readTotalUsageTokens(redis, usageKey(campaignId), usageStKey(campaignId)),
 
+    ftContextTokens: (campaignId) => readFtContextTokens(redis, ftContextKey(campaignId)),
+
+    setFtContextTokens: async (campaignId, tokens) => {
+      // A LEVEL: blind SET, no INCR. A non-finite or negative reading is not
+      // written at all rather than stored as garbage — the previous honest
+      // level is a better answer than NaN, and the reader floors to 0 anyway.
+      if (!Number.isFinite(tokens) || tokens < 0) return
+      await redis.set(ftContextKey(campaignId), String(Math.round(tokens)), 'EX', STATE_TTL)
+    },
+
     progressFraction: (campaignId) => readProgressFraction(redis, progressKey(campaignId)),
 
     raiseProgressFraction: async (campaignId, fraction) => {
@@ -478,6 +504,7 @@ export function makeSessionState(redis: Redis, keyPrefix: string): SessionState 
         usageStKey(campaignId),
         summaryKey(campaignId),
         progressKey(campaignId),
+        ftContextKey(campaignId),
       )
     },
 
@@ -682,6 +709,18 @@ async function readTotalUsageTokens(
   const turnUsage = parseJson<TokenUsage>(rawUsage, { input: 0, output: 0 })
   const stTokens = rawSt === null || rawSt === undefined ? 0 : Number(rawSt)
   return turnUsage.input + turnUsage.output + (Number.isFinite(stTokens) ? stTokens : 0)
+}
+
+/** myth-zd6pn — read the `:ftcontext` LEVEL. A missing key (no turn has
+ *  rendered yet, or the TTL reaped it) and a corrupt / negative value both read
+ *  as 0, i.e. "early session". Under-reading self-heals on the next honest
+ *  turn; over-reading would end a session early and cannot be undone. */
+async function readFtContextTokens(redis: Redis, key: string): Promise<number> {
+  const raw = await redis.get(key)
+  if (raw === null) return 0
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0
+  return parsed
 }
 
 /** myth-nu0hm — read the `:progress` floor. A missing key (never published, or

@@ -1,9 +1,9 @@
 // backend/src/session/converge-policy.ts
 //
-// myth-3jna1 — the DETERMINISTIC half of the convergence steer. Today a session
-// runs at full narrative throttle until cumulative spend crosses
-// SESSION_TOKEN_BUDGET and a farewell is bolted onto whatever scene happened to
-// be running. The steer gives the director a stage BEFORE that cliff: once
+// myth-3jna1 — the DETERMINISTIC half of the convergence steer. Without it a
+// session runs at full narrative throttle until the FT's context reaches
+// SESSION_FT_CONTEXT_BUDGET and a farewell is bolted onto whatever scene
+// happened to be running. The steer gives the director a stage BEFORE that cliff: once
 // three quarters of the budget is spent AND the story is behind the spend, the
 // ST folds a "start drawing toward a resting point" steer into its standing
 // directive, so the farewell lands on a beat.
@@ -21,19 +21,23 @@
 // a route, a publisher, or an FT-facing context type. The player-facing
 // progress number is the MECHANICAL one and is computed elsewhere.
 
-import {
-  CONVERGE_LAG_MARGIN,
-  CONVERGE_MECHANICAL_FLOOR,
-  SESSION_TOKEN_BUDGET,
-} from './st-config.js'
+import { SESSION_FT_CONTEXT_BUDGET } from './ft-config.js'
+import { CONVERGE_LAG_MARGIN, CONVERGE_MECHANICAL_FLOOR } from './st-config.js'
 
 /**
- * Mechanical progress: cumulative session token spend as a fraction of the
- * budget, clamped to [0,1]. This is the "how much session is left" axis — it
- * knows nothing about the story.
+ * Mechanical progress: the FT's context fill as a fraction of the session's
+ * context ceiling, clamped to [0,1]. This is the "how much session is left"
+ * axis — it knows nothing about the story.
+ *
+ * myth-zd6pn — this took cumulative GROSS token spend until the ceiling it
+ * divided by was found to saturate about ten times too fast (cache reads
+ * counted 1:1 against a pre-caching budget). It now reads the same FT context
+ * level the turn worker's end arm and the player-facing progress bar read, so
+ * the converge steer, wind-down, the auto-end and the progress bar cannot
+ * disagree about how much session is left.
  */
-export function mechanicalProgress(totalUsedTokens: number): number {
-  return Math.min(1, Math.max(0, totalUsedTokens / SESSION_TOKEN_BUDGET))
+export function mechanicalProgress(ftContextTokens: number): number {
+  return Math.min(1, Math.max(0, ftContextTokens / SESSION_FT_CONTEXT_BUDGET))
 }
 
 /**

@@ -1,7 +1,7 @@
 // myth-3jna1 — the convergence steer's WIRING inside `processStEvalJob`.
 //
 // Today a session runs at full throttle until cumulative spend crosses
-// SESSION_TOKEN_BUDGET and a farewell is stapled onto whatever scene happened
+// SESSION_FT_CONTEXT_BUDGET and a farewell is stapled onto whatever scene happened
 // to be running. The steer adds a stage before that cliff: from
 // CONVERGE_MECHANICAL_FLOOR onward the worker spends one Haiku call asking how
 // far through the prep's arc the table actually is, and when the story is
@@ -17,17 +17,17 @@
 import { describe, expect, it } from 'vitest'
 import {
   CONVERGE_MECHANICAL_FLOOR,
-  SESSION_TOKEN_BUDGET,
   ST_EVAL_FLOOR_TURNS,
   WIND_DOWN_FRACTION,
 } from '../st-config.js'
+import { SESSION_FT_CONTEXT_BUDGET } from '../ft-config.js'
 import { processStEvalJob } from '../st-evaluation-worker.js'
 import { job, makeHarness, progress, usage } from './st-evaluation-worker-harness.js'
 
 /** Cumulative spend that lands mechanical progress exactly on the floor. */
-const AT_FLOOR = CONVERGE_MECHANICAL_FLOOR * SESSION_TOKEN_BUDGET
+const AT_FLOOR = CONVERGE_MECHANICAL_FLOOR * SESSION_FT_CONTEXT_BUDGET
 const BELOW_FLOOR = AT_FLOOR - 1
-const AT_WIND_DOWN = Math.ceil(WIND_DOWN_FRACTION * SESSION_TOKEN_BUDGET)
+const AT_WIND_DOWN = Math.ceil(WIND_DOWN_FRACTION * SESSION_FT_CONTEXT_BUDGET)
 
 describe('processStEvalJob — the convergence probe window', () => {
   it('case C1: below the floor → NO probe call at all (three quarters of a session cost nothing extra)', async () => {
@@ -52,7 +52,7 @@ describe('processStEvalJob — the convergence probe window', () => {
   })
 
   it('case C4: converge and windDown are never both true', async () => {
-    for (const totalUsed of [BELOW_FLOOR, AT_FLOOR, AT_WIND_DOWN, SESSION_TOKEN_BUDGET]) {
+    for (const totalUsed of [BELOW_FLOOR, AT_FLOOR, AT_WIND_DOWN, SESSION_FT_CONTEXT_BUDGET]) {
       const { deps, rec } = makeHarness({
         totalUsed,
         narrativeProgress: progress(0),
